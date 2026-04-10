@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'none';">
+<title>CS2 Vault</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --bg:#0a0c10;--surface:#0f1318;--surface2:#151b24;--surface3:#1c2532;
+  --border:#1e2d3d;--border2:#243447;--accent:#f97316;--accent2:#fb923c;
+  --green:#22c55e;--red:#ef4444;--blue:#38bdf8;--purple:#a78bfa;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--gold:#fbbf24;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Exo 2',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(249,115,22,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(249,115,22,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
+.app{position:relative;z-index:1;}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--border);background:rgba(10,12,16,.95);backdrop-filter:blur(10px);position:sticky;top:0;z-index:100;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:12px;}
+.logo-icon{width:34px;height:34px;background:var(--accent);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:15px;animation:pulse-glow 3s ease-in-out infinite;}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 10px rgba(249,115,22,.5);}50%{box-shadow:0 0 25px rgba(249,115,22,.9);}}
+.logo-text{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;}
+.logo-text span{color:var(--accent);}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.price-source-badge{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);border:1px solid var(--border2);padding:4px 10px;border-radius:4px;display:flex;align-items:center;gap:6px;}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite;}
+.status-dot.offline{background:var(--red);animation:none;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+nav{display:flex;gap:2px;padding:12px 28px 0;border-bottom:1px solid var(--border);background:var(--surface);}
+.nav-tab{padding:10px 20px;font-family:'Rajdhani',sans-serif;font-weight:600;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;position:relative;top:1px;background:none;border-top:none;border-left:none;border-right:none;}
+.nav-tab:hover{color:var(--text2);}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+main{padding:24px 28px;max-width:1600px;margin:0 auto;}
+.stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;position:relative;overflow:hidden;}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);}
+.stat-card.green::before{background:linear-gradient(90deg,var(--green),transparent);}
+.stat-card.red::before{background:linear-gradient(90deg,var(--red),transparent);}
+.stat-card.blue::before{background:linear-gradient(90deg,var(--blue),transparent);}
+.stat-card.purple::before{background:linear-gradient(90deg,var(--purple),transparent);}
+.stat-label{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;}
+.stat-value{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:26px;line-height:1;}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:4px;font-family:'Share Tech Mono',monospace;}
+.positive{color:var(--green);}.negative{color:var(--red);}
+.toolbar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap;}
+.search-box{flex:1;min-width:180px;position:relative;}
+.search-box input{width:100%;background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:9px 14px 9px 36px;color:var(--text);font-family:'Exo 2',sans-serif;font-size:13px;outline:none;transition:border-color .2s;}
+.search-box input:focus{border-color:var(--accent);}
+.search-box::before{content:'⌕';position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:16px;}
+select{background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:9px 14px;color:var(--text);font-family:'Exo 2',sans-serif;font-size:13px;outline:none;cursor:pointer;}
+.btn{padding:9px 18px;border-radius:6px;font-family:'Rajdhani',sans-serif;font-weight:600;font-size:13px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;gap:6px;}
+.btn-primary{background:var(--accent);color:#000;}.btn-primary:hover{background:var(--accent2);transform:translateY(-1px);}
+.btn-secondary{background:var(--surface2);color:var(--text2);border:1px solid var(--border2);}.btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
+.btn-danger{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);}.btn-danger:hover{background:rgba(239,68,68,.2);}
+.btn-sm{padding:5px 10px;font-size:11px;}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+table{width:100%;border-collapse:collapse;}
+thead{background:var(--surface2);}
+th{padding:12px 16px;text-align:left;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;white-space:nowrap;cursor:pointer;user-select:none;border-bottom:1px solid var(--border);}
+th:hover{color:var(--text2);}
+td{padding:11px 16px;font-size:13px;border-bottom:1px solid rgba(30,45,61,.5);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(249,115,22,.03);}
+.item-name{font-weight:600;color:var(--text);max-width:200px;}
+.item-name small{display:block;font-size:11px;color:var(--text3);font-weight:400;margin-top:2px;}
+.type-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:'Share Tech Mono',monospace;letter-spacing:.5px;font-weight:600;}
+.badge-skin{background:rgba(56,189,248,.15);color:var(--blue);border:1px solid rgba(56,189,248,.2);}
+.badge-case{background:rgba(249,115,22,.15);color:var(--accent);border:1px solid rgba(249,115,22,.2);}
+.badge-sticker{background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.2);}
+.badge-armory{background:rgba(251,191,36,.15);color:var(--gold);border:1px solid rgba(251,191,36,.2);}
+.badge-knife{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.mono{font-family:'Share Tech Mono',monospace;font-size:12px;}
+.price-loading{color:var(--text3);font-style:italic;font-size:11px;}
+.action-btns{display:flex;gap:6px;}
+.row-actions{opacity:0;transition:opacity .2s;}
+tr:hover .row-actions{opacity:1;}
+.pnl-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:11px;font-weight:600;}
+.pnl-pos{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.2);}
+.pnl-neg{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.7);animation:modal-in .2s ease;}
+@keyframes modal-in{from{opacity:0;transform:scale(.96) translateY(10px);}to{opacity:1;transform:scale(1) translateY(0);}}
+.modal-header{padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;letter-spacing:1px;text-transform:uppercase;}
+.modal-title span{color:var(--accent);}
+.modal-close{background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:4px;line-height:1;transition:color .2s;}
+.modal-close:hover{color:var(--text);}
+.modal-body{padding:20px 24px;}
+.form-row{margin-bottom:14px;}
+.form-row label{display:block;font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}
+.form-row input,.form-row select,.form-row textarea{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Exo 2',sans-serif;font-size:13px;outline:none;transition:border-color .2s;}
+.form-row input:focus,.form-row select:focus{border-color:var(--accent);}
+.form-two{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;}
+.sold-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:1fr auto auto auto auto;gap:20px;align-items:center;margin-bottom:8px;transition:border-color .2s;}
+.sold-card:hover{border-color:var(--border2);}
+.sold-date{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:4px;}
+.sold-col{text-align:right;}
+.sold-col-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;}
+.sold-col-val{font-family:'Share Tech Mono',monospace;font-size:13px;}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text3);}
+.empty-icon{font-size:48px;margin-bottom:16px;opacity:.4;}
+.empty-state h3{font-family:'Rajdhani',sans-serif;font-size:18px;letter-spacing:1px;margin-bottom:8px;color:var(--text2);}
+.section-heading{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:12px;display:flex;align-items:center;gap:10px;}
+.section-heading::after{content:'';flex:1;height:1px;background:var(--border);}
+.toast-container{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;}
+.toast{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:10px;animation:toast-in .3s ease;max-width:320px;box-shadow:0 8px 24px rgba(0,0,0,.5);}
+.toast.success{border-left:3px solid var(--green);}.toast.error{border-left:3px solid var(--red);}.toast.info{border-left:3px solid var(--blue);}
+@keyframes toast-in{from{opacity:0;transform:translateX(20px);}to{opacity:1;transform:translateX(0);}}
+.loading-spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.tab-panel{display:none;}.tab-panel.active{display:block;}
+.fee-note{font-size:11px;color:var(--text3);margin-top:4px;font-family:'Share Tech Mono',monospace;}
+.heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:24px;}
+.heat-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:default;transition:transform .15s;}
+.heat-card:hover{transform:translateY(-2px);}
+.heat-card.heat-hot{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.06);}
+.heat-card.heat-warm{border-color:rgba(34,197,94,.2);background:rgba(34,197,94,.03);}
+.heat-card.heat-cold{border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.05);}
+.heat-card.heat-freeze{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.08);}
+.heat-card.heat-neutral{border-color:var(--border);}
+.heat-name{font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.heat-pct{font-family:'Share Tech Mono',monospace;font-size:13px;font-weight:700;}
+.heat-sub{font-size:10px;color:var(--text3);margin-top:2px;font-family:'Share Tech Mono',monospace;}
+.price-delta{font-size:10px;font-family:'Share Tech Mono',monospace;margin-left:4px;}
+.price-delta.up{color:var(--green);}.price-delta.down{color:var(--red);}
+.stale-badge{font-size:9px;font-family:'Share Tech Mono',monospace;padding:1px 5px;border-radius:3px;margin-left:4px;border:1px solid var(--border2);color:var(--text3);}
+.stale-badge.fresh{border-color:rgba(34,197,94,.3);color:var(--green);}
+.stale-badge.old{border-color:rgba(239,68,68,.3);color:var(--red);}
+.watchlist-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;display:grid;grid-template-columns:1fr auto auto auto;gap:16px;align-items:center;margin-bottom:8px;}
+.watchlist-card:hover{border-color:var(--border2);}
+.bulk-sel{width:14px;height:14px;cursor:pointer;accent-color:var(--accent);}
+.roi-pill{display:inline-flex;align-items:center;padding:2px 6px;border-radius:3px;font-family:'Share Tech Mono',monospace;font-size:10px;margin-left:5px;background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.2);}
+.performer-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);}
+.performer-row:last-child{border-bottom:none;}
+.rank-badge{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;flex-shrink:0;}
+.rank-1{background:rgba(251,191,36,.2);color:var(--gold);border:1px solid rgba(251,191,36,.3);}
+.rank-2{background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.2);}
+.rank-3{background:rgba(180,120,60,.15);color:#b4783c;border:1px solid rgba(180,120,60,.2);}
+.rank-n{background:var(--surface2);color:var(--text3);border:1px solid var(--border);}
+.api-key-input{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:7px 12px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;width:190px;outline:none;}
+.api-key-input:focus{border-color:var(--accent);}
+@media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr);}header,nav,main{padding-left:16px;padding-right:16px;}}
+
+/* ======================== CASE INTELLIGENCE ======================== */
+.ci-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;}
+.ci-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;letter-spacing:3px;text-transform:uppercase;color:var(--text);}
+.ci-title::before{content:'⬡ ';color:var(--accent);}
+.ci-subtitle{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);margin-top:4px;letter-spacing:1px;}
+.ci-last-update{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);padding:7px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;}
+.ci-legend{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;}
+.ci-legend-title{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-right:8px;}
+.ci-legend-items{display:flex;gap:20px;flex-wrap:wrap;}
+.ci-legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);font-family:'Share Tech Mono',monospace;}
+.ci-legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.ci-spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto;}
+.ci-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;}
+.ci-stat{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;position:relative;overflow:hidden;}
+.ci-stat::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.ci-stat.accent::before{background:linear-gradient(90deg,var(--accent),transparent);}
+.ci-stat.green::before{background:linear-gradient(90deg,var(--green),transparent);}
+.ci-stat.blue::before{background:linear-gradient(90deg,var(--blue),transparent);}
+.ci-stat.purple::before{background:linear-gradient(90deg,var(--purple),transparent);}
+.ci-stat-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;}
+.ci-stat-val{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:28px;line-height:1;}
+.ci-stat-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:5px;}
+.ci-cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}
+.ci-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;transition:border-color .2s,transform .15s;cursor:default;}
+.ci-card:hover{border-color:var(--border2);transform:translateY(-2px);}
+.ci-card-header{padding:14px 16px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
+.ci-case-name{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:14px;letter-spacing:.5px;}
+.ci-score-ring{position:relative;width:52px;height:52px;flex-shrink:0;}
+.ci-score-ring svg{position:absolute;top:0;left:0;transform:rotate(-90deg);}
+.ci-score-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;}
+.ci-grade-badge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:5px;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;}
+.grade-s{background:rgba(251,191,36,.2);color:var(--gold);border:1px solid rgba(251,191,36,.4);}
+.grade-a{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+.grade-b{background:rgba(56,189,248,.15);color:var(--blue);border:1px solid rgba(56,189,248,.3);}
+.grade-c{background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.3);}
+.grade-d{background:rgba(249,115,22,.15);color:var(--accent);border:1px solid rgba(249,115,22,.3);}
+.grade-f{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.ci-card-body{padding:12px 16px;}
+.ci-bars{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;}
+.ci-bar-row{display:grid;grid-template-columns:120px 1fr 36px;align-items:center;gap:8px;}
+.ci-bar-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:.5px;}
+.ci-bar-track{background:var(--surface2);border-radius:99px;height:5px;overflow:hidden;}
+.ci-bar-fill{height:100%;border-radius:99px;transition:width .6s ease;}
+.ci-bar-val{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text2);text-align:right;}
+.ci-card-metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding-top:10px;border-top:1px solid var(--border);}
+.ci-metric{text-align:center;}
+.ci-metric-label{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:3px;}
+.ci-metric-val{font-family:'Share Tech Mono',monospace;font-size:11px;font-weight:600;}
+.ci-signal{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.5px;margin-top:10px;}
+.signal-strong-buy{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+.signal-buy{background:rgba(56,189,248,.12);color:var(--blue);border:1px solid rgba(56,189,248,.25);}
+.signal-hold{background:rgba(251,191,36,.1);color:var(--gold);border:1px solid rgba(251,191,36,.2);}
+.signal-watch{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2);}
+.signal-avoid{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.ci-holdings-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;background:rgba(249,115,22,.1);color:var(--accent);border:1px solid rgba(249,115,22,.2);border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:9px;margin-top:6px;}
+.ci-error-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:9px;}
+@media(max-width:900px){.ci-summary-grid{grid-template-columns:repeat(2,1fr);}}
+
+/* ===== BUFF RATIO ===== */
+.buff-ratio{font-family:'Share Tech Mono',monospace;font-size:10px;padding:2px 6px;border-radius:3px;margin-left:5px;cursor:help;display:inline-flex;align-items:center;gap:2px;vertical-align:middle;}
+.buff-good{background:rgba(34,197,94,.14);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+.buff-ok{background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.25);}
+.buff-bad{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25);}
+
+/* ===== MULTI-PLATFORM COMPARE ===== */
+.plat-header{font-size:11px !important;letter-spacing:0.5px;white-space:nowrap;}
+.plat-cell{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:90px;}
+.plat-icon{font-size:10px;flex-shrink:0;}
+.plat-val{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text2);}
+.plat-val-best{color:var(--green) !important;font-weight:700;}
+.plat-price{vertical-align:middle;}
+.plat-cheapest{background:rgba(34,197,94,.06);border-left:2px solid var(--green);transition:background .2s;}
+.cheapest-badge{font-family:'Rajdhani',sans-serif;font-size:8px;font-weight:700;letter-spacing:1.5px;color:var(--green);background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);padding:1px 5px;border-radius:3px;margin-left:2px;white-space:nowrap;}
+.plat-qty{font-size:9px;color:var(--text3);font-family:'Share Tech Mono',monospace;display:block;width:100%;padding-left:14px;margin-top:1px;}
+
+/* ===== SPARKLINE ===== */
+.sparkline-wrap{cursor:pointer;margin-top:3px;padding:2px 0;border-radius:3px;transition:background .15s;display:inline-block;}
+.sparkline-wrap:hover{background:rgba(255,255,255,.06);}
+.sparkline-wrap svg{vertical-align:middle;}
+
+/* ===== AUTO-UPDATER BANNER ===== */
+.update-banner{display:none;align-items:center;justify-content:center;padding:8px 20px;font-family:'Share Tech Mono',monospace;font-size:12px;letter-spacing:0.5px;gap:8px;z-index:99;}
+.update-banner.show{display:flex;}
+.update-banner.downloading{background:linear-gradient(90deg,rgba(59,130,246,.15),rgba(59,130,246,.08));color:var(--blue,#3b82f6);border-bottom:1px solid rgba(59,130,246,.2);}
+.update-banner.ready{background:linear-gradient(90deg,rgba(34,197,94,.15),rgba(34,197,94,.08));color:var(--green);border-bottom:1px solid rgba(34,197,94,.2);}
+
+/* ===== PRICE HISTORY MODAL ===== */
+.ph-range-btn{min-width:40px;text-align:center;}
+.ph-range-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
+.ph-stat{background:var(--surface2);border-radius:8px;padding:10px 14px;text-align:center;}
+.ph-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:4px;}
+.ph-stat-val{font-size:16px;font-weight:700;font-family:'Share Tech Mono',monospace;}
+/* ===== PRICE ALERTS ===== */
+.alerts-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.alert-chip{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-family:'Share Tech Mono',monospace;font-size:11px;}
+.alert-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px;}
+.alert-panel-hd{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;justify-content:space-between;}
+.alert-panel-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;}
+.alert-col-hd{display:grid;grid-template-columns:1fr 110px 100px 110px 90px 60px;gap:12px;padding:8px 20px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;}
+.alert-row{display:grid;grid-template-columns:1fr 110px 100px 110px 90px 60px;gap:12px;align-items:center;padding:11px 20px;border-bottom:1px solid rgba(30,45,61,.4);font-size:13px;transition:background .15s;}
+.alert-row:last-child{border-bottom:none;}
+.alert-row:hover{background:rgba(249,115,22,.02);}
+.alert-row.is-triggered{background:rgba(251,191,36,.04);border-left:3px solid rgba(251,191,36,.5);}
+.dir-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:9px;font-weight:700;}
+.dir-below{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25);}
+.dir-above{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.triggered-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;background:rgba(251,191,36,.15);color:var(--gold);border:1px solid rgba(251,191,36,.3);border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:9px;font-weight:700;animation:blink 1s ease-in-out infinite;}
+.triggered-banner{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;}
+/* ===== TRADE-UP CALC ===== */
+.tuc-wrap{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;}
+.tuc-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.tuc-result{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:sticky;top:76px;}
+.tuc-hd{padding:13px 18px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;justify-content:space-between;}
+.tuc-hd-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;}
+.tuc-col-hd{display:grid;grid-template-columns:26px 1fr 96px 90px 72px;gap:10px;padding:7px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;}
+.tuc-slot{display:grid;grid-template-columns:26px 1fr 96px 90px 72px;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid rgba(30,45,61,.35);}
+.tuc-slot:last-child{border-bottom:none;}
+.tuc-num{width:22px;height:22px;border-radius:50%;background:var(--surface2);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);flex-shrink:0;transition:all .2s;}
+.tuc-slot.filled .tuc-num{background:rgba(249,115,22,.15);border-color:rgba(249,115,22,.3);color:var(--accent);}
+.tuc-inp{background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:6px 9px;color:var(--text);font-family:'Exo 2',sans-serif;font-size:12px;outline:none;width:100%;transition:border-color .15s;}
+.tuc-inp:focus{border-color:var(--accent);}
+.tuc-inp::placeholder{color:var(--text3);font-size:11px;}
+.tuc-sel{background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:6px 8px;color:var(--text);font-family:'Exo 2',sans-serif;font-size:12px;outline:none;cursor:pointer;width:100%;}
+.tuc-stat{padding:13px 18px;border-bottom:1px solid var(--border);}
+.tuc-stat:last-child{border-bottom:none;}
+.tuc-stat-lbl{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;}
+.tuc-stat-val{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;line-height:1.1;}
+.tuc-stat-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:3px;}
+.tuc-bar-wrap{height:5px;border-radius:99px;background:var(--surface2);margin-top:8px;overflow:hidden;}
+.tuc-bar{height:100%;border-radius:99px;transition:width .4s ease,background .4s;}
+.ev-pos{color:var(--green);}.ev-neg{color:var(--red);}
+.out-row{display:grid;grid-template-columns:22px 1fr 68px 88px 88px 72px;gap:10px;align-items:center;margin-bottom:8px;}
+.out-col-hd{display:grid;grid-template-columns:22px 1fr 68px 88px 88px 72px;gap:10px;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--border);font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;}
+.tuc-del-btn{width:20px;height:20px;border-radius:50%;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);color:var(--red);font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+@media(max-width:1100px){.tuc-wrap{grid-template-columns:1fr;}}
+
+
+/* ===== BENCHMARK COMPARISON ===== */
+.bench-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;overflow:hidden;}
+.bench-section-hd{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.bench-btn{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:12px;letter-spacing:0.5px;}
+.bench-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(249,115,22,.08);}
+.bench-cards-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.bench-card{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:12px 14px;position:relative;overflow:hidden;}
+.bench-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.bench-card-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}
+.bench-card-val{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;line-height:1;}
+.bench-card-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:4px;}
+.bench-winner{border-color:rgba(34,197,94,.3);}
+.bench-winner::before{background:linear-gradient(90deg,var(--green),transparent);}
+@media(max-width:900px){.bench-cards-grid{grid-template-columns:repeat(2,1fr);}}
+
+
+
+/* Electron window chrome */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, .mono, .item-name { -webkit-user-select: text; user-select: text; }
+/* Titlebar drag region on Mac */
+header { -webkit-app-region: drag; }
+header button, header input, header a { -webkit-app-region: no-drag; }
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+<header>
+  <div class="logo">
+    <div class="logo-icon">◆</div>
+    <div class="logo-text">CS2 <span>VAULT</span></div>
+  </div>
+  <div class="header-right">
+    <div class="price-source-badge">
+      <div class="status-dot offline" id="apiStatus"></div>
+      <span id="apiStatusText">NO API KEY</span>
+    </div>
+    <input type="password" class="api-key-input" id="apiKeyInput" placeholder="CSFloat API Key" oninput="saveApiKey(this.value)">
+    <button class="btn btn-secondary btn-sm" onclick="refreshAllPrices()" id="refreshBtn">↻ Refresh Prices</button>
+    <span id="refreshScopeLabel" style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;"></span>
+  </div>
+</header>
+<div class="update-banner" id="updateBanner"></div>
+<nav>
+  <button class="nav-tab active" onclick="switchTab('holdings',this)">Holdings</button>
+  <button class="nav-tab" onclick="switchTab('history',this)">Trade History</button>
+  <button class="nav-tab" onclick="switchTab('analytics',this)">Analytics</button>
+  <button class="nav-tab" onclick="switchTab('skins',this)">Play Skins</button>
+  <button class="nav-tab" onclick="switchTab('portfolio',this)">Portfolio History</button>
+  <button class="nav-tab" onclick="switchTab('watchlist',this)">Watchlist</button>
+  <button class="nav-tab" onclick="switchTab('alerts',this)">🔔 Alerts</button>
+  <button class="nav-tab" onclick="switchTab('tradeup',this)">⚙ Trade-Up</button>
+  <button class="nav-tab" onclick="switchTab('intelligence',this)">⬡ Case Intel</button>
+  <button class="nav-tab" onclick="switchTab('settings',this)">⚙ Settings</button>
+</nav>
+<main>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="stat-label">Total Invested</div><div class="stat-value" id="stat-invested">£0.00</div><div class="stat-sub" id="stat-items">0 items</div></div>
+    <div class="stat-card blue"><div class="stat-label">Current Value</div><div class="stat-value" id="stat-value">£0.00</div><div class="stat-sub" id="stat-after-fee">after 2% fee</div></div>
+    <div class="stat-card" id="stat-pnl-card"><div class="stat-label">Unrealised P&L</div><div class="stat-value" id="stat-pnl">£0.00</div><div class="stat-sub" id="stat-pnl-pct">0.00%</div></div>
+    <div class="stat-card green"><div class="stat-label">Realised Profit</div><div class="stat-value positive" id="stat-realised">£0.00</div><div class="stat-sub" id="stat-trades">0 trades</div></div>
+    <div class="stat-card purple"><div class="stat-label">Total Fees Paid</div><div class="stat-value" id="stat-fees" style="color:var(--purple)">£0.00</div><div class="stat-sub">@ platform fee</div></div>
+  </div>
+
+  <div class="tab-panel active" id="tab-holdings">
+    <div class="toolbar">
+      <div class="search-box"><input type="text" placeholder="Search items..." oninput="filterTable(this.value)" id="searchInput"></div>
+      <select id="filterType" onchange="filterTable(document.getElementById('searchInput').value);updateRefreshScopeLabel()">
+        <option value="">All Types</option><option value="skin">Skins</option><option value="case">Cases</option>
+        <option value="sticker">All Stickers</option>
+        <option value="character">↳ Character Craft</option>
+        <option value="elemental">↳ Elemental Craft</option>
+        <option value="austin">↳ Austin Major</option>
+        <option value="armory">All Armory</option>
+        <option value="skin">All Skins</option>
+        <option value="graphic">↳ Graphic Design</option>
+        <option value="gallery">↳ Gallery Case</option>
+        <option value="knife">Knives/Gloves</option>
+      </select>
+      <select id="filterStatus" onchange="filterTable(document.getElementById('searchInput').value)">
+        <option value="">All Status</option><option value="profit">In Profit</option><option value="loss">At Loss</option>
+      </select>
+      <button class="btn btn-secondary" onclick="exportCSV()">↓ Export CSV</button>
+      <button class="btn btn-secondary" onclick="openBulkSellModal()">⊞ Bulk Sell</button>
+      <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
+    </div>
+    <div id="heatmapWrap" style="display:none;">
+      <div class="section-heading" style="margin-bottom:12px;">Price Heatmap</div>
+      <div class="heatmap-grid" id="heatmapGrid"></div>
+    </div>
+    <div class="toolbar" style="margin-bottom:8px;margin-top:-4px;">
+      <button class="btn btn-secondary btn-sm" onclick="toggleHeatmap()" id="heatmapToggleBtn">⊞ Show Heatmap</button>
+      <button class="btn btn-secondary btn-sm" onclick="toggleCompareMode()" id="compareModeBtn" title="Show CSFloat vs Steam vs Skinport" style="margin-left:6px;">⊟ Single View</button>
+      <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="priceChangeNote"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="holdingsTable"><thead><tr>
+        <th onclick="sortTable('name')">Item ↕</th><th onclick="sortTable('type')">Type ↕</th>
+        <th onclick="sortTable('qty')">Qty ↕</th><th onclick="sortTable('buyPrice')">Buy Price ↕</th>
+        <th onclick="sortTable('buyDate')">Date ↕</th><th onclick="sortTable('totalInvested')">Total Invested ↕</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th><th class="plat-header">🟣 Skinport</th>
+        <th onclick="sortTable('pnl')">P&L ↕</th><th onclick="sortTable('roi')">ROI ↕</th><th>Refreshed</th><th>Actions</th>
+      </tr></thead><tbody id="holdingsBody"></tbody></table>
+      <div class="empty-state" id="holdingsEmpty" style="display:none"><div class="empty-icon">◈</div><h3>No Holdings</h3><p>Click + Add Item to get started</p></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-history">
+    <div class="toolbar">
+      <div class="search-box"><input type="text" placeholder="Search sold items..." oninput="filterHistory(this.value)"></div>
+      <button class="btn btn-secondary" onclick="exportHistoryCSV()">↓ Export CSV</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-portfolio">
+    <div class="toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="takeSnapshot()">📸 Take Snapshot Now</button>
+      <span style="font-size:11px;color:var(--text3);">Auto-snapshot on the 3rd of each month. Last: <span id="lastSnapshot">—</span></span>
+    </div>
+    <div class="toolbar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm chart-cat-btn active" onclick="setChartCategory('all',this)">All</button>
+      <button class="btn btn-secondary btn-sm chart-cat-btn" onclick="setChartCategory('case',this)">Cases</button>
+      <button class="btn btn-secondary btn-sm chart-cat-btn" onclick="setChartCategory('sticker',this)">Stickers</button>
+      <button class="btn btn-secondary btn-sm chart-cat-btn" onclick="setChartCategory('armory',this)">Armory</button>
+      <button class="btn btn-secondary btn-sm chart-cat-btn" onclick="setChartCategory('skin',this)">Skins</button>
+    </div>
+    <!-- Overlays row -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+      <span style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-right:4px;">Events:</span>
+      <button class="btn btn-secondary btn-sm overlay-btn active" id="overlayUpdatesBtn" onclick="toggleOverlay('updates',this)">🎮 CS2 Updates</button>
+    </div>
+
+    <!-- Benchmark comparison section -->
+    <div class="bench-section">
+      <div class="bench-section-hd">
+        <div>
+          <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;">Compare vs Market Benchmarks</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:3px;">Portfolio ROI indexed to 100 at first snapshot — direct apples-to-apples comparison</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm bench-btn" id="benchmarkSPBtn" onclick="toggleBenchmark('sp500',this)">
+            <span style="color:#3b82f6;">▬</span> S&amp;P 500
+          </button>
+          <button class="btn btn-secondary btn-sm bench-btn" id="benchmarkBTCBtn" onclick="toggleBenchmark('btc',this)">
+            <span style="color:#f7931a;">▬</span> Bitcoin
+          </button>
+          <button class="btn btn-secondary btn-sm bench-btn" id="benchmarkGoldBtn" onclick="toggleBenchmark('gold',this)">
+            <span style="color:#eab308;">▬</span> Gold
+          </button>
+        </div>
+      </div>
+      <!-- Benchmark summary cards — shown when at least one benchmark active -->
+      <div id="benchSummaryCards" style="display:none;padding:12px 16px;border-top:1px solid var(--border);display:none;">
+        <div class="bench-cards-grid" id="benchCards"></div>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="padding:20px;margin-top:0;">
+      <canvas id="portfolioChart" style="width:100%;height:440px;"></canvas>
+    </div>
+    <div class="table-wrap" style="padding:20px;margin-top:16px;">
+      <div class="section-heading">Snapshot History — <span id="snapshotCatLabel">All Categories</span></div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">Date</th>
+          <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);">Total Invested</th>
+          <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);">Portfolio Value</th>
+          <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);">Unrealised P&L</th>
+          <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);">ROI %</th>
+          <th style="text-align:right;padding:8px;border-bottom:1px solid var(--border);">Actions</th>
+        </tr></thead>
+        <tbody id="snapshotTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-skins">
+    <div class="toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="refreshSkinPrices()" id="refreshSkinsBtn">↻ Refresh Skin Prices</button>
+      <span id="skinsStatus" style="font-size:11px;color:var(--text3);">Prices fetch only when you click refresh on this tab</span>
+    </div>
+    <div class="table-wrap">
+      <table id="skinsTable"><thead><tr>
+        <th>Item</th><th>Qty</th><th>Buy Price</th><th>Total Invested</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th><th class="plat-header">🟣 Skinport</th><th>P&L</th><th>Actions</th>
+      </tr></thead><tbody id="skinsBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-watchlist">
+    <div class="toolbar" style="margin-bottom:16px;">
+      <button class="btn btn-primary" onclick="openAddWatchModal()">+ Add to Watchlist</button>
+      <span style="font-size:11px;color:var(--text3);">Track items you don't own yet. Prices fetch with your main refresh.</span>
+    </div>
+    <div id="watchlistEmpty" class="empty-state" style="display:none;"><div class="empty-icon">◎</div><h3>Watchlist Empty</h3><p>Add items you're monitoring to track prices</p></div>
+    <div id="watchlistList"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-analytics">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+      <div class="table-wrap" style="padding:20px;"><div class="section-heading">By Type</div><div id="analyticsType"></div></div>
+      <div class="table-wrap" style="padding:20px;"><div class="section-heading">Top 5 Best Performers</div><div id="analyticsTop"></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+      <div class="table-wrap" style="padding:20px;"><div class="section-heading">Bottom 5 Worst Performers</div><div id="analyticsBottom"></div></div>
+      <div class="table-wrap" style="padding:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div class="section-heading" style="margin-bottom:0;">Monthly P&L</div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="exportMonthlyCSV()">↓ CSV</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportMonthlyPDF()">↓ PDF</button>
+          </div>
+        </div>
+        <div id="analyticsMontly"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="tab-panel" id="tab-alerts">
+    <div class="alerts-summary" id="alertsSummary"></div>
+    <div class="toolbar" style="margin-bottom:16px;">
+      <button class="btn btn-primary" onclick="openAddAlertModal()">+ New Alert</button>
+      <button class="btn btn-secondary" onclick="refreshAlertPrices()" id="alertRefreshBtn">↻ Check Prices Now</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearTriggeredAlerts()">Clear Triggered</button>
+      <span style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;" id="alertsCheckedAt"></span>
+    </div>
+    <div id="alertsTriggeredBanner" style="display:none;" class="triggered-banner">
+      <span style="font-size:22px;">🔔</span>
+      <div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:1px;color:var(--gold);">PRICE TARGET HIT</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="alertsBannerText"></div>
+      </div>
+    </div>
+    <div id="alertsEmpty" class="empty-state" style="display:none;">
+      <div class="empty-icon">🔔</div><h3>No Alerts Set</h3><p>Get notified when any item hits your target price</p>
+      <button class="btn btn-primary" style="margin-top:16px;" onclick="openAddAlertModal()">+ Create First Alert</button>
+    </div>
+    <div id="alertsList"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-tradeup">
+    <div style="margin-bottom:18px;">
+      <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">⚙ Trade-Up Contract Calculator</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">10 skins of equal rarity → 1 skin of the next rarity · Enter costs, floats and all possible outputs to calculate expected value and break-even</div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div><div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:5px;">Input Rarity</div>
+        <select class="tuc-sel" id="tucRarity" onchange="calcTradeUp()" style="width:170px;">
+          <option value="consumer">Consumer (White)</option>
+          <option value="industrial">Industrial (Light Blue)</option>
+          <option value="milspec" selected>Mil-Spec (Blue)</option>
+          <option value="restricted">Restricted (Purple)</option>
+          <option value="classified">Classified (Pink)</option>
+        </select></div>
+      <div><div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:5px;">StatTrak™</div>
+        <select class="tuc-sel" id="tucST" onchange="calcTradeUp()" style="width:110px;">
+          <option value="no">Normal</option><option value="yes">StatTrak™</option>
+        </select></div>
+      <div><div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:5px;">Platform Fee %</div>
+        <input type="number" class="tuc-inp" id="tucFee" value="13" step="0.5" style="width:75px;" oninput="calcTradeUp()"></div>
+      <div style="display:flex;gap:8px;align-self:flex-end;">
+        <button class="btn btn-secondary btn-sm" onclick="clearTUC()">✕ Clear</button>
+        <button class="btn btn-secondary btn-sm" onclick="fillTUCFromSkins()">↓ Fill from Skins</button>
+      </div>
+    </div>
+    <div class="tuc-wrap">
+      <div>
+        <div class="tuc-panel" style="margin-bottom:16px;">
+          <div class="tuc-hd">
+            <div class="tuc-hd-title">10 Input Skins</div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);">Output float = avg of all input floats</div>
+          </div>
+          <div class="tuc-col-hd"><div></div><div>Skin Name</div><div>Cost (£)</div><div>Float Value</div><div>Wear</div></div>
+          <div id="tucSlots"></div>
+        </div>
+        <div class="tuc-panel">
+          <div class="tuc-hd">
+            <div class="tuc-hd-title">Possible Outputs &nbsp;<span id="tucNextRarity" style="font-size:11px;font-weight:400;font-family:'Exo 2',sans-serif;"></span></div>
+            <button class="btn btn-secondary btn-sm" onclick="addTUCOut()">+ Add Output</button>
+          </div>
+          <div style="padding:14px 16px;">
+            <div class="out-col-hd"><div></div><div>Skin Name</div><div>Chance %</div><div>Sell Price (£)</div><div>EV Contrib</div><div>Output Wear</div></div>
+            <div id="tucOutputs"></div>
+            <div style="margin-top:10px;font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Add every possible output skin. Chances must sum to 100%.</div>
+          </div>
+        </div>
+      </div>
+      <div class="tuc-result">
+        <div class="tuc-hd">
+          <div class="tuc-hd-title">Results</div>
+          <div id="tucBadge" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);">—</div>
+        </div>
+        <div class="tuc-stat"><div class="tuc-stat-lbl">Total Input Cost</div><div class="tuc-stat-val" id="tucCostVal">£0.00</div><div class="tuc-stat-sub" id="tucCostSub">Avg: £0.000 per skin</div></div>
+        <div class="tuc-stat"><div class="tuc-stat-lbl">Expected Value (after fee)</div><div class="tuc-stat-val" id="tucEVVal">£0.00</div><div class="tuc-stat-sub" id="tucEVSub">—</div></div>
+        <div class="tuc-stat">
+          <div class="tuc-stat-lbl">Expected Profit / Loss</div>
+          <div class="tuc-stat-val" id="tucProfitVal">£0.00</div>
+          <div class="tuc-stat-sub" id="tucProfitSub">0.00%</div>
+          <div class="tuc-bar-wrap"><div class="tuc-bar" id="tucProfitBar" style="width:50%;background:var(--text3);"></div></div>
+        </div>
+        <div class="tuc-stat"><div class="tuc-stat-lbl">Output Float &amp; Wear</div><div class="tuc-stat-val" id="tucFloatVal" style="font-size:18px;">—</div><div class="tuc-stat-sub" id="tucWearVal">Enter floats above</div></div>
+        <div class="tuc-stat"><div class="tuc-stat-lbl">Break-Even Sell Price</div><div class="tuc-stat-val" id="tucBEVal" style="font-size:18px;">—</div><div class="tuc-stat-sub">Output must sell at or above this</div></div>
+        <div class="tuc-stat">
+          <div class="tuc-stat-lbl">Verdict</div>
+          <div id="tucVerdictVal" style="font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:700;color:var(--text3);margin-top:4px;">—</div>
+          <div id="tucVerdictSub" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px;line-height:1.6;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-intelligence">
+    <div class="ci-header">
+      <div>
+        <div class="ci-title">CASE INTELLIGENCE</div>
+        <div class="ci-subtitle">Live investment scoring · Supply analysis · Market signals</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <div class="ci-last-update">Last updated: <span id="ciLastUpdate">—</span></div>
+        <button class="btn btn-primary btn-sm" onclick="runCaseIntelligence()" id="ciRefreshBtn">⬡ Run Analysis</button>
+      </div>
+    </div>
+
+    <!-- Score methodology legend -->
+    <div class="ci-legend">
+      <div class="ci-legend-title">HOW THE SCORE IS CALCULATED</div>
+      <div class="ci-legend-items">
+        <div class="ci-legend-item"><span class="ci-legend-dot" style="background:#38bdf8"></span>Supply Depletion 30%</div>
+        <div class="ci-legend-item"><span class="ci-legend-dot" style="background:#a78bfa"></span>Discontinuation Age 25%</div>
+        <div class="ci-legend-item"><span class="ci-legend-dot" style="background:#22c55e"></span>Price vs ATL 25%</div>
+        <div class="ci-legend-item"><span class="ci-legend-dot" style="background:#f97316"></span>Unbox Trend 20%</div>
+      </div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="ciLoading" style="display:none;text-align:center;padding:60px 20px;">
+      <div class="ci-spinner"></div>
+      <div style="margin-top:16px;font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text3);" id="ciLoadingText">Fetching market data...</div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="ciEmpty" style="text-align:center;padding:60px 20px;color:var(--text3);">
+      <div style="font-size:48px;margin-bottom:16px;opacity:0.3;">⬡</div>
+      <div style="font-family:'Rajdhani',sans-serif;font-size:18px;letter-spacing:1px;color:var(--text2);margin-bottom:8px;">No Analysis Run Yet</div>
+      <div style="font-size:13px;margin-bottom:20px;">Click Run Analysis to fetch live market data and score your cases</div>
+      <button class="btn btn-primary" onclick="runCaseIntelligence()">⬡ Run Analysis Now</button>
+    </div>
+
+    <!-- Results -->
+    <div id="ciResults" style="display:none;">
+      <!-- Summary bar -->
+      <div class="ci-summary-grid" id="ciSummaryGrid"></div>
+      <!-- Cards grid -->
+      <div class="ci-cards-grid" id="ciCardsGrid"></div>
+      <!-- Detail table -->
+      <div class="table-wrap" style="margin-top:24px;">
+        <div style="padding:16px 20px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <div class="section-heading" style="margin:0;">Full Data Table</div>
+          <div style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Sorted by Score ↓</div>
+        </div>
+        <table>
+          <thead><tr>
+            <th>Case</th>
+            <th>Score</th>
+            <th>Grade</th>
+            <th>Steam Listings</th>
+            <th>Depletion</th>
+            <th>Months Discontinued</th>
+            <th>Current Price</th>
+            <th>vs ATL</th>
+            <th>Unbox Trend</th>
+            <th>Your Holdings</th>
+            <th>Signal</th>
+          </tr></thead>
+          <tbody id="ciTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ===== SETTINGS / MIGRATION TAB ===== -->
+  <div class="tab-panel" id="tab-settings">
+    <div style="max-width:760px;">
+
+      <!-- App info -->
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;">
+        <div style="width:52px;height:52px;background:var(--accent);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">◆</div>
+        <div>
+          <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;letter-spacing:2px;">CS2 VAULT</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);" id="settingsVersion">Desktop App</div>
+        </div>
+      </div>
+
+      <!-- API Key -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">CSFloat API Key</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Your API key is stored securely in the local database, never transmitted anywhere except to CSFloat directly.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <input type="password" id="settingsApiKey" placeholder="Paste your CSFloat API key here"
+            style="flex:1;min-width:280px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;">
+          <button class="btn btn-primary" onclick="saveSettingsApiKey()">Save Key</button>
+          <button class="btn btn-secondary" onclick="testApiKey()">Test Connection</button>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;">
+          Get your key at <span style="color:var(--accent);">csfloat.com → Profile → API</span>
+        </div>
+      </div>
+
+      <!-- Data migration -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Import from Browser Version</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">
+          If you were using the browser HTML tracker, paste your exported data here to migrate everything across.
+        </p>
+        <div style="margin-bottom:12px;">
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Step 1 — In the old browser tracker, open DevTools (F12) → Console and run:</div>
+          <div style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:12px 14px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text2);line-height:1.8;white-space:pre-wrap;">copy(JSON.stringify({holdings:localStorage.getItem('cs2vault_holdings'),history:localStorage.getItem('cs2vault_history'),snapshots:localStorage.getItem('cs2vault_snapshots'),skins:localStorage.getItem('cs2vault_skins'),watchlist:localStorage.getItem('cs2vault_watchlist'),alerts:localStorage.getItem('cs2vault_alerts'),apikey:localStorage.getItem('cs2vault_apikey')}))</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px;">This copies the JSON to your clipboard automatically.</div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Step 2 — Paste it here:</div>
+          <textarea id="migrationData" rows="5" placeholder='{"holdings":"...","history":"...",...}'
+            style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="runMigration()">↓ Import Data</button>
+          <span style="font-size:11px;color:var(--text3);" id="migrationStatus"></span>
+        </div>
+      </div>
+
+      <!-- Data management -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Data Management</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:14px;">
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Database Location</div>
+            <div style="font-size:12px;color:var(--text2);" id="settingsDbPath">Loading...</div>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:14px;">
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Holdings in Database</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;" id="settingsHoldingCount">—</div>
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-secondary" onclick="exportAllData()">↓ Export Full Backup (JSON)</button>
+          <button class="btn btn-danger btn-sm" onclick="clearAllData()">⚠ Clear All Data</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+</div>
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Bulk Sell Modal -->
+<div class="modal-overlay" id="addAlertModal">
+  <div class="modal" style="width:480px;">
+    <div class="modal-header"><div class="modal-title">New Price <span>Alert</span></div><button class="modal-close" onclick="closeModal('addAlertModal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Quick-fill from holdings</label>
+        <select id="alertItemSel" onchange="prefillAlert(this.value)"><option value="">— select a holding —</option></select></div>
+      <div class="form-row"><label>Item Name</label><input type="text" id="alertName" placeholder="e.g. Snakebite Case"></div>
+      <div class="form-row"><label>Market Hash (for price lookup)</label><input type="text" id="alertHash" placeholder="e.g. Snakebite Case"></div>
+      <div class="form-two">
+        <div class="form-row"><label>Direction</label>
+          <select id="alertDir"><option value="below">Drops BELOW target</option><option value="above">Rises ABOVE target</option></select></div>
+        <div class="form-row"><label>Target Price (£)</label><input type="number" id="alertTarget" step="0.001" placeholder="0.000"></div>
+      </div>
+      <div class="form-row"><label>Note (optional)</label><input type="text" id="alertNote" placeholder="e.g. Buy target, take profit..."></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('addAlertModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAlert()">Save Alert</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="bulkSellModal">
+  <div class="modal" style="width:680px;">
+    <div class="modal-header"><div class="modal-title">Bulk <span>Sell Calculator</span></div><button class="modal-close" onclick="closeModal('bulkSellModal')">✕</button></div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <div class="form-row" style="margin:0;flex:1;min-width:180px;"><label>Default Sell Price Per Item (£)</label><input type="number" id="bulkSellPrice" step="0.01" oninput="calcBulkSell()" placeholder="0.00"></div>
+        <div class="form-row" style="margin:0;"><label>Fee %</label><input type="number" id="bulkFee" value="2" step="0.1" style="width:80px;" oninput="calcBulkSell()"></div>
+      </div>
+      <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead style="background:var(--surface2);position:sticky;top:0;">
+            <tr>
+              <th style="padding:8px 10px;text-align:left;"><input type="checkbox" id="bulkSelectAll" onchange="bulkSelectAll(this.checked)"> All</th>
+              <th style="padding:8px 10px;text-align:left;">Item</th>
+              <th style="padding:8px 10px;text-align:right;">Qty</th>
+              <th style="padding:8px 10px;text-align:right;">Sell Price</th>
+              <th style="padding:8px 10px;text-align:right;">Net Profit</th>
+            </tr>
+          </thead>
+          <tbody id="bulkSellBody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;background:var(--surface2);border-radius:8px;padding:14px 18px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;" id="bulkSummary">
+        <div><div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-bottom:4px;">GROSS REVENUE</div><div id="bulkGross" style="font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:700;">£0.00</div></div>
+        <div><div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-bottom:4px;">TOTAL FEES</div><div id="bulkFees" style="font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:700;color:var(--red);">-£0.00</div></div>
+        <div><div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-bottom:4px;">NET PROFIT</div><div id="bulkNet" style="font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:700;">£0.00</div></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('bulkSellModal')">Close</button></div>
+  </div>
+</div>
+
+<!-- Watchlist Modal -->
+<div class="modal-overlay" id="watchModal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Add to <span>Watchlist</span></div><button class="modal-close" onclick="closeModal('watchModal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Item Name</label><input type="text" id="watchName"></div>
+      <div class="form-row"><label>Market Hash Name</label><input type="text" id="watchHash" placeholder="Exact Steam market name"></div>
+      <div class="form-two">
+        <div class="form-row"><label>Target Buy Price (£)</label><input type="number" id="watchTarget" step="0.01" placeholder="Alert when below this"></div>
+        <div class="form-row"><label>Notes</label><input type="text" id="watchNotes"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('watchModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveWatchItem()">Add to Watchlist</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<!-- Top-Up / Add More Holdings Modal -->
+<div class="modal-overlay" id="topupModal">
+  <div class="modal" style="width:480px;">
+    <div class="modal-header">
+      <div class="modal-title">Add More <span id="topupItemName">Units</span></div>
+      <button class="modal-close" onclick="closeModal('topupModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="topupId">
+
+      <!-- Current holding summary -->
+      <div id="topupCurrentSummary" style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Current Position</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Qty Held</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;" id="topupCurrQty">—</div>
+          </div>
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Avg Buy Price</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;" id="topupCurrAvg">—</div>
+          </div>
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Total Invested</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;" id="topupCurrTotal">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- New purchase inputs -->
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">New Purchase</div>
+      <div class="form-two">
+        <div class="form-row">
+          <label>Quantity to Add</label>
+          <input type="number" id="topupQty" min="1" value="1" oninput="updateTopupPreview()">
+        </div>
+        <div class="form-row">
+          <label>Price per Unit (£)</label>
+          <input type="number" id="topupPrice" step="0.001" placeholder="0.000" oninput="updateTopupPreview()">
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Date Bought</label>
+        <input type="date" id="topupDate">
+      </div>
+
+      <!-- Preview of new blended position -->
+      <div id="topupPreview" style="display:none;background:rgba(249,115,22,.05);border:1px solid rgba(249,115,22,.2);border-radius:7px;padding:12px 16px;margin-top:4px;">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Updated Position Preview</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">New Total Qty</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;color:var(--accent);" id="topupNewQty">—</div>
+          </div>
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">New Avg Price</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;color:var(--accent);" id="topupNewAvg">—</div>
+          </div>
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">New Total Invested</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;color:var(--accent);" id="topupNewTotal">—</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(249,115,22,.2);font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);" id="topupAvgNote"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('topupModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTopup()">+ Add to Position</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="itemModal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="modalTitle">Add <span>Investment</span></div><button class="modal-close" onclick="closeModal('itemModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="editId">
+      <div class="form-row"><label>Item Name</label><input type="text" id="itemName" placeholder="e.g. AK-47 | Redline (Field-Tested)"></div>
+      <div class="form-two">
+        <div class="form-row"><label>Type</label><select id="itemType"><option value="skin">Skin</option><option value="case">Case</option><option value="sticker">Sticker/Capsule</option><option value="armory">Armory</option><option value="knife">Knife/Glove</option></select></div>
+        <div class="form-row"><label>Quantity</label><input type="number" id="itemQty" value="1" min="1"></div>
+      </div>
+      <div class="form-two">
+        <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="itemBuyPrice" placeholder="0.00" step="0.01"></div>
+        <div class="form-row"><label>Date Bought</label><input type="date" id="itemBuyDate"></div>
+      </div>
+      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="itemMarketHash" placeholder="e.g. Recoil Case"><div class="fee-note">Exact Steam market name for auto price fetching</div></div>
+      <div class="form-row"><label>Notes</label><textarea id="itemNotes" rows="2" style="resize:vertical"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('itemModal')">Cancel</button><button class="btn btn-primary" onclick="saveItem()">Save</button></div>
+  </div>
+</div>
+
+<!-- Sell Modal -->
+<div class="modal-overlay" id="sellModal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Sell <span>Item</span></div><button class="modal-close" onclick="closeModal('sellModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="sellItemId">
+      <div class="form-row"><label>Item</label><input type="text" id="sellItemName" readonly style="opacity:.6"></div>
+      <div class="form-two">
+        <div class="form-row"><label>Qty to Sell</label><input type="number" id="sellQty" min="1" oninput="updateSellCalc()"></div>
+        <div class="form-row"><label>Sell Price per unit (£)</label><input type="number" id="sellPrice" step="0.01" oninput="updateSellCalc()"></div>
+      </div>
+      <div class="form-two">
+        <div class="form-row"><label>Date Sold</label><input type="date" id="sellDate"></div>
+        <div class="form-row"><label>Platform Fee %</label><input type="number" id="sellFee" value="2" step="0.1" oninput="updateSellCalc()"><div class="fee-note">CSFloat=2% | Steam=15%</div></div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:4px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;">
+          <div><div class="sold-col-label">Gross</div><div class="sold-col-val" id="calcGross">£0.00</div></div>
+          <div><div class="sold-col-label">Fee</div><div class="sold-col-val negative" id="calcFee">-£0.00</div></div>
+          <div><div class="sold-col-label">Net Profit</div><div class="sold-col-val" id="calcProfit">£0.00</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('sellModal')">Cancel</button><button class="btn btn-primary" onclick="confirmSell()">Confirm Sale</button></div>
+  </div>
+</div>
+
+<!-- Manual Price Modal -->
+<div class="modal-overlay" id="priceModal">
+  <div class="modal" style="width:380px;">
+    <div class="modal-header"><div class="modal-title">Manual <span>Price</span></div><button class="modal-close" onclick="closeModal('priceModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="priceItemId">
+      <div class="form-row"><label>Lowest Listed (£)</label><input type="number" id="priceLowest" step="0.01"></div>
+      <div class="form-row"><label>Last Sold (£)</label><input type="number" id="priceLastSold" step="0.01"></div>
+      <div class="form-row"><label>Avg 7d (£)</label><input type="number" id="priceAvg7d" step="0.01"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('priceModal')">Cancel</button><button class="btn btn-primary" onclick="saveManualPrice()">Update</button></div>
+  </div>
+</div>
+
+<script>
+/**
+ * Storage Bridge - inline version
+ * Provides synchronous-looking localStorage replacement.
+ * All data kept in window._store (in-memory).
+ * Writes flush to electron-store via IPC asynchronously.
+ */
+const STORE_KEYS = [
+  'cs2vault_holdings',
+  'cs2vault_history',
+  'cs2vault_snapshots',
+  'cs2vault_skins',
+  'cs2vault_watchlist',
+  'cs2vault_alerts',
+  'cs2vault_apikey',
+];
+
+window._store = {};
+window._storePending = 0;
+
+window._storeSet = function(key, value) {
+  window._store[key] = value;
+  if (window.cs2vault && window.cs2vault.store) {
+    window._storePending++;
+    window.cs2vault.store.set(key, value)
+      .then(() => {
+        window._storePending--;
+        console.log('[Store] Saved:', key, '(' + String(value).length + ' chars)');
+      })
+      .catch(function(e) {
+        window._storePending--;
+        console.error('[Store] WRITE FAILED:', key, e);
+      });
+  } else {
+    console.error('[Store] IPC not available - data NOT saved to disk!');
+  }
+};
+
+async function initStore() {
+  if (!window.cs2vault || !window.cs2vault.store) {
+    console.error('[Store] cs2vault IPC bridge missing!');
+    return;
+  }
+  var loads = STORE_KEYS.map(async function(key) {
+    try {
+      var val = await window.cs2vault.store.get(key);
+      if (val !== null && val !== undefined) {
+        window._store[key] = val;
+        console.log('[Store] Loaded:', key, '(' + String(val).length + ' chars)');
+      }
+    } catch(e) {
+      console.error('[Store] Failed to load', key, e);
+    }
+  });
+  await Promise.all(loads);
+  console.log('[Store] Init complete. Keys in memory:', Object.keys(window._store).join(', ') || 'none');
+}
+</script>
+<script src="app.js"></script>
+<script>
+  // Bootstrap: load storage then init the app
+  (async () => {
+    try {
+      await initStore();
+    } catch(e) {
+      console.error('[Boot] initStore failed:', e);
+      // Continue anyway with empty store - app still works
+    }
+    try {
+      initApp();
+    } catch(e) {
+      console.error('[Boot] initApp failed:', e);
+      // Show error to user
+      const main = document.querySelector('main');
+      if (main) main.innerHTML += `<div style="position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#ef4444;color:#fff;padding:16px 24px;border-radius:8px;font-family:monospace;font-size:12px;z-index:9999;max-width:600px;">
+        <strong>Startup Error</strong><br>${e.message}<br><small>Open DevTools (Ctrl+Shift+I) for details</small>
+      </div>`;
+    }
+  })();
+</script>
+
+<!-- Target Price Modal -->
+<div class="modal-overlay" id="targetModal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3>🎯 Set Target Price</h3>
+      <button class="modal-close" onclick="document.getElementById('targetModal').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="targetItemId">
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px;" id="targetItemName"></div>
+      <div style="display:flex;gap:24px;margin-bottom:16px;">
+        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;">Buy Price</div><div class="mono" id="targetBuyPrice" style="color:var(--text2);"></div></div>
+        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;">Current Price</div><div class="mono" id="targetCurrentPrice" style="color:var(--text2);"></div></div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label class="form-label">Target Sell Price (£)</label>
+        <input type="number" step="0.001" min="0" id="targetPriceInput" class="form-input" placeholder="e.g. 1.50" oninput="updateTargetPreview()">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button id="targetPreset25" class="btn btn-secondary btn-sm">+25%</button>
+        <button id="targetPreset50" class="btn btn-secondary btn-sm">+50%</button>
+        <button id="targetPreset100" class="btn btn-secondary btn-sm">+100%</button>
+        <button id="targetPreset200" class="btn btn-secondary btn-sm">+200%</button>
+      </div>
+      <div id="targetPreview" style="background:var(--bg3);border-radius:8px;padding:10px 14px;min-height:36px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="clearTarget()">Clear Target</button>
+      <button class="btn btn-primary" onclick="saveTarget()">Save Target</button>
+    </div>
+  </div>
+</div>
+
+<!-- PRICE HISTORY MODAL -->
+<div class="modal-overlay" id="priceHistoryModal">
+  <div class="modal-card" style="max-width:720px;">
+    <div class="modal-header">
+      <h3 id="phModalTitle">Price History</h3>
+      <button class="modal-close" onclick="closePriceHistoryModal()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:16px 24px 24px;">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
+        <button class="btn btn-secondary btn-sm ph-range-btn" data-days="7" onclick="setPHRange(7)">7d</button>
+        <button class="btn btn-secondary btn-sm ph-range-btn active" data-days="30" onclick="setPHRange(30)">30d</button>
+        <button class="btn btn-secondary btn-sm ph-range-btn" data-days="90" onclick="setPHRange(90)">90d</button>
+        <button class="btn btn-secondary btn-sm ph-range-btn" data-days="0" onclick="setPHRange(0)">All</button>
+        <span id="phDataPoints" style="font-size:11px;color:var(--text3);margin-left:auto;font-family:'Share Tech Mono',monospace;"></span>
+      </div>
+      <div style="position:relative;height:320px;">
+        <canvas id="priceHistoryChart"></canvas>
+      </div>
+      <div id="phSummary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px;"></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
