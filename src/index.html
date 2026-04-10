@@ -232,6 +232,30 @@ tr:hover .row-actions{opacity:1;}
 .update-banner.downloading{background:linear-gradient(90deg,rgba(59,130,246,.15),rgba(59,130,246,.08));color:var(--blue,#3b82f6);border-bottom:1px solid rgba(59,130,246,.2);}
 .update-banner.ready{background:linear-gradient(90deg,rgba(34,197,94,.15),rgba(34,197,94,.08));color:var(--green);border-bottom:1px solid rgba(34,197,94,.2);}
 
+/* ===== ARBITRAGE ===== */
+.arb-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}
+.arb-stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;text-align:center;}
+.arb-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:4px;}
+.arb-stat-val{font-size:18px;font-weight:700;font-family:'Share Tech Mono',monospace;}
+.arb-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;transition:border-color .2s;}
+.arb-card:hover{border-color:var(--accent);}
+.arb-card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);gap:12px;}
+.arb-card-name{font-weight:600;font-size:14px;}
+.arb-card-name small{display:block;font-weight:400;font-size:11px;color:var(--text3);margin-top:2px;}
+.arb-gap-badge{font-family:'Share Tech Mono',monospace;font-size:13px;font-weight:700;padding:4px 12px;border-radius:6px;white-space:nowrap;}
+.arb-gap-hot{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+.arb-gap-warm{background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.25);}
+.arb-card-body{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;padding:0;}
+.arb-plat{padding:14px 20px;border-right:1px solid var(--border);text-align:center;}
+.arb-plat:last-child{border-right:none;}
+.arb-plat-name{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:6px;}
+.arb-plat-price{font-size:16px;font-weight:700;font-family:'Share Tech Mono',monospace;}
+.arb-plat-fee{font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;margin-top:3px;}
+.arb-plat.arb-buy{background:rgba(34,197,94,.04);border-bottom:2px solid var(--green);}
+.arb-plat.arb-sell{background:rgba(239,68,68,.04);border-bottom:2px solid var(--red);}
+.arb-card-footer{padding:10px 20px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);border-top:1px solid var(--border);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;}
+@media(max-width:900px){.arb-summary{grid-template-columns:repeat(2,1fr);}}
+
 /* ===== PRICE HISTORY MODAL ===== */
 .ph-range-btn{min-width:40px;text-align:center;}
 .ph-range-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
@@ -343,6 +367,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   <button class="nav-tab" onclick="switchTab('portfolio',this)">Portfolio History</button>
   <button class="nav-tab" onclick="switchTab('watchlist',this)">Watchlist</button>
   <button class="nav-tab" onclick="switchTab('alerts',this)">🔔 Alerts</button>
+  <button class="nav-tab" onclick="switchTab('arbitrage',this)">⚡ Arbitrage</button>
   <button class="nav-tab" onclick="switchTab('tradeup',this)">⚙ Trade-Up</button>
   <button class="nav-tab" onclick="switchTab('intelligence',this)">⬡ Case Intel</button>
   <button class="nav-tab" onclick="switchTab('settings',this)">⚙ Settings</button>
@@ -530,6 +555,34 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <button class="btn btn-primary" style="margin-top:16px;" onclick="openAddAlertModal()">+ Create First Alert</button>
     </div>
     <div id="alertsList"></div>
+  </div>
+
+  <!-- ARBITRAGE TAB -->
+  <div class="tab-panel" id="tab-arbitrage">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
+      <div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">⚡ Arbitrage Scanner</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Price gaps across CSFloat, Steam and Skinport on your holdings — factoring in platform fees</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <label style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Min gap:</label>
+        <select id="arbMinGap" onchange="renderArbitrage()" style="font-size:12px;padding:4px 8px;">
+          <option value="5">5%</option>
+          <option value="10" selected>10%</option>
+          <option value="15">15%</option>
+          <option value="20">20%</option>
+          <option value="30">30%</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="renderArbitrage()">↻ Scan</button>
+      </div>
+    </div>
+    <div class="arb-summary" id="arbSummary"></div>
+    <div id="arbList"></div>
+    <div class="empty-state" id="arbEmpty" style="display:none;">
+      <div class="empty-icon">⚡</div>
+      <h3>No Arbitrage Found</h3>
+      <p>Refresh prices first, then come back to scan for cross-platform price gaps</p>
+    </div>
   </div>
 
   <div class="tab-panel" id="tab-tradeup">

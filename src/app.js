@@ -3011,6 +3011,157 @@ function populateSettingsFallback() {
   const vEl = document.getElementById('settingsVersion');
   if (vEl) vEl.textContent = 'Desktop App v1.0.0';
 }
+
+// ========================
+// ARBITRAGE DETECTION
+// ========================
+const PLATFORM_FEES = {
+  csfloat:  0.02,   // 2% seller fee
+  steam:    0.15,   // 15% Steam tax
+  skinport: 0.06,   // ~6% Skinport fee
+};
+
+const PLATFORM_LABELS = {
+  csfloat:  { icon: '🟠', name: 'CSFloat' },
+  steam:    { icon: '🟦', name: 'Steam' },
+  skinport: { icon: '🟣', name: 'Skinport' },
+};
+
+function detectArbitrage(minGapPct) {
+  const opportunities = [];
+
+  holdings.forEach(item => {
+    if (!item.prices?.platforms) return;
+    const plats = item.prices.platforms;
+
+    // Collect valid prices per platform
+    const prices = {};
+    ['csfloat', 'steam', 'skinport'].forEach(name => {
+      const p = plats[name];
+      if (!p) return;
+      const val = p.lowest || p.lastSold || p.avg7d || p.suggested || null;
+      if (val != null && val > 0) prices[name] = val;
+    });
+
+    const platNames = Object.keys(prices);
+    if (platNames.length < 2) return; // Need at least 2 platforms
+
+    // Find cheapest (buy) and most expensive (sell)
+    let buyPlat = null, sellPlat = null;
+    let buyPrice = Infinity, sellPrice = 0;
+
+    platNames.forEach(name => {
+      if (prices[name] < buyPrice) { buyPrice = prices[name]; buyPlat = name; }
+      if (prices[name] > sellPrice) { sellPrice = prices[name]; sellPlat = name; }
+    });
+
+    if (buyPlat === sellPlat || !buyPlat || !sellPlat) return;
+
+    // Calculate net profit after fees
+    const sellFee = PLATFORM_FEES[sellPlat] || 0;
+    const netSellPrice = sellPrice * (1 - sellFee);
+    const grossGap = sellPrice - buyPrice;
+    const netGap = netSellPrice - buyPrice;
+    const grossGapPct = (grossGap / buyPrice) * 100;
+    const netGapPct = (netGap / buyPrice) * 100;
+
+    if (grossGapPct < minGapPct) return; // Below threshold
+
+    const totalNetProfit = netGap * item.qty;
+
+    opportunities.push({
+      item,
+      buyPlat,
+      sellPlat,
+      buyPrice,
+      sellPrice,
+      netSellPrice,
+      grossGap,
+      grossGapPct,
+      netGap,
+      netGapPct,
+      totalNetProfit,
+      allPrices: prices,
+      qty: item.qty,
+    });
+  });
+
+  // Sort by net gap percentage descending
+  opportunities.sort((a, b) => b.grossGapPct - a.grossGapPct);
+  return opportunities;
+}
+
+function renderArbitrage() {
+  const minGap = parseInt(document.getElementById('arbMinGap')?.value) || 10;
+  const opps = detectArbitrage(minGap);
+
+  const listEl = document.getElementById('arbList');
+  const emptyEl = document.getElementById('arbEmpty');
+  const summaryEl = document.getElementById('arbSummary');
+
+  if (!opps.length) {
+    listEl.innerHTML = '';
+    emptyEl.style.display = 'block';
+    summaryEl.innerHTML = '';
+    return;
+  }
+
+  emptyEl.style.display = 'none';
+
+  // Summary stats
+  const totalProfit = opps.reduce((s, o) => s + (o.netGapPct > 0 ? o.totalNetProfit : 0), 0);
+  const profitable = opps.filter(o => o.netGapPct > 0).length;
+  const avgGap = opps.reduce((s, o) => s + o.grossGapPct, 0) / opps.length;
+  const bestOpp = opps[0];
+
+  summaryEl.innerHTML = `
+    <div class="arb-stat"><div class="arb-stat-label">Opportunities</div><div class="arb-stat-val">${opps.length}</div></div>
+    <div class="arb-stat"><div class="arb-stat-label">Profitable after fees</div><div class="arb-stat-val" style="color:var(--green);">${profitable}</div></div>
+    <div class="arb-stat"><div class="arb-stat-label">Avg gap</div><div class="arb-stat-val">${avgGap.toFixed(1)}%</div></div>
+    <div class="arb-stat"><div class="arb-stat-label">Total potential</div><div class="arb-stat-val" style="color:${totalProfit >= 0 ? 'var(--green)' : 'var(--red)'};">${totalProfit >= 0 ? '+' : ''}£${totalProfit.toFixed(2)}</div></div>
+  `;
+
+  // Render cards
+  listEl.innerHTML = opps.map(o => {
+    const gapCls = o.grossGapPct >= 20 ? 'arb-gap-hot' : 'arb-gap-warm';
+    const buyInfo = PLATFORM_LABELS[o.buyPlat];
+    const sellInfo = PLATFORM_LABELS[o.sellPlat];
+    const netColor = o.netGapPct > 0 ? 'var(--green)' : 'var(--red)';
+
+    // Build platform cells
+    const platCells = ['csfloat', 'steam', 'skinport'].map(name => {
+      const info = PLATFORM_LABELS[name];
+      const price = o.allPrices[name];
+      const isBuy = name === o.buyPlat;
+      const isSell = name === o.sellPlat;
+      const cls = isBuy ? 'arb-plat arb-buy' : isSell ? 'arb-plat arb-sell' : 'arb-plat';
+      const label = isBuy ? '← BUY HERE' : isSell ? '→ SELL HERE' : '';
+      const fee = PLATFORM_FEES[name] || 0;
+      const feeLabel = isSell ? `After ${(fee * 100).toFixed(0)}% fee: £${(price * (1 - fee)).toFixed(3)}` : `Fee: ${(fee * 100).toFixed(0)}%`;
+
+      return `<div class="${cls}">
+        <div class="arb-plat-name">${info.icon} ${info.name}</div>
+        <div class="arb-plat-price">${price != null ? '£' + price.toFixed(3) : '—'}</div>
+        <div class="arb-plat-fee">${price != null ? feeLabel : 'No data'}</div>
+        ${label ? `<div style="font-size:10px;font-weight:700;margin-top:4px;letter-spacing:1px;font-family:'Rajdhani',sans-serif;color:${isBuy ? 'var(--green)' : 'var(--red)'};">${label}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="arb-card">
+      <div class="arb-card-header">
+        <div class="arb-card-name">${escHtml(o.item.name)}<small>${typeLabels[o.item.type]} · Qty: ${o.qty.toLocaleString()}</small></div>
+        <div class="arb-gap-badge ${gapCls}">${o.grossGapPct.toFixed(1)}% gap</div>
+      </div>
+      <div class="arb-card-body">${platCells}</div>
+      <div class="arb-card-footer">
+        <span>Gross gap: £${o.grossGap.toFixed(3)}/unit (${o.grossGapPct.toFixed(1)}%)</span>
+        <span style="color:${netColor};">Net after fees: £${o.netGap.toFixed(3)}/unit (${o.netGapPct >= 0 ? '+' : ''}${o.netGapPct.toFixed(1)}%)</span>
+        <span style="color:${netColor};font-weight:700;">Total on ${o.qty.toLocaleString()} units: ${o.totalNetProfit >= 0 ? '+' : ''}£${o.totalNetProfit.toFixed(2)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -3018,6 +3169,7 @@ function switchTab(tab, el) {
   if (tab === 'portfolio') renderPortfolio();
   if (tab === 'intelligence' && !ciData) { /* show empty */ }
   if (tab === 'alerts')  renderAlerts();
+  if (tab === 'arbitrage') renderArbitrage();
   if (tab === 'settings') { if (typeof window.cs2vault !== 'undefined') updateSettingsInfo(); else populateSettingsFallback(); }
   if (tab === 'tradeup') { if (!document.getElementById('tucSlot0')) initTUC(); }
   if (tab === 'watchlist') renderWatchlist();
