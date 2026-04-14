@@ -927,14 +927,18 @@ const typeBadge  = { skin:'badge-skin', case:'badge-case', sticker:'badge-sticke
 
 function getBestPrice(item) {
   if (!item.prices) return null;
-  // If we have multi-platform data, use the best lowest across all platforms
+  // Priority: CSFloat → Steam → Skinport (use the platform you'd actually sell on)
   if (item.prices.platforms) {
     const plats = item.prices.platforms;
-    const candidates = [
-      plats.csfloat?.lowest, plats.steam?.lowest, plats.skinport?.lowest,
-      plats.csfloat?.avg7d
-    ].filter(v => v != null && v > 0);
-    if (candidates.length) return Math.min(...candidates);
+    // Try CSFloat first (primary selling platform)
+    const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
+    if (cf != null && cf > 0) return cf;
+    // Fallback to Steam
+    const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
+    if (stm != null && stm > 0) return stm;
+    // Fallback to Skinport
+    const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
+    if (sp != null && sp > 0) return sp;
   }
   return item.prices.avg7d || item.prices.lowest || item.prices.lastSold || null;
 }
@@ -1324,6 +1328,15 @@ function openSellModal(id) {
 let _sellFeePercent = 2;
 let _sellMode = 'perunit'; // 'perunit' or 'total'
 
+// Look up item from holdings or skins (for sell modal)
+function findSellItem(rawId) {
+  if (rawId.startsWith('skin:')) {
+    const skinId = rawId.replace('skin:', '');
+    return skins ? skins.find(s => s.id === skinId) : null;
+  }
+  return holdings.find(h => h.id === rawId);
+}
+
 function setSellPlatform(plat) {
   const fees = { csfloat: 2, steam: 15, skinport: 6 };
   document.querySelectorAll('.sell-plat-btn').forEach(b => b.classList.remove('active'));
@@ -1353,8 +1366,8 @@ function setSellMode(mode) {
 }
 
 function updateSellFromTotal() {
-  const id = document.getElementById('sellItemId').value;
-  const item = holdings.find(h => h.id === id);
+  const rawId = document.getElementById('sellItemId').value;
+  const item = findSellItem(rawId);
   if (!item) return;
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
   const totalReceived = parseFloat(document.getElementById('sellTotalReceived').value) || 0;
@@ -1391,8 +1404,8 @@ function updateSellFromTotal() {
 }
 
 function updateSellCalc() {
-  const id = document.getElementById('sellItemId').value;
-  const item = holdings.find(h => h.id === id);
+  const rawId = document.getElementById('sellItemId').value;
+  const item = findSellItem(rawId);
   if (!item) return;
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
   const sp = parseFloat(document.getElementById('sellPrice').value) || 0;
@@ -1914,7 +1927,10 @@ function renderSkins() {
       <td class="mono">£${(item.buyPrice * item.qty).toFixed(2)}</td>
       ${renderPriceColumns(item, p, ago)}
       <td>${pnlHtml}</td>
-      <td><button class="btn btn-secondary btn-sm" onclick="refreshSingleSkin('${item.id}')">↻</button></td>
+      <td><div class="action-btns row-actions">
+        <button class="btn btn-secondary btn-sm" onclick="refreshSingleSkin('${item.id}')">↻</button>
+        <button class="btn btn-secondary btn-sm" onclick="openSellSkinModal('${item.id}')">✓ Sell</button>
+      </div></td>
     </tr>`;
   }).join('');
 }
@@ -1995,9 +2011,48 @@ async function refreshSingleSkin(id) {
   renderSkins();
 }
 
-// ========================
-// ========================
-// HEATMAP
+function openSellSkinModal(id) {
+  const skin = skins.find(s => s.id === id);
+  if (!skin) return;
+  // Reuse the main sell modal but track that it's a skin sale
+  document.getElementById('sellItemId').value = 'skin:' + id;
+  document.getElementById('sellItemName').value = skin.name + ' (Play Skin)';
+  document.getElementById('sellQty').value = skin.qty;
+  document.getElementById('sellQty').max = skin.qty;
+  document.getElementById('sellPrice').value = getBestPrice(skin) ? getBestPrice(skin).toFixed(2) : '';
+  document.getElementById('sellDate').value = todayStr();
+  document.getElementById('sellTotalReceived').value = '';
+  document.getElementById('sellReverseCalc').style.display = 'none';
+  setSellPlatform('csfloat');
+  setSellMode('perunit');
+  updateSellCalc();
+  openModal('sellModal');
+}
+
+// Override confirmSell to handle both holdings and skins
+const _originalConfirmSell = confirmSell;
+confirmSell = function() {
+  const rawId = document.getElementById('sellItemId').value;
+  if (rawId.startsWith('skin:')) {
+    const skinId = rawId.replace('skin:', '');
+    const skin = skins.find(s => s.id === skinId);
+    if (!skin) return;
+    const qty = parseInt(document.getElementById('sellQty').value) || 1;
+    const sellPrice = parseFloat(document.getElementById('sellPrice').value);
+    const feePercent = _sellFeePercent;
+    if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
+    if (qty > skin.qty) { toast(`Only ${skin.qty} in stock`, 'error'); return; }
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent });
+    saveHistory(tradeHistory);
+    if (qty >= skin.qty) skins = skins.filter(s => s.id !== skinId);
+    else skin.qty -= qty;
+    saveSkins(skins); renderSkins(); renderHistory(); updateStats(); closeModal('sellModal');
+    const net = (sellPrice * qty) * (1 - feePercent/100) - (skin.buyPrice * qty);
+    toast(`Sold! Net: ${net >= 0 ? '+' : ''}£${net.toFixed(2)}`, net >= 0 ? 'success' : 'info');
+  } else {
+    _originalConfirmSell();
+  }
+};
 // ========================
 let heatmapVisible = false;
 let lastPriceSnapshot = {};
