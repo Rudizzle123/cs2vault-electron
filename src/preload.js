@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('cs2vault', {
   // ── File export dialog ────────────────────────────────────────────────────
   exportSave: (filename, content) => ipcRenderer.invoke('export:save', filename, content),
 
+  // ── File import dialog ────────────────────────────────────────────────────
+  importOpen: () => ipcRenderer.invoke('import:open'),
+
   // ── Auto-updater ──────────────────────────────────────────────────────────
   updater: {
     check:   () => ipcRenderer.invoke('updater:check'),

@@ -1312,16 +1312,91 @@ function openSellModal(id) {
   document.getElementById('sellPrice').value = getBestPrice(item) ? getBestPrice(item).toFixed(2) : '';
   document.getElementById('sellDate').value = todayStr();
   document.getElementById('sellFee').value = '2';
+  // Reset to defaults
+  setSellPlatform('csfloat');
+  setSellMode('perunit');
+  document.getElementById('sellTotalReceived').value = '';
+  document.getElementById('sellReverseCalc').style.display = 'none';
   updateSellCalc();
   openModal('sellModal');
 }
+
+let _sellFeePercent = 2;
+let _sellMode = 'perunit'; // 'perunit' or 'total'
+
+function setSellPlatform(plat) {
+  const fees = { csfloat: 2, steam: 15, skinport: 6 };
+  document.querySelectorAll('.sell-plat-btn').forEach(b => b.classList.remove('active'));
+  if (plat === 'custom') {
+    document.getElementById('sellPlatCustom').classList.add('active');
+    document.getElementById('sellFeeRow').style.display = '';
+    _sellFeePercent = parseFloat(document.getElementById('sellFee').value) || 2;
+  } else {
+    document.getElementById('sellPlat' + plat.charAt(0).toUpperCase() + plat.slice(1)).classList.add('active');
+    document.getElementById('sellFeeRow').style.display = 'none';
+    _sellFeePercent = fees[plat] || 2;
+    document.getElementById('sellFee').value = _sellFeePercent;
+  }
+  if (_sellMode === 'total') updateSellFromTotal();
+  else updateSellCalc();
+}
+
+function setSellMode(mode) {
+  _sellMode = mode;
+  document.querySelectorAll('.sell-mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sellMode' + mode.charAt(0).toUpperCase() + mode.slice(1)).classList.add('active');
+  document.getElementById('sellPerunitRow').style.display = mode === 'perunit' ? '' : 'none';
+  document.getElementById('sellTotalRow').style.display = mode === 'total' ? '' : 'none';
+  document.getElementById('sellReverseCalc').style.display = 'none';
+  if (mode === 'total') updateSellFromTotal();
+  else updateSellCalc();
+}
+
+function updateSellFromTotal() {
+  const id = document.getElementById('sellItemId').value;
+  const item = holdings.find(h => h.id === id);
+  if (!item) return;
+  const qty = parseInt(document.getElementById('sellQty').value) || 1;
+  const totalReceived = parseFloat(document.getElementById('sellTotalReceived').value) || 0;
+  const fee = _sellFeePercent;
+  const reverseEl = document.getElementById('sellReverseCalc');
+
+  if (totalReceived <= 0 || qty <= 0) {
+    reverseEl.style.display = 'none';
+    document.getElementById('calcGross').textContent = '£0.00';
+    document.getElementById('calcFee').textContent = '-£0.00';
+    const pe = document.getElementById('calcProfit');
+    pe.textContent = '£0.00'; pe.className = 'sold-col-val';
+    return;
+  }
+
+  // Reverse calculate: totalReceived = gross * (1 - fee/100)
+  // So gross = totalReceived / (1 - fee/100)
+  const gross = totalReceived / (1 - fee / 100);
+  const feeAmt = gross - totalReceived;
+  const perUnit = gross / qty;
+  const profit = totalReceived - (item.buyPrice * qty);
+
+  // Set the hidden per-unit price so confirmSell works
+  document.getElementById('sellPrice').value = perUnit.toFixed(4);
+
+  reverseEl.style.display = '';
+  reverseEl.innerHTML = `You received <strong>£${totalReceived.toFixed(2)}</strong> after ${fee}% fee → Gross: £${gross.toFixed(2)} → Per unit: <strong>£${perUnit.toFixed(3)}</strong>`;
+
+  document.getElementById('calcGross').textContent = `£${gross.toFixed(2)}`;
+  document.getElementById('calcFee').textContent = `-£${feeAmt.toFixed(2)}`;
+  const pe = document.getElementById('calcProfit');
+  pe.textContent = `${profit >= 0 ? '+' : ''}£${profit.toFixed(2)}`;
+  pe.className = `sold-col-val ${profit >= 0 ? 'positive' : 'negative'}`;
+}
+
 function updateSellCalc() {
   const id = document.getElementById('sellItemId').value;
   const item = holdings.find(h => h.id === id);
   if (!item) return;
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
   const sp = parseFloat(document.getElementById('sellPrice').value) || 0;
-  const fee = parseFloat(document.getElementById('sellFee').value) || 0;
+  const fee = _sellFeePercent;
   const gross = sp * qty, feeAmt = gross * (fee/100), profit = gross - feeAmt - (item.buyPrice * qty);
   document.getElementById('calcGross').textContent = `£${gross.toFixed(2)}`;
   document.getElementById('calcFee').textContent = `-£${feeAmt.toFixed(2)}`;
@@ -1335,8 +1410,8 @@ function confirmSell() {
   if (!item) return;
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
   const sellPrice = parseFloat(document.getElementById('sellPrice').value);
-  const feePercent = parseFloat(document.getElementById('sellFee').value) || 2;
-  if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price', 'error'); return; }
+  const feePercent = _sellFeePercent;
+  if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
   if (qty > item.qty) { toast(`Only ${item.qty} in stock`, 'error'); return; }
   tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent });
   saveHistory(tradeHistory);
@@ -3195,25 +3270,111 @@ function filterHistory(q) {
 }
 function sortTable(key) { if (sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=1;} renderHoldings(); }
 async function exportCSV() {
-  const rows=[['Name','Type','Qty','Buy Price','Date','Market Hash','Lowest','Last Sold','Avg 7d','P&L','Notes']];
-  holdings.forEach(h=>{const p=h.prices||{},best=getBestPrice(h),pnl=best!=null?((best-h.buyPrice)*h.qty).toFixed(2):'';rows.push([h.name,h.type,h.qty,h.buyPrice,h.buyDate||'',h.marketHash||'',p.lowest||'',p.lastSold||'',p.avg7d||'',pnl,h.notes||'']);});
-  downloadCSV(rows,'cs2vault_holdings.csv');
+  const rows=[['Name','Type','Qty','Buy Price','Buy Date','Market Hash','CSFloat','Steam','Skinport','Best Price','P&L','Category','Notes']];
+  holdings.forEach(h=>{
+    const p=h.prices||{};
+    const best=getBestPrice(h);
+    const pnl=best!=null?((best-h.buyPrice)*h.qty).toFixed(2):'';
+    const cf=getPlatformPrice(h,'csfloat');
+    const stm=getPlatformPrice(h,'steam');
+    const sp=getPlatformPrice(h,'skinport');
+    rows.push([h.name,h.type,h.qty,h.buyPrice,h.buyDate||'',h.marketHash||'',cf||'',stm||'',sp||'',best||'',pnl,h.category||'',h.notes||'']);
+  });
+  const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  if (typeof window.cs2vault !== 'undefined') {
+    const result = await window.cs2vault.exportSave('cs2vault_holdings.csv', csvStr);
+    if (result && result.saved) toast('Saved to ' + result.filePath, 'success');
+  }
 }
 async function exportHistoryCSV() {
-  const rows=[['Name','Type','Qty','Buy','Sell','Date','Fee%','Net']];
+  const rows=[['Name','Type','Qty','Buy Price','Sell Price','Date','Fee %','Net Profit']];
   tradeHistory.forEach(t=>{const g=t.sellPrice*t.qty,f=g*(t.feePercent/100),n=(g-f-(t.buyPrice*t.qty)).toFixed(2);rows.push([t.name,t.type,t.qty,t.buyPrice,t.sellPrice,t.sellDate,t.feePercent,n]);});
-  downloadCSV(rows,'cs2vault_history.csv');
-}
-async function downloadCSV(csv, filename) {
+  const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   if (typeof window.cs2vault !== 'undefined') {
-    const result = await window.cs2vault.exportSave(filename, csv);
+    const result = await window.cs2vault.exportSave('cs2vault_history.csv', csvStr);
     if (result && result.saved) toast('Saved to ' + result.filePath, 'success');
-  } else {
-    const a = document.createElement('a');
-    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = filename;
-    a.click();
   }
+}
+
+async function importCSV() {
+  if (typeof window.cs2vault === 'undefined') { toast('Import only works in desktop app', 'error'); return; }
+  const result = await window.cs2vault.importOpen();
+  if (!result || !result.opened) return;
+
+  // Parse CSV
+  const lines = result.content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 2) { toast('CSV is empty or has no data rows', 'error'); return; }
+
+  // Parse header
+  const parseRow = (line) => {
+    const cells = [];
+    let current = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === ',' && !inQuotes) { cells.push(current.trim()); current = ''; continue; }
+      current += ch;
+    }
+    cells.push(current.trim());
+    return cells;
+  };
+
+  const header = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const nameIdx = header.findIndex(h => h === 'name' || h === 'itemname');
+  const typeIdx = header.findIndex(h => h === 'type' || h === 'itemtype');
+  const qtyIdx = header.findIndex(h => h === 'qty' || h === 'quantity');
+  const priceIdx = header.findIndex(h => h.includes('buyprice') || h.includes('price') || h.includes('cost'));
+  const dateIdx = header.findIndex(h => h.includes('date') || h.includes('buydate'));
+  const hashIdx = header.findIndex(h => h.includes('hash') || h.includes('markethash'));
+  const notesIdx = header.findIndex(h => h === 'notes' || h === 'note');
+  const catIdx = header.findIndex(h => h === 'category' || h === 'cat');
+
+  if (nameIdx < 0 || priceIdx < 0) {
+    toast('CSV must have at least "Name" and "Buy Price" columns', 'error');
+    return;
+  }
+
+  // Preview
+  const items = [];
+  let skipped = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseRow(lines[i]);
+    const name = row[nameIdx];
+    const buyPrice = parseFloat(row[priceIdx]);
+    if (!name || isNaN(buyPrice) || buyPrice <= 0) { skipped++; continue; }
+
+    const item = {
+      id: uid(),
+      name,
+      type: typeIdx >= 0 ? (row[typeIdx] || 'skin').toLowerCase() : 'skin',
+      qty: qtyIdx >= 0 ? (parseInt(row[qtyIdx]) || 1) : 1,
+      buyPrice,
+      buyDate: dateIdx >= 0 ? (row[dateIdx] || '') : '',
+      marketHash: hashIdx >= 0 ? (row[hashIdx] || '') : '',
+      notes: notesIdx >= 0 ? (row[notesIdx] || '') : 'Imported from CSV',
+      category: catIdx >= 0 ? (row[catIdx] || '') : '',
+      prices: null,
+    };
+    // Check for duplicates
+    if (!holdings.some(h => h.name === item.name && h.buyPrice === item.buyPrice && h.qty === item.qty)) {
+      items.push(item);
+    } else {
+      skipped++;
+    }
+  }
+
+  if (items.length === 0) {
+    toast(`No new items to import (${skipped} skipped/duplicates)`, 'info');
+    return;
+  }
+
+  if (!confirm(`Import ${items.length} item(s)? (${skipped} skipped)\n\nThis will add them to your holdings.`)) return;
+
+  holdings.push(...items);
+  saveData(holdings);
+  renderHoldings();
+  updateStats();
+  toast(`Imported ${items.length} item(s)!`, 'success');
 }
 
 // ========================

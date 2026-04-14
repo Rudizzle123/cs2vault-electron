@@ -264,3 +264,19 @@ ipcMain.handle('export:save', async (_e, filename, content) => {
   }
   return { saved: false };
 });
+
+// ─── IPC: Import file dialog ─────────────────────────────────────────────────
+ipcMain.handle('import:open', async (_e) => {
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [
+      { name: 'CSV Files', extensions: ['csv'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (filePaths && filePaths.length > 0) {
+    const content = fs.readFileSync(filePaths[0], 'utf8');
+    return { opened: true, content, filePath: filePaths[0] };
+  }
+  return { opened: false };
+});

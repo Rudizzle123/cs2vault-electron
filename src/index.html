@@ -256,6 +256,10 @@ tr:hover .row-actions{opacity:1;}
 .arb-card-footer{padding:10px 20px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);border-top:1px solid var(--border);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;}
 @media(max-width:900px){.arb-summary{grid-template-columns:repeat(2,1fr);}}
 
+/* ===== SELL MODAL BUTTONS ===== */
+.sell-plat-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
+.sell-mode-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
+
 /* ===== PRICE HISTORY MODAL ===== */
 .ph-range-btn{min-width:40px;text-align:center;}
 .ph-range-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
@@ -400,6 +404,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <option value="">All Status</option><option value="profit">In Profit</option><option value="loss">At Loss</option>
       </select>
       <button class="btn btn-secondary" onclick="exportCSV()">↓ Export CSV</button>
+      <button class="btn btn-secondary" onclick="importCSV()">↑ Import CSV</button>
       <button class="btn btn-secondary" onclick="openBulkSellModal()">⊞ Bulk Sell</button>
       <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
     </div>
@@ -980,12 +985,28 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <div class="form-row"><label>Item</label><input type="text" id="sellItemName" readonly style="opacity:.6"></div>
       <div class="form-two">
         <div class="form-row"><label>Qty to Sell</label><input type="number" id="sellQty" min="1" oninput="updateSellCalc()"></div>
-        <div class="form-row"><label>Sell Price per unit (£)</label><input type="number" id="sellPrice" step="0.01" oninput="updateSellCalc()"></div>
-      </div>
-      <div class="form-two">
         <div class="form-row"><label>Date Sold</label><input type="date" id="sellDate"></div>
-        <div class="form-row"><label>Platform Fee %</label><input type="number" id="sellFee" value="2" step="0.1" oninput="updateSellCalc()"><div class="fee-note">CSFloat=2% | Steam=15%</div></div>
       </div>
+      <div style="margin:10px 0 6px;">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:6px;">Platform sold on</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('csfloat')" id="sellPlatCsfloat">🟠 CSFloat (2%)</button>
+          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('steam')" id="sellPlatSteam">🟦 Steam (15%)</button>
+          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('skinport')" id="sellPlatSkinport">🟣 Skinport (6%)</button>
+          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('custom')" id="sellPlatCustom">Custom</button>
+        </div>
+      </div>
+      <div id="sellFeeRow" class="form-row" style="display:none;"><label>Custom Fee %</label><input type="number" id="sellFee" value="2" step="0.1" oninput="updateSellCalc()"></div>
+      <div style="margin:10px 0 6px;">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:6px;">Enter price</div>
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <button class="btn btn-secondary btn-sm sell-mode-btn active" onclick="setSellMode('perunit')" id="sellModePerunit">Per-unit sell price</button>
+          <button class="btn btn-secondary btn-sm sell-mode-btn" onclick="setSellMode('total')" id="sellModeTotal">Total received after fees</button>
+        </div>
+      </div>
+      <div id="sellPerunitRow" class="form-row"><label>Sell Price per unit (£)</label><input type="number" id="sellPrice" step="0.01" oninput="updateSellCalc()"></div>
+      <div id="sellTotalRow" class="form-row" style="display:none;"><label>Total received after fees (£)</label><input type="number" id="sellTotalReceived" step="0.01" oninput="updateSellFromTotal()"></div>
+      <div id="sellReverseCalc" style="display:none;font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;padding:6px 0;"></div>
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:4px;">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;">
           <div><div class="sold-col-label">Gross</div><div class="sold-col-val" id="calcGross">£0.00</div></div>
