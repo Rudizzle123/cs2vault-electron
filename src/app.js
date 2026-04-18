@@ -3292,6 +3292,251 @@ function renderArbitrage() {
   }).join('');
 }
 
+// ========================
+// PORTFOLIO HEALTH REPORT
+// ========================
+function renderHealthReport() {
+  const emptyEl = document.getElementById('healthEmpty');
+  const withPrices = holdings.filter(h => getBestPrice(h) != null);
+
+  if (withPrices.length === 0) {
+    emptyEl.style.display = 'block';
+    ['healthScore','healthConcentration','healthDiversification','healthSignals','healthStaleness','healthOutliers'].forEach(id => document.getElementById(id).innerHTML = '');
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  // ─── Calculate metrics ───
+  let totalInvested = 0, totalValue = 0;
+  const typeBreakdown = {};
+  const itemValues = [];
+
+  holdings.forEach(h => {
+    const inv = h.buyPrice * h.qty;
+    const best = getBestPrice(h);
+    const val = best ? best * h.qty : 0;
+    totalInvested += inv;
+    totalValue += val;
+    if (!typeBreakdown[h.type]) typeBreakdown[h.type] = { invested: 0, value: 0, count: 0, items: [] };
+    typeBreakdown[h.type].invested += inv;
+    typeBreakdown[h.type].value += val;
+    typeBreakdown[h.type].count++;
+    typeBreakdown[h.type].items.push(h);
+    if (best) itemValues.push({ name: h.name, type: h.type, invested: inv, value: val, pct: totalInvested > 0 ? (inv / totalInvested * 100) : 0, pnlPct: ((best - h.buyPrice) / h.buyPrice * 100), qty: h.qty, id: h.id, staleMs: h.prices?.fetchedAt ? Date.now() - h.prices.fetchedAt : null });
+  });
+
+  // Recalculate pct with final totalInvested
+  itemValues.forEach(iv => iv.pct = totalInvested > 0 ? (iv.invested / totalInvested * 100) : 0);
+
+  // ─── Concentration Risk ───
+  const sorted = [...itemValues].sort((a, b) => b.pct - a.pct);
+  const top5 = sorted.slice(0, 5);
+  const top5Pct = top5.reduce((s, i) => s + i.pct, 0);
+  const maxConcentration = top5.length > 0 ? top5[0].pct : 0;
+
+  // ─── Diversification Score (0-100) ───
+  const typeCount = Object.keys(typeBreakdown).length;
+  const maxTypes = 5; // case, sticker, armory, skin, knife
+  const typeScore = Math.min(100, (typeCount / maxTypes) * 100);
+  // Herfindahl index — lower = more diversified
+  const hhi = itemValues.reduce((s, i) => s + Math.pow(i.pct / 100, 2), 0);
+  const hhiScore = Math.max(0, Math.min(100, (1 - hhi) * 100));
+  const diversificationScore = Math.round((typeScore * 0.3 + hhiScore * 0.7));
+
+  // ─── Staleness check ───
+  const staleItems = holdings.filter(h => {
+    if (!h.prices?.fetchedAt) return true;
+    return (Date.now() - h.prices.fetchedAt) > 7 * 24 * 60 * 60 * 1000; // >7 days
+  });
+  const neverPriced = holdings.filter(h => !h.prices?.fetchedAt);
+
+  // ─── Performance outliers ───
+  const performers = [...itemValues].sort((a, b) => b.pnlPct - a.pnlPct);
+  const topPerformers = performers.filter(p => p.pnlPct > 20).slice(0, 5);
+  const worstPerformers = performers.filter(p => p.pnlPct < -20).reverse().slice(0, 5);
+
+  // ─── Signals ───
+  const signals = [];
+
+  // Concentration warnings
+  if (maxConcentration > 40) signals.push({ icon: '🔴', title: `${top5[0].name} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Very high concentration risk — consider diversifying. A single item crash would significantly impact your total value.', type: 'danger' });
+  else if (maxConcentration > 25) signals.push({ icon: '🟡', title: `${top5[0].name} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Moderate concentration — keep an eye on this position.', type: 'warning' });
+
+  // Top 5 dominance
+  if (top5Pct > 70) signals.push({ icon: '🟡', title: `Top 5 items = ${top5Pct.toFixed(1)}% of portfolio`, desc: 'Your portfolio is heavily concentrated in a few items. Spreading across more items reduces risk.', type: 'warning' });
+
+  // Type diversification
+  if (typeCount === 1) signals.push({ icon: '🔴', title: 'Only holding one item type', desc: `All your investments are ${Object.keys(typeBreakdown)[0]}s. Diversify across cases, stickers, skins, and charms.`, type: 'danger' });
+  else if (typeCount === 2) signals.push({ icon: '🟡', title: 'Low type diversity', desc: 'Consider adding more item types to reduce risk.', type: 'warning' });
+  else if (typeCount >= 4) signals.push({ icon: '🟢', title: `Good type diversity — ${typeCount} types`, desc: 'Well diversified across different item categories.', type: 'success' });
+
+  // Staleness
+  if (staleItems.length > holdings.length * 0.5) signals.push({ icon: '🟡', title: `${staleItems.length} items have stale prices (>7 days)`, desc: 'Refresh prices to get an accurate portfolio valuation.', type: 'warning' });
+  if (neverPriced.length > 0) signals.push({ icon: '🔴', title: `${neverPriced.length} items never priced`, desc: 'These items have no price data at all. Refresh to include them in your valuation.', type: 'danger' });
+
+  // Big winners — consider profit taking
+  topPerformers.forEach(p => {
+    if (p.pnlPct > 40 && p.invested > 100) {
+      signals.push({ icon: '🟢', title: `${p.name} is up ${p.pnlPct.toFixed(1)}% — consider taking profit`, desc: `£${p.invested.toFixed(0)} invested, now worth £${p.value.toFixed(0)}. Selling a portion locks in gains.`, type: 'success' });
+    }
+  });
+
+  // Big losers
+  worstPerformers.forEach(p => {
+    if (p.pnlPct < -30 && p.invested > 50) {
+      signals.push({ icon: '🔴', title: `${p.name} is down ${Math.abs(p.pnlPct).toFixed(1)}%`, desc: `£${p.invested.toFixed(0)} invested, now worth £${p.value.toFixed(0)}. Review whether the thesis still holds.`, type: 'danger' });
+    }
+  });
+
+  // Overall P&L
+  const totalPnl = ((totalValue - totalInvested) / totalInvested * 100);
+  if (totalPnl > 10) signals.push({ icon: '🟢', title: `Portfolio up ${totalPnl.toFixed(1)}% overall`, desc: 'Positive returns — your investment strategy is working.', type: 'success' });
+  else if (totalPnl < -10) signals.push({ icon: '🟡', title: `Portfolio down ${Math.abs(totalPnl).toFixed(1)}% overall`, desc: 'Unrealised losses — CS2 items are long-term holds, consider your timeframe.', type: 'warning' });
+
+  // ─── Overall Health Score (0-100) ───
+  let healthScore = 50;
+  healthScore += diversificationScore * 0.3; // up to 30 points
+  healthScore -= Math.max(0, maxConcentration - 20) * 0.3; // penalise concentration
+  healthScore -= staleItems.length * 0.5; // penalise stale data
+  healthScore += Math.min(20, totalPnl > 0 ? totalPnl * 0.5 : totalPnl * 0.3); // P&L influence
+  healthScore = Math.max(0, Math.min(100, Math.round(healthScore)));
+
+  const grade = healthScore >= 85 ? 'A' : healthScore >= 70 ? 'B' : healthScore >= 55 ? 'C' : healthScore >= 40 ? 'D' : 'F';
+  const gradeColor = healthScore >= 70 ? 'var(--green)' : healthScore >= 50 ? 'var(--accent)' : 'var(--red)';
+  const ringColor = healthScore >= 70 ? '#22c55e' : healthScore >= 50 ? '#e8993c' : '#ef4444';
+  const circumference = 2 * Math.PI * 42;
+  const dashOffset = circumference - (healthScore / 100) * circumference;
+
+  // ─── Render Score Card ───
+  document.getElementById('healthScore').innerHTML = `
+    <div class="health-score-card">
+      <div class="health-ring">
+        <svg width="100" height="100" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="42" fill="none" stroke="var(--border)" stroke-width="6"/>
+          <circle cx="50" cy="50" r="42" fill="none" stroke="${ringColor}" stroke-width="6"
+            stroke-dasharray="${circumference}" stroke-dashoffset="${dashOffset}"
+            stroke-linecap="round" style="transition:stroke-dashoffset 1s ease;"/>
+        </svg>
+        <div class="health-ring-label">
+          <div class="health-ring-val" style="color:${gradeColor};">${healthScore}</div>
+          <div class="health-ring-sub">/ 100</div>
+        </div>
+      </div>
+      <div>
+        <div class="health-grade" style="color:${gradeColor};">Grade ${grade}</div>
+        <div class="health-summary">${
+          healthScore >= 85 ? 'Excellent portfolio health — well diversified with good data coverage.' :
+          healthScore >= 70 ? 'Good health — minor improvements possible in diversification or data freshness.' :
+          healthScore >= 55 ? 'Fair health — some concentration risk or stale pricing data needs attention.' :
+          healthScore >= 40 ? 'Needs attention — high concentration risk or significant data gaps.' :
+          'Poor health — critical issues with concentration, diversification, or data coverage.'
+        }</div>
+      </div>
+      <div style="margin-left:auto;text-align:right;font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text3);">
+        <div>${holdings.length} holdings</div>
+        <div>${withPrices.length} priced</div>
+        <div>${typeCount} item types</div>
+        <div>Generated ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+    </div>`;
+
+  // ─── Render Concentration ───
+  const concBarColor = (pct) => pct > 30 ? 'var(--red)' : pct > 15 ? 'var(--accent)' : 'var(--green)';
+  document.getElementById('healthConcentration').innerHTML = `
+    <div class="health-panel">
+      <div class="health-panel-hd">
+        <div class="health-panel-title">Concentration Risk — Top Holdings by Invested Value</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Top 5 = ${top5Pct.toFixed(1)}%</div>
+      </div>
+      <div class="health-panel-body">
+        ${sorted.slice(0, 10).map(i => `
+          <div class="health-bar-row">
+            <div class="health-bar-name">${escHtml(i.name)}<div style="font-size:10px;color:var(--text3);">${typeLabels[i.type] || i.type} · £${i.invested.toFixed(0)} invested</div></div>
+            <div class="health-bar-track"><div class="health-bar-fill" style="width:${Math.min(100, i.pct)}%;background:${concBarColor(i.pct)};"></div></div>
+            <div class="health-bar-pct" style="color:${concBarColor(i.pct)};">${i.pct.toFixed(1)}%</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+
+  // ─── Render Diversification ───
+  const typeColors = { case: 'var(--accent)', sticker: '#a78bfa', armory: 'var(--blue)', skin: 'var(--green)', knife: 'var(--gold)' };
+  document.getElementById('healthDiversification').innerHTML = `
+    <div class="health-panel">
+      <div class="health-panel-hd">
+        <div class="health-panel-title">Diversification — By Item Type</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Score: ${diversificationScore}/100</div>
+      </div>
+      <div class="health-panel-body">
+        ${Object.entries(typeBreakdown).sort((a, b) => b[1].invested - a[1].invested).map(([type, data]) => {
+          const pct = totalInvested > 0 ? (data.invested / totalInvested * 100) : 0;
+          const pnl = data.value - data.invested;
+          return `<div class="health-bar-row">
+            <div class="health-bar-name"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColors[type] || 'var(--text3)'};margin-right:6px;"></span>${typeLabels[type] || type}<div style="font-size:10px;color:var(--text3);">${data.count} items · ${pnl >= 0 ? '+' : ''}£${pnl.toFixed(0)}</div></div>
+            <div class="health-bar-track"><div class="health-bar-fill" style="width:${pct}%;background:${typeColors[type] || 'var(--text3)'};"></div></div>
+            <div class="health-bar-pct">${pct.toFixed(1)}%</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  // ─── Render Signals ───
+  document.getElementById('healthSignals').innerHTML = signals.length > 0 ? `
+    <div class="health-panel">
+      <div class="health-panel-hd">
+        <div class="health-panel-title">Signals & Recommendations</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">${signals.length} signal${signals.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="health-panel-body">
+        ${signals.map(s => `
+          <div class="health-signal">
+            <div class="health-signal-icon">${s.icon}</div>
+            <div class="health-signal-body">
+              <div class="health-signal-title">${s.title}</div>
+              <div class="health-signal-desc">${s.desc}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : '';
+
+  // ─── Render Staleness ───
+  document.getElementById('healthStaleness').innerHTML = staleItems.length > 0 ? `
+    <div class="health-panel">
+      <div class="health-panel-hd">
+        <div class="health-panel-title">Data Freshness</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">${staleItems.length} stale · ${neverPriced.length} never priced</div>
+      </div>
+      <div class="health-panel-body" style="font-size:12px;color:var(--text2);">
+        ${staleItems.slice(0, 8).map(h => {
+          const ago = h.prices?.fetchedAt ? timeAgo(h.prices.fetchedAt) : 'Never';
+          return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(30,61,45,.2);"><span>${escHtml(h.name)}</span><span style="color:var(--text3);font-family:'Share Tech Mono',monospace;">${ago}</span></div>`;
+        }).join('')}
+        ${staleItems.length > 8 ? `<div style="color:var(--text3);padding:6px 0;font-size:11px;">...and ${staleItems.length - 8} more</div>` : ''}
+      </div>
+    </div>` : '';
+
+  // ─── Render Outliers ───
+  const outlierHtml = (list, label, color) => list.length > 0 ? list.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(30,61,45,.2);">
+      <div><span style="font-weight:600;">${escHtml(p.name)}</span><span style="font-size:11px;color:var(--text3);margin-left:8px;">£${p.invested.toFixed(0)} in · qty ${p.qty}</span></div>
+      <span style="color:${color};font-family:'Share Tech Mono',monospace;font-weight:700;">${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct.toFixed(1)}%</span>
+    </div>
+  `).join('') : `<div style="color:var(--text3);font-size:12px;padding:8px 0;">None</div>`;
+
+  document.getElementById('healthOutliers').innerHTML = (topPerformers.length > 0 || worstPerformers.length > 0) ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="health-panel">
+        <div class="health-panel-hd"><div class="health-panel-title" style="color:var(--green);">Top Performers (>+20%)</div></div>
+        <div class="health-panel-body">${outlierHtml(topPerformers, 'Top', 'var(--green)')}</div>
+      </div>
+      <div class="health-panel">
+        <div class="health-panel-hd"><div class="health-panel-title" style="color:var(--red);">Underperformers (<-20%)</div></div>
+        <div class="health-panel-body">${outlierHtml(worstPerformers, 'Worst', 'var(--red)')}</div>
+      </div>
+    </div>` : '';
+}
+
 function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -3300,6 +3545,7 @@ function switchTab(tab, el) {
   if (tab === 'intelligence' && !ciData) { /* show empty */ }
   if (tab === 'alerts')  renderAlerts();
   if (tab === 'arbitrage') renderArbitrage();
+  if (tab === 'health') renderHealthReport();
   if (tab === 'settings') { if (typeof window.cs2vault !== 'undefined') updateSettingsInfo(); else populateSettingsFallback(); }
   if (tab === 'tradeup') { if (!document.getElementById('tucSlot0')) initTUC(); }
   if (tab === 'watchlist') renderWatchlist();

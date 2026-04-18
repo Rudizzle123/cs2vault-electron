@@ -260,6 +260,32 @@ tr:hover .row-actions{opacity:1;}
 .sell-plat-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
 .sell-mode-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
 
+/* ===== HEALTH REPORT ===== */
+.health-score-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 32px;display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
+.health-ring{position:relative;width:100px;height:100px;flex-shrink:0;}
+.health-ring svg{transform:rotate(-90deg);}
+.health-ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;}
+.health-ring-val{font-size:28px;font-weight:700;line-height:1;}
+.health-ring-sub{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+.health-grade{font-family:'Rajdhani',sans-serif;font-size:42px;font-weight:700;line-height:1;}
+.health-summary{font-size:13px;color:var(--text2);max-width:400px;line-height:1.5;}
+.health-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.health-panel-hd{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;justify-content:space-between;}
+.health-panel-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;}
+.health-panel-body{padding:16px 20px;}
+.health-bar-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(30,61,45,.3);}
+.health-bar-row:last-child{border-bottom:none;}
+.health-bar-name{font-size:13px;font-weight:600;min-width:180px;}
+.health-bar-track{flex:1;height:8px;background:var(--surface3);border-radius:4px;overflow:hidden;position:relative;}
+.health-bar-fill{height:100%;border-radius:4px;transition:width .6s ease;}
+.health-bar-pct{font-family:'Share Tech Mono',monospace;font-size:12px;min-width:50px;text-align:right;}
+.health-signal{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(30,61,45,.3);}
+.health-signal:last-child{border-bottom:none;}
+.health-signal-icon{font-size:18px;flex-shrink:0;margin-top:2px;}
+.health-signal-body{flex:1;}
+.health-signal-title{font-weight:600;font-size:13px;margin-bottom:2px;}
+.health-signal-desc{font-size:12px;color:var(--text3);line-height:1.4;}
+
 /* ===== PRICE HISTORY MODAL ===== */
 .ph-range-btn{min-width:40px;text-align:center;}
 .ph-range-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
@@ -372,6 +398,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   <button class="nav-tab" onclick="switchTab('watchlist',this)">Watchlist</button>
   <button class="nav-tab" onclick="switchTab('alerts',this)">🔔 Alerts</button>
   <button class="nav-tab" onclick="switchTab('arbitrage',this)">⚡ Arbitrage</button>
+  <button class="nav-tab" onclick="switchTab('health',this)">♥ Health</button>
   <button class="nav-tab" onclick="switchTab('tradeup',this)">⚙ Trade-Up</button>
   <button class="nav-tab" onclick="switchTab('intelligence',this)">⬡ Case Intel</button>
   <button class="nav-tab" onclick="switchTab('settings',this)">⚙ Settings</button>
@@ -587,6 +614,28 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <div class="empty-icon">⚡</div>
       <h3>No Arbitrage Found</h3>
       <p>Refresh prices first, then come back to scan for cross-platform price gaps</p>
+    </div>
+  </div>
+
+  <!-- HEALTH REPORT TAB -->
+  <div class="tab-panel" id="tab-health">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
+      <div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">♥ Portfolio Health Report</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Concentration risk, diversification score, supply trends, and actionable signals</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="renderHealthReport()">↻ Refresh Report</button>
+    </div>
+    <div id="healthScore" style="margin-bottom:20px;"></div>
+    <div id="healthConcentration" style="margin-bottom:20px;"></div>
+    <div id="healthDiversification" style="margin-bottom:20px;"></div>
+    <div id="healthSignals" style="margin-bottom:20px;"></div>
+    <div id="healthStaleness" style="margin-bottom:20px;"></div>
+    <div id="healthOutliers" style="margin-bottom:20px;"></div>
+    <div class="empty-state" id="healthEmpty" style="display:none;">
+      <div class="empty-icon">♥</div>
+      <h3>No Data Yet</h3>
+      <p>Refresh prices on the Holdings tab first to generate your health report</p>
     </div>
   </div>
 
