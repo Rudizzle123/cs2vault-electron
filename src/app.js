@@ -1165,6 +1165,7 @@ function renderAnalytics() {
       <span class="pnl-pill ${d.profit>=0?'pnl-pos':'pnl-neg'}">${d.profit>=0?'+':''}£${d.profit.toFixed(2)}</span></div>
     </div>`
   ).join('') || '<p style="color:var(--text3);font-size:13px;">No completed trades yet</p>';
+  renderTrending();
 }
 
 // ========================
@@ -3290,6 +3291,134 @@ function renderArbitrage() {
       </div>
     </div>`;
   }).join('');
+}
+
+// ========================
+// TRENDING — TOP GAINERS / LOSERS
+// ========================
+let _trendRange = 7;
+let _trendCategory = 'all';
+
+function getSteamImageUrl(marketHash) {
+  if (!marketHash) return '';
+  return `https://api.steamapis.com/image/item/730/${encodeURIComponent(marketHash)}`;
+}
+
+function calculateTrends(items, days) {
+  const results = [];
+  const now = Date.now();
+  const cutoff = now - (days * 24 * 60 * 60 * 1000);
+
+  items.forEach(item => {
+    const history = getPriceHistory(item.id, days);
+    if (history.length < 2) return;
+
+    const oldest = history[0];
+    const newest = history[history.length - 1];
+    if (!oldest.best || !newest.best) return;
+
+    const change = ((newest.best - oldest.best) / oldest.best) * 100;
+    const currentPrice = newest.best;
+    const totalValue = currentPrice * item.qty;
+
+    results.push({
+      item,
+      currentPrice,
+      oldPrice: oldest.best,
+      change,
+      totalValue,
+      dataPoints: history.length,
+      marketHash: item.marketHash,
+    });
+  });
+
+  return results;
+}
+
+function setTrendRange(days, btn) {
+  _trendRange = days;
+  document.querySelectorAll('.trend-range-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderTrending();
+}
+
+function setTrendCategory(cat, btn) {
+  _trendCategory = cat;
+  document.querySelectorAll('.trend-cat-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderTrending();
+}
+
+function renderTrending() {
+  const gainersEl = document.getElementById('trendGainers');
+  const losersEl = document.getElementById('trendLosers');
+  const emptyEl = document.getElementById('trendEmpty');
+  const tabsEl = document.getElementById('trendingCategoryTabs');
+
+  // Build category tabs
+  const categories = { all: 'All Items' };
+  const typeCounts = {};
+  holdings.forEach(h => {
+    if (!typeCounts[h.type]) typeCounts[h.type] = 0;
+    typeCounts[h.type]++;
+  });
+  Object.keys(typeCounts).forEach(t => { categories[t] = (typeLabels[t] || t) + 's'; });
+
+  tabsEl.innerHTML = Object.entries(categories).map(([key, label]) =>
+    `<button class="btn btn-secondary btn-sm trend-cat-btn ${_trendCategory === key ? 'active' : ''}" onclick="setTrendCategory('${key}', this)">${label}</button>`
+  ).join('');
+
+  // Filter items by category
+  let items = holdings;
+  if (_trendCategory !== 'all') {
+    items = holdings.filter(h => h.type === _trendCategory);
+  }
+
+  const trends = calculateTrends(items, _trendRange);
+
+  if (trends.length < 1) {
+    emptyEl.style.display = 'block';
+    gainersEl.innerHTML = '';
+    losersEl.innerHTML = '';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  // Sort for gainers (highest change first) and losers (lowest change first)
+  const gainers = [...trends].filter(t => t.change > 0).sort((a, b) => b.change - a.change).slice(0, 5);
+  const losers = [...trends].filter(t => t.change < 0).sort((a, b) => a.change - b.change).slice(0, 5);
+
+  const renderRow = (t, isGainer) => {
+    const color = isGainer ? 'var(--green)' : 'var(--red)';
+    const arrow = isGainer ? '↗' : '↘';
+    const imgUrl = getSteamImageUrl(t.marketHash);
+    const imgHtml = imgUrl ? `<img class="trend-img" src="${imgUrl}" alt="" onerror="this.style.display='none'">` : `<div class="trend-img" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text3);">◆</div>`;
+
+    return `<div class="trend-row">
+      ${imgHtml}
+      <div class="trend-info">
+        <div class="trend-name">${escHtml(t.item.name)}</div>
+        <div class="trend-sub">${typeLabels[t.item.type] || t.item.type} · qty ${t.item.qty.toLocaleString()}</div>
+      </div>
+      <div class="trend-price">£${t.currentPrice.toFixed(2)}</div>
+      <div class="trend-change" style="color:${color};">${arrow} ${Math.abs(t.change).toFixed(2)}%</div>
+      <div class="trend-value">£${t.totalValue.toFixed(2)}</div>
+    </div>`;
+  };
+
+  gainersEl.innerHTML = `
+    <div class="trend-panel-hd">
+      <div class="trend-panel-title" style="color:var(--green);">↗ Top Gainers</div>
+      <div class="trend-count" style="background:rgba(34,197,94,.15);color:var(--green);">${gainers.length}</div>
+    </div>
+    ${gainers.length > 0 ? gainers.map(t => renderRow(t, true)).join('') : '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">No gainers in this period</div>'}`;
+
+  losersEl.innerHTML = `
+    <div class="trend-panel-hd">
+      <div class="trend-panel-title" style="color:var(--red);">↘ Top Losers</div>
+      <div class="trend-count" style="background:rgba(239,68,68,.15);color:var(--red);">${losers.length}</div>
+    </div>
+    ${losers.length > 0 ? losers.map(t => renderRow(t, false)).join('') : '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">No losers in this period</div>'}`;
 }
 
 // ========================

@@ -262,6 +262,26 @@ tr:hover .row-actions{opacity:1;}
 
 /* ===== HEALTH REPORT ===== */
 .health-score-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 32px;display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
+
+/* ===== TRENDING ===== */
+.trend-range-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
+.trend-cat-btn{font-size:11px;padding:4px 12px;}
+.trend-cat-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
+.trend-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.trend-panel-hd{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.trend-panel-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;display:flex;align-items:center;gap:8px;}
+.trend-count{font-family:'Share Tech Mono',monospace;font-size:11px;padding:2px 8px;border-radius:4px;}
+.trend-row{display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid rgba(30,61,45,.25);transition:background .15s;}
+.trend-row:last-child{border-bottom:none;}
+.trend-row:hover{background:rgba(232,153,60,.03);}
+.trend-img{width:40px;height:40px;border-radius:6px;background:var(--surface2);object-fit:contain;flex-shrink:0;}
+.trend-info{flex:1;min-width:0;}
+.trend-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.trend-sub{font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;margin-top:1px;}
+.trend-price{font-family:'Share Tech Mono',monospace;font-size:13px;text-align:right;min-width:60px;}
+.trend-change{font-family:'Share Tech Mono',monospace;font-size:13px;font-weight:700;text-align:right;min-width:70px;}
+.trend-value{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);text-align:right;min-width:60px;}
+@media(max-width:900px){#trendingGrid{grid-template-columns:1fr;}}
 .health-ring{position:relative;width:100px;height:100px;flex-shrink:0;}
 .health-ring svg{transform:rotate(-90deg);}
 .health-ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;}
@@ -547,6 +567,27 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   </div>
 
   <div class="tab-panel" id="tab-analytics">
+    <!-- TRENDING SECTION -->
+    <div style="margin-bottom:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;">Trending</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin-right:4px;">Period:</span>
+          <button class="btn btn-secondary btn-sm trend-range-btn active" data-days="7" onclick="setTrendRange(7,this)">7d</button>
+          <button class="btn btn-secondary btn-sm trend-range-btn" data-days="30" onclick="setTrendRange(30,this)">30d</button>
+          <button class="btn btn-secondary btn-sm trend-range-btn" data-days="90" onclick="setTrendRange(90,this)">90d</button>
+        </div>
+      </div>
+      <div id="trendingCategoryTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;" id="trendingGrid">
+        <div class="trend-panel" id="trendGainers"></div>
+        <div class="trend-panel" id="trendLosers"></div>
+      </div>
+      <div id="trendEmpty" style="display:none;text-align:center;color:var(--text3);font-size:13px;padding:30px;">
+        Not enough price history data yet — refresh prices a few times over several days to see trends
+      </div>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
       <div class="table-wrap" style="padding:20px;"><div class="section-heading">By Type</div><div id="analyticsType"></div></div>
       <div class="table-wrap" style="padding:20px;"><div class="section-heading">Top 5 Best Performers</div><div id="analyticsTop"></div></div>
