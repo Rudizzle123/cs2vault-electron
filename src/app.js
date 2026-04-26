@@ -147,10 +147,152 @@ function prunePriceLog() {
   }
 }
 
+// ========================
+// STEAM HISTORICAL PRICE DATA
+// ========================
+const STEAM_HISTORY_KEY = 'cs2vault_steam_history';
+
+function loadSteamHistory() {
+  try { return JSON.parse(window._store[STEAM_HISTORY_KEY]) || {}; }
+  catch { return {}; }
+}
+
+function saveSteamHistory(data) {
+  window._storeSet(STEAM_HISTORY_KEY, JSON.stringify(data));
+}
+
+// Parse price history from Steam market listing page HTML
+function parseSteamPriceHistory(html) {
+  // Steam embeds price data as: var line1=[[...],[...],...];
+  const match = html.match(/var line1=(\[.+?\]);/);
+  if (!match) return null;
+  try {
+    const raw = JSON.parse(match[1]);
+    // Each entry: ["Mon DD YYYY HH: +0", price, "volume"]
+    return raw.map(entry => {
+      const dateStr = entry[0];
+      const price = entry[1];
+      const volume = parseInt(entry[2]) || 0;
+      // Parse date — format: "Nov 27 2013 01: +0"
+      const cleaned = dateStr.replace(/: \+\d+$/, '');
+      const ts = new Date(cleaned).getTime();
+      if (isNaN(ts)) return null;
+      return { ts, price, volume };
+    }).filter(e => e != null);
+  } catch(e) {
+    console.error('[SteamHistory] Parse error:', e.message);
+    return null;
+  }
+}
+
+async function fetchSteamHistory(marketHashName) {
+  if (!marketHashName) return null;
+  const url = `https://steamcommunity.com/market/listings/730/${encodeURIComponent(marketHashName)}`;
+  try {
+    const res = await window.cs2vault.fetch(url, {});
+    if (res.status !== 200) {
+      console.warn(`[SteamHistory] ${marketHashName}: HTTP ${res.status}`);
+      return null;
+    }
+    const data = parseSteamPriceHistory(res.body);
+    if (!data || data.length === 0) {
+      console.warn(`[SteamHistory] ${marketHashName}: No price data found in HTML`);
+      return null;
+    }
+    console.log(`[SteamHistory] ${marketHashName}: ${data.length} data points`);
+    return data;
+  } catch(e) {
+    console.error(`[SteamHistory] ${marketHashName}: Fetch error:`, e.message);
+    return null;
+  }
+}
+
+async function fetchAllSteamHistory() {
+  const btn = document.getElementById('steamHistoryBtn');
+  if (btn) { btn.innerHTML = '<span class="loading-spinner"></span> Fetching...'; btn.disabled = true; }
+
+  const allItems = [...holdings, ...(skins || [])].filter(h => h.marketHash);
+  const stored = loadSteamHistory();
+  let fetched = 0, failed = 0;
+
+  for (let i = 0; i < allItems.length; i++) {
+    const item = allItems[i];
+    if (btn) btn.innerHTML = `<span class="loading-spinner"></span> ${i+1}/${allItems.length}`;
+
+    // Skip if already fetched within last 24 hours
+    if (stored[item.marketHash]?.fetchedAt && (Date.now() - stored[item.marketHash].fetchedAt) < 24 * 60 * 60 * 1000) {
+      console.log(`[SteamHistory] Skipping ${item.name} — already fresh`);
+      continue;
+    }
+
+    const data = await fetchSteamHistory(item.marketHash);
+    if (data) {
+      stored[item.marketHash] = { data, fetchedAt: Date.now() };
+      fetched++;
+    } else { failed++; }
+
+    saveSteamHistory(stored);
+    // Rate limit — Steam is sensitive, 3.5s between calls
+    await sleep(3500);
+  }
+
+  if (btn) { btn.innerHTML = '📈 Fetch Steam History'; btn.disabled = false; }
+  if (fetched > 0) toast(`Steam history: ${fetched} items fetched`, 'success');
+  if (failed > 0) toast(`Steam history: ${failed} failed`, 'info');
+  renderTrending();
+}
+
+// Get Steam historical price for an item at a specific number of days ago
+function getSteamHistoricalPrice(marketHash, daysAgo) {
+  const stored = loadSteamHistory();
+  const itemData = stored[marketHash]?.data;
+  if (!itemData || itemData.length === 0) return null;
+
+  const targetTs = Date.now() - (daysAgo * 24 * 60 * 60 * 1000);
+  // Find the closest data point to the target timestamp
+  let closest = null, closestDiff = Infinity;
+  itemData.forEach(p => {
+    const diff = Math.abs(p.ts - targetTs);
+    if (diff < closestDiff) { closestDiff = diff; closest = p; }
+  });
+  // Only return if within 2 days of target
+  if (closest && closestDiff < 2 * 24 * 60 * 60 * 1000) return closest.price;
+  return null;
+}
+
+// Get full Steam history for chart display
+function getSteamHistoryForChart(marketHash, days) {
+  const stored = loadSteamHistory();
+  const itemData = stored[marketHash]?.data;
+  if (!itemData) return [];
+  const cutoff = days ? Date.now() - (days * 24 * 60 * 60 * 1000) : 0;
+  return itemData.filter(p => p.ts > cutoff).sort((a, b) => a.ts - b.ts);
+}
+
 function getPriceHistory(itemId, days) {
   const log = loadPriceLog();
   const cutoff = days ? Date.now() - (days * 24 * 60 * 60 * 1000) : 0;
-  return log.filter(e => e.id === itemId && e.ts > cutoff).sort((a, b) => a.ts - b.ts);
+  const localData = log.filter(e => e.id === itemId && e.ts > cutoff).sort((a, b) => a.ts - b.ts);
+
+  // Also try Steam historical data if local data is sparse
+  const item = holdings.find(h => h.id === itemId) || (skins ? skins.find(s => s.id === itemId) : null);
+  if (item?.marketHash) {
+    const steamData = getSteamHistoryForChart(item.marketHash, days);
+    if (steamData.length > localData.length) {
+      // Convert Steam data to same format as local price log
+      // Steam prices are in the user's currency (GBP for UK accounts)
+      return steamData.map(p => ({
+        id: itemId,
+        ts: p.ts,
+        best: p.price,
+        cf: null,
+        stm: p.price,
+        sp: null,
+      }));
+    }
+  }
+
+  return localData;
 }
 
 // Build sparkline SVG (inline, tiny, clickable)
@@ -209,7 +351,11 @@ function setPHRange(days) {
 function renderPriceHistoryChart() {
   if (!_phItemId) return;
   const history = getPriceHistory(_phItemId, _phRange || null);
-  document.getElementById('phDataPoints').textContent = `${history.length} data point${history.length !== 1 ? 's' : ''}`;
+  const _phItem = holdings.find(h => h.id === _phItemId) || (skins ? skins.find(s => s.id === _phItemId) : null);
+  const hasSteamData = _phItem?.marketHash && getSteamHistoryForChart(_phItem.marketHash, _phRange || null).length > 0;
+  const localLog = loadPriceLog().filter(e => e.id === _phItemId);
+  const source = hasSteamData && history.length > localLog.length ? '🟦 Steam historical' : '📊 Local refreshes';
+  document.getElementById('phDataPoints').textContent = `${history.length} points · ${source}`;
 
   if (history.length === 0) {
     if (_phChart) { _phChart.destroy(); _phChart = null; }
@@ -927,18 +1073,26 @@ const typeBadge  = { skin:'badge-skin', case:'badge-case', sticker:'badge-sticke
 
 function getBestPrice(item) {
   if (!item.prices) return null;
-  // Priority: CSFloat → Steam → Skinport (use the platform you'd actually sell on)
   if (item.prices.platforms) {
     const plats = item.prices.platforms;
-    // Try CSFloat first (primary selling platform)
-    const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
-    if (cf != null && cf > 0) return cf;
-    // Fallback to Steam
-    const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
-    if (stm != null && stm > 0) return stm;
-    // Fallback to Skinport
-    const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
-    if (sp != null && sp > 0) return sp;
+    if (item.type === 'case') {
+      // Cases sell on Steam Market — use Steam price first
+      const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
+      if (stm != null && stm > 0) return stm;
+      // Fallback to CSFloat then Skinport
+      const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
+      if (cf != null && cf > 0) return cf;
+      const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
+      if (sp != null && sp > 0) return sp;
+    } else {
+      // Everything else (skins, stickers, charms, armory, knives) — CSFloat first
+      const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
+      if (cf != null && cf > 0) return cf;
+      const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
+      if (stm != null && stm > 0) return stm;
+      const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
+      if (sp != null && sp > 0) return sp;
+    }
   }
   return item.prices.avg7d || item.prices.lowest || item.prices.lastSold || null;
 }

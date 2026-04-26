@@ -19,6 +19,7 @@ const STORE_KEYS = [
   'cs2vault_alerts',
   'cs2vault_apikey',
   'cs2vault_price_log',
+  'cs2vault_steam_history',
 ];
 
 window._store = {};

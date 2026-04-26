@@ -576,6 +576,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
           <button class="btn btn-secondary btn-sm trend-range-btn active" data-days="7" onclick="setTrendRange(7,this)">7d</button>
           <button class="btn btn-secondary btn-sm trend-range-btn" data-days="30" onclick="setTrendRange(30,this)">30d</button>
           <button class="btn btn-secondary btn-sm trend-range-btn" data-days="90" onclick="setTrendRange(90,this)">90d</button>
+          <button class="btn btn-secondary btn-sm" onclick="fetchAllSteamHistory()" id="steamHistoryBtn" title="Fetch years of historical price data from Steam Market" style="margin-left:8px;">📈 Fetch Steam History</button>
         </div>
       </div>
       <div id="trendingCategoryTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;"></div>
