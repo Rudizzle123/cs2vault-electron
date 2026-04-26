@@ -359,90 +359,129 @@ function renderPriceHistoryChart() {
 
   if (history.length === 0) {
     if (_phChart) { _phChart.destroy(); _phChart = null; }
-    document.getElementById('phSummary').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text3);font-size:13px;padding:20px;">No price data yet — refresh prices to start tracking</div>';
+    document.getElementById('phSummary').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text3);font-size:13px;padding:20px;">No price data yet — hit "📈 Fetch Steam History" on the Analytics tab, or refresh prices to start tracking</div>';
     return;
   }
 
+  // Clean date labels — just date, no time (for daily data)
   const labels = history.map(e => {
     const d = new Date(e.ts);
-    return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year: history.length > 90 ? '2-digit' : undefined });
   });
+
+  const bestPrices = history.map(e => e.best);
+  const volumes = history.map(e => e.volume || 0);
+  const hasVolume = volumes.some(v => v > 0);
+
+  // Determine if price went up or down
+  const first = bestPrices.find(v => v != null);
+  const last = [...bestPrices].reverse().find(v => v != null);
+  const isUp = last >= first;
+  const lineColor = isUp ? '#22c55e' : '#ef4444';
+
+  const ctx = document.getElementById('priceHistoryChart').getContext('2d');
+  if (_phChart) _phChart.destroy();
+
+  // Create gradient fill
+  const gradient = ctx.createLinearGradient(0, 0, 0, 320);
+  if (isUp) {
+    gradient.addColorStop(0, 'rgba(34, 197, 94, 0.25)');
+    gradient.addColorStop(0.5, 'rgba(34, 197, 94, 0.08)');
+    gradient.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+  } else {
+    gradient.addColorStop(0, 'rgba(239, 68, 68, 0.2)');
+    gradient.addColorStop(0.5, 'rgba(239, 68, 68, 0.06)');
+    gradient.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
+  }
 
   const datasets = [];
-  const bestPrices = history.map(e => e.best);
 
+  // Main price line
   datasets.push({
-    label: 'Best Price',
+    label: 'Price',
     data: bestPrices,
-    borderColor: '#22c55e',
-    backgroundColor: 'rgba(34,197,94,0.08)',
+    borderColor: lineColor,
+    backgroundColor: gradient,
     borderWidth: 2,
     fill: true,
-    tension: 0.3,
-    pointRadius: history.length > 40 ? 0 : 3,
+    tension: 0.35,
+    pointRadius: history.length > 30 ? 0 : 2,
     pointHoverRadius: 5,
+    pointBackgroundColor: lineColor,
+    pointBorderColor: lineColor,
+    pointHoverBackgroundColor: '#fff',
+    pointHoverBorderColor: lineColor,
+    pointHoverBorderWidth: 2,
+    yAxisID: 'y',
+    order: 1,
   });
 
-  const cfPrices = history.map(e => e.cf);
-  const stmPrices = history.map(e => e.stm);
-  const spPrices = history.map(e => e.sp);
-
-  if (cfPrices.some(v => v != null)) {
-    datasets.push({
-      label: 'CSFloat',
-      data: cfPrices,
-      borderColor: '#f97316',
-      borderWidth: 1.5,
-      borderDash: [4, 2],
-      tension: 0.3,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      fill: false,
-    });
-  }
-  if (stmPrices.some(v => v != null)) {
-    datasets.push({
-      label: 'Steam',
-      data: stmPrices,
-      borderColor: '#3b82f6',
-      borderWidth: 1.5,
-      borderDash: [4, 2],
-      tension: 0.3,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      fill: false,
-    });
-  }
-  if (spPrices.some(v => v != null)) {
-    datasets.push({
-      label: 'Skinport',
-      data: spPrices,
-      borderColor: '#a855f7',
-      borderWidth: 1.5,
-      borderDash: [4, 2],
-      tension: 0.3,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      fill: false,
-    });
-  }
-
+  // Buy price reference line (subtle)
   const item = holdings.find(h => h.id === _phItemId) || (typeof skins !== 'undefined' ? skins.find(s => s.id === _phItemId) : null);
   if (item) {
     datasets.push({
       label: 'Buy Price',
       data: history.map(() => item.buyPrice),
-      borderColor: 'rgba(239,68,68,0.5)',
-      borderWidth: 1,
-      borderDash: [6, 4],
+      borderColor: 'rgba(232, 153, 60, 0.4)',
+      borderWidth: 1.5,
+      borderDash: [8, 4],
       pointRadius: 0,
       pointHoverRadius: 0,
       fill: false,
+      yAxisID: 'y',
+      order: 2,
     });
   }
 
-  const ctx = document.getElementById('priceHistoryChart').getContext('2d');
-  if (_phChart) _phChart.destroy();
+  // Volume bars (if available from Steam data)
+  if (hasVolume) {
+    datasets.push({
+      label: 'Volume',
+      data: volumes,
+      type: 'bar',
+      backgroundColor: 'rgba(34, 197, 94, 0.15)',
+      borderColor: 'rgba(34, 197, 94, 0.3)',
+      borderWidth: 1,
+      borderRadius: 2,
+      yAxisID: 'y1',
+      order: 3,
+      barPercentage: 0.6,
+      categoryPercentage: 0.8,
+    });
+  }
+
+  const scales = {
+    x: {
+      ticks: {
+        font: { family: "'Share Tech Mono', monospace", size: 10 },
+        maxRotation: 0,
+        maxTicksLimit: 8,
+        color: 'rgba(255,255,255,0.35)',
+      },
+      grid: { display: false },
+      border: { color: 'rgba(30,61,45,0.4)' },
+    },
+    y: {
+      position: 'right',
+      ticks: {
+        font: { family: "'Share Tech Mono', monospace", size: 11 },
+        callback: v => '£' + Number(v).toFixed(2),
+        color: 'rgba(255,255,255,0.4)',
+        maxTicksLimit: 6,
+      },
+      grid: { color: 'rgba(30,61,45,0.25)', drawBorder: false },
+      border: { display: false },
+    },
+  };
+
+  if (hasVolume) {
+    scales.y1 = {
+      position: 'left',
+      display: false,
+      beginAtZero: true,
+      max: Math.max(...volumes) * 4, // Keep bars small
+    };
+  }
 
   _phChart = new Chart(ctx, {
     type: 'line',
@@ -452,42 +491,60 @@ function renderPriceHistoryChart() {
       maintainAspectRatio: false,
       interaction: { intersect: false, mode: 'index' },
       plugins: {
-        legend: { position: 'top', labels: { font: { family: "'Share Tech Mono', monospace", size: 11 }, boxWidth: 16, padding: 12, usePointStyle: true } },
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'end',
+          labels: {
+            font: { family: "'Share Tech Mono', monospace", size: 10 },
+            boxWidth: 12,
+            padding: 16,
+            usePointStyle: true,
+            color: 'rgba(255,255,255,0.5)',
+            filter: (legendItem) => legendItem.text !== 'Volume', // Hide volume from legend
+          }
+        },
         tooltip: {
-          backgroundColor: 'rgba(10,12,16,0.95)',
+          backgroundColor: 'rgba(8,12,8,0.95)',
+          borderColor: 'rgba(30,61,45,0.6)',
+          borderWidth: 1,
           titleFont: { family: "'Share Tech Mono', monospace", size: 11 },
-          bodyFont: { family: "'Share Tech Mono', monospace", size: 11 },
+          bodyFont: { family: "'Share Tech Mono', monospace", size: 12 },
+          titleColor: 'rgba(255,255,255,0.6)',
+          bodyColor: '#e2e8f0',
+          padding: 12,
+          cornerRadius: 8,
+          displayColors: false,
           callbacks: {
-            label: ctx => ctx.raw != null ? `${ctx.dataset.label}: £${Number(ctx.raw).toFixed(3)}` : null,
+            title: (items) => items[0]?.label || '',
+            label: (ctx) => {
+              if (ctx.dataset.label === 'Volume') return `Volume: ${ctx.raw.toLocaleString()}`;
+              if (ctx.raw != null) return `${ctx.dataset.label}: £${Number(ctx.raw).toFixed(3)}`;
+              return null;
+            },
           }
         }
       },
-      scales: {
-        x: {
-          ticks: { font: { family: "'Share Tech Mono', monospace", size: 10 }, maxRotation: 45, maxTicksLimit: 12, color: 'rgba(255,255,255,0.4)' },
-          grid: { color: 'rgba(255,255,255,0.05)' },
-        },
-        y: {
-          ticks: { font: { family: "'Share Tech Mono', monospace", size: 11 }, callback: v => '£' + Number(v).toFixed(2), color: 'rgba(255,255,255,0.4)' },
-          grid: { color: 'rgba(255,255,255,0.08)' },
-        },
-      },
+      scales,
     },
   });
 
+  // Summary stats
   const validBest = bestPrices.filter(v => v != null);
   if (validBest.length > 0) {
     const current = validBest[validBest.length - 1];
-    const first = validBest[0];
+    const firstVal = validBest[0];
     const hi = Math.max(...validBest);
     const lo = Math.min(...validBest);
-    const change = ((current - first) / first * 100);
-    const changeCls = change >= 0 ? 'positive' : 'negative';
+    const change = ((current - firstVal) / firstVal * 100);
+    const changeColor = change >= 0 ? 'var(--green)' : 'var(--red)';
+    const totalVol = volumes.reduce((s, v) => s + v, 0);
     document.getElementById('phSummary').innerHTML = `
       <div class="ph-stat"><div class="ph-stat-label">Current</div><div class="ph-stat-val">£${current.toFixed(3)}</div></div>
-      <div class="ph-stat"><div class="ph-stat-label">Change</div><div class="ph-stat-val ${changeCls}">${change >= 0 ? '+' : ''}${change.toFixed(1)}%</div></div>
+      <div class="ph-stat"><div class="ph-stat-label">Change</div><div class="ph-stat-val" style="color:${changeColor};">${change >= 0 ? '+' : ''}${change.toFixed(1)}%</div></div>
       <div class="ph-stat"><div class="ph-stat-label">High</div><div class="ph-stat-val" style="color:var(--green);">£${hi.toFixed(3)}</div></div>
       <div class="ph-stat"><div class="ph-stat-label">Low</div><div class="ph-stat-val" style="color:var(--red);">£${lo.toFixed(3)}</div></div>
+      ${totalVol > 0 ? `<div class="ph-stat"><div class="ph-stat-label">Volume</div><div class="ph-stat-val">${totalVol.toLocaleString()}</div></div>` : ''}
     `;
   } else {
     document.getElementById('phSummary').innerHTML = '';
@@ -1844,17 +1901,28 @@ function renderPortfolio() {
 
   if (hasBench) {
     // Single Y axis, everything indexed to 100
+    const ctxEl = document.getElementById('portfolioChart');
+    const benchGrad = ctxEl ? ctxEl.getContext('2d').createLinearGradient(0, 0, 0, 440) : null;
+    if (benchGrad) {
+      benchGrad.addColorStop(0, 'rgba(34,197,94,0.2)');
+      benchGrad.addColorStop(0.5, 'rgba(34,197,94,0.06)');
+      benchGrad.addColorStop(1, 'rgba(34,197,94,0.0)');
+    }
     datasets = [
       {
         label: 'Your Portfolio',
         data: portIdx,
-        borderColor: '#00d4aa',
-        backgroundColor: 'rgba(0,212,170,0.08)',
+        borderColor: '#22c55e',
+        backgroundColor: benchGrad || 'rgba(34,197,94,0.08)',
         borderWidth: 2.5,
-        tension: 0.3,
+        tension: 0.35,
         fill: true,
-        pointRadius: 5,
-        pointHoverRadius: 7,
+        pointRadius: portIdx.length > 30 ? 0 : 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: '#22c55e',
+        pointHoverBackgroundColor: '#fff',
+        pointHoverBorderColor: '#22c55e',
+        pointHoverBorderWidth: 2,
         yAxisID: 'y',
       },
     ];
@@ -1866,31 +1934,98 @@ function renderPortfolio() {
         borderColor: BENCHMARK_DATA[bKey].color,
         backgroundColor: 'transparent',
         borderWidth: 2,
-        tension: 0.3,
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        tension: 0.35,
+        pointRadius: 0,
+        pointHoverRadius: 5,
         borderDash: [6,3],
         yAxisID: 'y',
       });
     });
     yScales = {
-      x: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
+      x: {
+        ticks: { color: 'rgba(255,255,255,0.35)', font: { family: "'Share Tech Mono', monospace", size: 10 }, maxRotation: 0, maxTicksLimit: 8 },
+        grid: { display: false },
+        border: { color: 'rgba(30,61,45,0.4)' },
+      },
       y: {
-        ticks: { color: '#9ca3af', callback: v => v.toFixed(0) },
-        grid: { color: '#1f2937' },
-        title: { display: true, text: 'Index (100 = Sep 2025 start)', color: '#6b7280', font: { size: 10 } },
+        position: 'right',
+        ticks: { color: 'rgba(255,255,255,0.4)', callback: v => v.toFixed(0), font: { family: "'Share Tech Mono', monospace", size: 11 }, maxTicksLimit: 6 },
+        grid: { color: 'rgba(30,61,45,0.25)', drawBorder: false },
+        border: { display: false },
+        title: { display: true, text: 'Index (100 = start)', color: 'rgba(255,255,255,0.3)', font: { size: 10, family: "'Share Tech Mono', monospace" } },
       },
     };
   } else {
     // Normal £ value chart
+    const ctxEl = document.getElementById('portfolioChart');
+    const valGrad = ctxEl ? ctxEl.getContext('2d').createLinearGradient(0, 0, 0, 440) : null;
+    if (valGrad) {
+      const lastV = values[values.length - 1];
+      const lastI = invested[invested.length - 1];
+      const isProfit = lastV >= lastI;
+      if (isProfit) {
+        valGrad.addColorStop(0, 'rgba(34,197,94,0.25)');
+        valGrad.addColorStop(0.5, 'rgba(34,197,94,0.08)');
+        valGrad.addColorStop(1, 'rgba(34,197,94,0.0)');
+      } else {
+        valGrad.addColorStop(0, 'rgba(239,68,68,0.2)');
+        valGrad.addColorStop(0.5, 'rgba(239,68,68,0.06)');
+        valGrad.addColorStop(1, 'rgba(239,68,68,0.0)');
+      }
+    }
     datasets = [
-      { label: 'Portfolio Value', data: values,   borderColor: '#00d4aa', backgroundColor: 'rgba(0,212,170,0.1)', tension: 0.3, fill: true, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2.5, yAxisID: 'y' },
-      { label: 'Total Invested',  data: invested,  borderColor: '#6b7280', backgroundColor: 'transparent', tension: 0.3, borderDash: [5,5], pointRadius: 4, pointHoverRadius: 6, yAxisID: 'y' },
-      { label: 'Unrealised P&L',  data: pnl,       borderColor: '#f59e0b', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, pointHoverRadius: 6, yAxisID: 'y' },
+      {
+        label: 'Portfolio Value',
+        data: values,
+        borderColor: '#22c55e',
+        backgroundColor: valGrad || 'rgba(34,197,94,0.1)',
+        tension: 0.35,
+        fill: true,
+        pointRadius: values.length > 30 ? 0 : 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: '#22c55e',
+        pointHoverBackgroundColor: '#fff',
+        pointHoverBorderColor: '#22c55e',
+        pointHoverBorderWidth: 2,
+        borderWidth: 2.5,
+        yAxisID: 'y',
+      },
+      {
+        label: 'Total Invested',
+        data: invested,
+        borderColor: 'rgba(232,153,60,0.4)',
+        backgroundColor: 'transparent',
+        tension: 0.35,
+        borderDash: [8,4],
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        borderWidth: 1.5,
+        yAxisID: 'y',
+      },
+      {
+        label: 'Unrealised P&L',
+        data: pnl,
+        borderColor: '#e8993c',
+        backgroundColor: 'transparent',
+        tension: 0.35,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        borderWidth: 1.5,
+        yAxisID: 'y',
+      },
     ];
     yScales = {
-      x: { ticks: { color: '#9ca3af' }, grid: { color: '#1f2937' } },
-      y: { ticks: { color: '#9ca3af', callback: v => `£${Number(v).toLocaleString('en-GB')}` }, grid: { color: '#1f2937' } },
+      x: {
+        ticks: { color: 'rgba(255,255,255,0.35)', font: { family: "'Share Tech Mono', monospace", size: 10 }, maxRotation: 0, maxTicksLimit: 8 },
+        grid: { display: false },
+        border: { color: 'rgba(30,61,45,0.4)' },
+      },
+      y: {
+        position: 'right',
+        ticks: { color: 'rgba(255,255,255,0.4)', callback: v => `£${Number(v).toLocaleString('en-GB')}`, font: { family: "'Share Tech Mono', monospace", size: 11 }, maxTicksLimit: 6 },
+        grid: { color: 'rgba(30,61,45,0.25)', drawBorder: false },
+        border: { display: false },
+      },
     };
   }
 
@@ -1936,24 +2071,32 @@ function renderPortfolio() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
+          position: 'top',
+          align: 'end',
           labels: {
-            color: '#9ca3af',
+            color: 'rgba(255,255,255,0.5)',
             usePointStyle: true,
-            pointStyleWidth: 20,
-            padding: 20,
-            font: { size: 12 },
+            pointStyleWidth: 16,
+            padding: 16,
+            font: { size: 10, family: "'Share Tech Mono', monospace" },
           },
         },
         tooltip: {
-          backgroundColor: 'rgba(15,19,24,0.95)',
-          borderColor: '#243447',
+          backgroundColor: 'rgba(8,12,8,0.95)',
+          borderColor: 'rgba(30,61,45,0.6)',
           borderWidth: 1,
           padding: 12,
+          cornerRadius: 8,
+          titleFont: { family: "'Share Tech Mono', monospace", size: 11 },
+          bodyFont: { family: "'Share Tech Mono', monospace", size: 12 },
+          titleColor: 'rgba(255,255,255,0.6)',
+          bodyColor: '#e2e8f0',
+          displayColors: false,
           callbacks: {
             label: ctx => {
               const v = Number(ctx.raw);
-              if (hasBench) return `  ${ctx.dataset.label}: ${v.toFixed(1)} (${v >= 100 ? '+' : ''}${(v - 100).toFixed(1)}%)`;
-              return `  ${ctx.dataset.label}: £${v.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+              if (hasBench) return `${ctx.dataset.label}: ${v.toFixed(1)} (${v >= 100 ? '+' : ''}${(v - 100).toFixed(1)}%)`;
+              return `${ctx.dataset.label}: £${v.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
             },
           },
         },
