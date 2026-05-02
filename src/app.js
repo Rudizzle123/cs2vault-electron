@@ -1649,6 +1649,100 @@ function renderAnalytics() {
     </div>`
   ).join('') || '<p style="color:var(--text3);font-size:13px;">No completed trades yet</p>';
   renderTrending();
+  renderAllocationChart();
+}
+
+// ========================
+// PORTFOLIO ALLOCATION PIE CHART
+// ========================
+let _allocationChart = null;
+
+function renderAllocationChart() {
+  const ctx = document.getElementById('allocationChart');
+  if (!ctx) return;
+
+  const typeData = {};
+  let totalInvested = 0;
+  holdings.forEach(h => {
+    const inv = h.buyPrice * h.qty;
+    if (!typeData[h.type]) typeData[h.type] = { invested: 0, value: 0, label: typeLabels[h.type] || h.type };
+    typeData[h.type].invested += inv;
+    const best = getBestPrice(h);
+    if (best) typeData[h.type].value += best * h.qty;
+    totalInvested += inv;
+  });
+
+  const types = Object.entries(typeData).sort((a, b) => b[1].invested - a[1].invested);
+  const labels = types.map(([, d]) => d.label);
+  const data = types.map(([, d]) => d.invested);
+  const pcts = data.map(v => totalInvested > 0 ? (v / totalInvested * 100).toFixed(1) : 0);
+
+  const colors = {
+    case: '#22c55e',
+    sticker: '#a78bfa',
+    skin: '#e8993c',
+    armory: '#38bdf8',
+    knife: '#fbbf24',
+    charm: '#f472b6',
+  };
+  const bgColors = types.map(([type]) => colors[type] || '#64748b');
+
+  if (_allocationChart) _allocationChart.destroy();
+
+  _allocationChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: bgColors,
+        borderColor: 'rgba(8,12,8,0.8)',
+        borderWidth: 2,
+        hoverOffset: 8,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '55%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(8,12,8,0.95)',
+          borderColor: 'rgba(30,61,45,0.6)',
+          borderWidth: 1,
+          padding: 12,
+          cornerRadius: 8,
+          titleFont: { family: "'Share Tech Mono', monospace", size: 11 },
+          bodyFont: { family: "'Share Tech Mono', monospace", size: 12 },
+          titleColor: 'rgba(255,255,255,0.6)',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: (ctx) => {
+              const pct = totalInvested > 0 ? (ctx.raw / totalInvested * 100).toFixed(1) : 0;
+              return ` £${ctx.raw.toFixed(2)} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const legendEl = document.getElementById('allocationLegend');
+  if (legendEl) {
+    legendEl.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;">
+      ${types.map(([type, d], i) => {
+        const pct = pcts[i];
+        const pnl = d.value - d.invested;
+        return `<div style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:'Share Tech Mono',monospace;">
+          <span style="width:10px;height:10px;border-radius:2px;background:${bgColors[i]};flex-shrink:0;"></span>
+          <span>${d.label}</span>
+          <span style="color:var(--text3);">${pct}%</span>
+          <span style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'};">${pnl >= 0 ? '+' : ''}£${pnl.toFixed(0)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
 }
 
 // ========================
@@ -3593,6 +3687,77 @@ async function testApiKey() {
   }
 }
 
+// ========================
+// PRICEMPIRE INTEGRATION
+// ========================
+const PRICEMPIRE_KEY_STORE = 'cs2vault_pricempire_key';
+
+function getPricempireKey() {
+  return window._store[PRICEMPIRE_KEY_STORE] || '';
+}
+
+function savePricempireKey() {
+  const key = document.getElementById('settingsPricempireKey').value.trim();
+  if (!key) { toast('Enter a Pricempire API key', 'error'); return; }
+  window._storeSet(PRICEMPIRE_KEY_STORE, key);
+  toast('Pricempire key saved', 'success');
+}
+
+async function testPricempireKey() {
+  const key = getPricempireKey();
+  if (!key) { toast('No Pricempire key saved', 'error'); return; }
+  const el = document.getElementById('pricempireTestResult');
+  el.textContent = 'Testing...';
+  el.style.color = 'var(--text3)';
+  try {
+    const url = 'https://api.pricempire.com/v4/paid/items/prices?app_id=730&sources=csfloat&currency=GBP&type=container&limit=1';
+    const res = await window.cs2vault.fetch(url, { 'Authorization': 'Bearer ' + key });
+    if (res.status === 200) {
+      el.textContent = '✓ Connected to Pricempire';
+      el.style.color = 'var(--green)';
+      toast('Pricempire connected', 'success');
+    } else {
+      el.textContent = '✗ Invalid key (HTTP ' + res.status + ')';
+      el.style.color = 'var(--red)';
+      toast('Pricempire key invalid', 'error');
+    }
+  } catch(e) {
+    el.textContent = '✗ Connection failed';
+    el.style.color = 'var(--red)';
+    toast('Pricempire connection failed', 'error');
+  }
+}
+
+async function fetchPricempireHistory(marketHashName, days) {
+  const key = getPricempireKey();
+  if (!key || !marketHashName) return null;
+
+  const toDate = new Date().toISOString().split('T')[0];
+  const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  try {
+    const url = `https://api.pricempire.com/v4/paid/items/prices/history?app_id=730&provider_key=csfloat&currency=GBP&from_date=${fromDate}&to_date=${toDate}&market_hash_names=${encodeURIComponent(marketHashName)}`;
+    const res = await window.cs2vault.fetch(url, { 'Authorization': 'Bearer ' + key });
+    if (res.status !== 200) {
+      console.warn(`[Pricempire] ${marketHashName}: HTTP ${res.status}`);
+      return null;
+    }
+    const data = JSON.parse(res.body);
+    if (!data || !data.length) return null;
+    // Convert to our standard format
+    const item = data[0];
+    if (!item?.prices) return null;
+    return item.prices.map(p => ({
+      ts: new Date(p.date || p.timestamp).getTime(),
+      price: p.price / 100, // Pricempire returns cents
+      volume: p.volume || 0,
+    })).filter(p => !isNaN(p.ts) && p.price > 0);
+  } catch(e) {
+    console.error(`[Pricempire] ${marketHashName}:`, e.message);
+    return null;
+  }
+}
+
 function runMigration() {
   const rawEl  = document.getElementById('migrationData');
   const status = document.getElementById('migrationStatus');
@@ -3697,6 +3862,11 @@ async function updateSettingsInfo() {
     const apiEl = document.getElementById('settingsApiKey');
     if (apiEl) apiEl.value = getApiKey() || '';
   } catch(e) {}
+
+  try {
+    const pmEl = document.getElementById('settingsPricempireKey');
+    if (pmEl) pmEl.value = getPricempireKey() || '';
+  } catch(e) {}
 }
 
 
@@ -3706,6 +3876,8 @@ function populateSettingsFallback() {
   if (countEl) countEl.textContent = holdings.length.toLocaleString();
   const apiEl = document.getElementById('settingsApiKey');
   if (apiEl) apiEl.value = getApiKey() || '';
+  const pmEl = document.getElementById('settingsPricempireKey');
+  if (pmEl) pmEl.value = getPricempireKey() || '';
   const pathEl = document.getElementById('settingsDbPath');
   if (pathEl) pathEl.textContent = 'See AppData/cs2vault/';
   const vEl = document.getElementById('settingsVersion');

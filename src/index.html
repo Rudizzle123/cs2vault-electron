@@ -611,10 +611,15 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+      <div class="table-wrap" style="padding:20px;">
+        <div class="section-heading">Portfolio Allocation</div>
+        <div style="position:relative;height:260px;"><canvas id="allocationChart"></canvas></div>
+        <div id="allocationLegend" style="margin-top:12px;"></div>
+      </div>
       <div class="table-wrap" style="padding:20px;"><div class="section-heading">By Type</div><div id="analyticsType"></div></div>
-      <div class="table-wrap" style="padding:20px;"><div class="section-heading">Top 5 Best Performers</div><div id="analyticsTop"></div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+      <div class="table-wrap" style="padding:20px;"><div class="section-heading">Top 5 Best Performers</div><div id="analyticsTop"></div></div>
       <div class="table-wrap" style="padding:20px;"><div class="section-heading">Bottom 5 Worst Performers</div><div id="analyticsBottom"></div></div>
       <div class="table-wrap" style="padding:20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -869,6 +874,22 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;">
           Get your key at <span style="color:var(--accent);">csfloat.com → Profile → API</span>
         </div>
+      </div>
+
+      <!-- Pricempire API Key -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Pricempire API Key <span style="font-size:10px;color:var(--green);font-weight:400;">(Free tier — 30,000 calls/month)</span></div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Enables historical price data from CSFloat, Buff163, and 40+ marketplaces. Sign up free at pricempire.com.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <input type="password" id="settingsPricempireKey" placeholder="Paste your Pricempire API key here"
+            style="flex:1;min-width:280px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;">
+          <button class="btn btn-primary" onclick="savePricempireKey()">Save Key</button>
+          <button class="btn btn-secondary" onclick="testPricempireKey()">Test Connection</button>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;">
+          Get your key at <span style="color:var(--accent);">pricempire.com → Subscribe (Trader — Free) → API Key</span>
+        </div>
+        <div id="pricempireTestResult" style="font-size:11px;margin-top:8px;font-family:'Share Tech Mono',monospace;"></div>
       </div>
 
       <!-- Data migration -->
