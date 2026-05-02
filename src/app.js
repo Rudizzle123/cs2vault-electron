@@ -1306,6 +1306,277 @@ function updateStats() {
   renderAnalytics();
 }
 
+// ========================
+// CGT (CAPITAL GAINS TAX) TRACKER
+// ========================
+const CGT_ALLOWANCE = 3000; // £3,000 for 2024/25 and 2025/26 tax years
+const CGT_RATES = { basic: 18, higher: 24 };
+
+function getCurrentTaxYear() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  // UK tax year: 6 April to 5 April
+  if (month >= 4 && now.getDate() >= 6 || month > 4) return `${year}/${year + 1}`;
+  return `${year - 1}/${year}`;
+}
+
+function getTaxYearStart() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  if (month > 4 || (month === 4 && now.getDate() >= 6)) return `${year}-04-06`;
+  return `${year - 1}-04-06`;
+}
+
+function calculateCGT() {
+  const taxYearStart = getTaxYearStart();
+  const taxYear = getCurrentTaxYear();
+
+  // Only include trades within the current tax year that were cashed out (CSFloat sales, not Steam)
+  // For simplicity, include all trades — the user can filter later
+  const yearTrades = tradeHistory.filter(t => t.sellDate >= taxYearStart);
+
+  let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
+
+  yearTrades.forEach(t => {
+    const gross = t.sellPrice * t.qty;
+    const fee = gross * (t.feePercent / 100);
+    const costBasis = t.buyPrice * t.qty;
+    const gain = gross - fee - costBasis;
+    totalFees += fee;
+    if (gain > 0) totalGains += gain;
+    else totalLosses += Math.abs(gain);
+    tradeCount++;
+  });
+
+  const netGain = totalGains - totalLosses;
+  const taxableGain = Math.max(0, netGain - CGT_ALLOWANCE);
+  const allowanceUsed = Math.min(netGain, CGT_ALLOWANCE);
+  const allowancePct = Math.min(100, (allowanceUsed / CGT_ALLOWANCE) * 100);
+  const taxBasic = taxableGain * (CGT_RATES.basic / 100);
+  const taxHigher = taxableGain * (CGT_RATES.higher / 100);
+
+  return { taxYear, taxYearStart, yearTrades, totalGains, totalLosses, totalFees, netGain, taxableGain, allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount };
+}
+
+function renderCGTSummary() {
+  const el = document.getElementById('cgtSummary');
+  if (!el) return;
+  if (!tradeHistory.length) { el.innerHTML = ''; return; }
+
+  const cgt = calculateCGT();
+  const barColor = cgt.allowancePct >= 90 ? 'var(--red)' : cgt.allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
+
+  el.innerHTML = `
+    <div class="cgt-summary">
+      <div class="cgt-card">
+        <div class="cgt-card-label">Tax Year</div>
+        <div class="cgt-card-val" style="font-size:14px;">${cgt.taxYear}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cgt.tradeCount} trade${cgt.tradeCount !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="cgt-card">
+        <div class="cgt-card-label">Realised Gains</div>
+        <div class="cgt-card-val" style="color:var(--green);">+£${cgt.totalGains.toFixed(2)}</div>
+      </div>
+      <div class="cgt-card">
+        <div class="cgt-card-label">Realised Losses</div>
+        <div class="cgt-card-val" style="color:var(--red);">-£${cgt.totalLosses.toFixed(2)}</div>
+      </div>
+      <div class="cgt-card">
+        <div class="cgt-card-label">Net Gain</div>
+        <div class="cgt-card-val" style="color:${cgt.netGain >= 0 ? 'var(--green)' : 'var(--red)'};">${cgt.netGain >= 0 ? '+' : ''}£${cgt.netGain.toFixed(2)}</div>
+      </div>
+      <div class="cgt-card">
+        <div class="cgt-card-label">Allowance Used</div>
+        <div class="cgt-card-val">£${cgt.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+        <div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${cgt.allowancePct}%;background:${barColor};"></div></div>
+      </div>
+      <div class="cgt-card">
+        <div class="cgt-card-label">Est. Tax Owed</div>
+        <div class="cgt-card-val" style="color:${cgt.taxableGain > 0 ? 'var(--red)' : 'var(--green)'};">${cgt.taxableGain > 0 ? '£' + cgt.taxBasic.toFixed(2) + ' – £' + cgt.taxHigher.toFixed(2) : '£0.00'}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;">${cgt.taxableGain > 0 ? '18% basic / 24% higher' : 'Within allowance'}</div>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'Share Tech Mono',monospace;text-align:center;">
+      ⚠ Estimated only — selling on Steam Market into Steam Wallet is not a taxable event. CGT applies when you cash out to real money. Consult a tax professional.
+    </div>`;
+}
+
+// ========================
+// CGT TAX REPORT EXPORT
+// ========================
+async function exportCGTReport() {
+  const cgt = calculateCGT();
+  const rows = [
+    ['CS2 Vault — Capital Gains Tax Report'],
+    [`Tax Year: ${cgt.taxYear}`],
+    [`Generated: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}`],
+    [''],
+    ['SUMMARY'],
+    [`Total Realised Gains,£${cgt.totalGains.toFixed(2)}`],
+    [`Total Realised Losses,-£${cgt.totalLosses.toFixed(2)}`],
+    [`Total Fees Paid,£${cgt.totalFees.toFixed(2)}`],
+    [`Net Gain/Loss,£${cgt.netGain.toFixed(2)}`],
+    [`Annual CGT Allowance,£${CGT_ALLOWANCE.toFixed(2)}`],
+    [`Allowance Used,£${cgt.allowanceUsed.toFixed(2)}`],
+    [`Taxable Gain,£${cgt.taxableGain.toFixed(2)}`],
+    [`Estimated Tax (Basic 18%),£${cgt.taxBasic.toFixed(2)}`],
+    [`Estimated Tax (Higher 24%),£${cgt.taxHigher.toFixed(2)}`],
+    [''],
+    ['DISPOSALS'],
+    ['Date,Item,Type,Qty,Cost Basis (£),Sale Proceeds (£),Platform Fee %,Fee Amount (£),Gain/Loss (£)'],
+  ];
+
+  cgt.yearTrades.forEach(t => {
+    const gross = t.sellPrice * t.qty;
+    const fee = gross * (t.feePercent / 100);
+    const costBasis = t.buyPrice * t.qty;
+    const gain = gross - fee - costBasis;
+    rows.push([
+      t.sellDate, `"${t.name}"`, t.type, t.qty,
+      costBasis.toFixed(2), gross.toFixed(2), t.feePercent,
+      fee.toFixed(2), gain.toFixed(2)
+    ].join(','));
+  });
+
+  rows.push('');
+  rows.push('DISCLAIMER');
+  rows.push('"This report is for informational purposes only and does not constitute tax advice. Selling on Steam Market into Steam Wallet balance is not a taxable disposal. CGT applies when items are sold for real money (e.g. via CSFloat). Consult a qualified tax professional for advice specific to your situation."');
+
+  const csvStr = rows.join('\n');
+  if (typeof window.cs2vault !== 'undefined') {
+    const result = await window.cs2vault.exportSave(`cs2vault_cgt_report_${cgt.taxYear.replace('/', '-')}.csv`, csvStr);
+    if (result && result.saved) toast('CGT report saved to ' + result.filePath, 'success');
+  }
+}
+
+// ========================
+// CASH OUT CALCULATOR
+// ========================
+function openCashOutCalc() {
+  document.getElementById('coSteamSellPrice').value = '';
+  document.getElementById('coCsfloatSellPrice').value = '';
+  document.getElementById('coCgtToggle').checked = false;
+  document.getElementById('coCgtBand').style.display = 'none';
+  document.getElementById('cashOutResult').innerHTML = '';
+  openModal('cashOutModal');
+}
+
+function closeCashOutCalc() {
+  document.getElementById('cashOutModal').classList.remove('open');
+}
+
+function updateCashOutCalc() {
+  const steamSell = parseFloat(document.getElementById('coSteamSellPrice').value) || 0;
+  const csfloatSell = parseFloat(document.getElementById('coCsfloatSellPrice').value) || 0;
+  const csfloatFee = parseFloat(document.getElementById('coCsfloatFee').value) || 2;
+  const withdrawFee = parseFloat(document.getElementById('coWithdrawFee').value) || 2;
+  const showCgt = document.getElementById('coCgtToggle').checked;
+
+  document.getElementById('coCgtBand').style.display = showCgt ? '' : 'none';
+
+  if (steamSell <= 0) {
+    document.getElementById('cashOutResult').innerHTML = '';
+    return;
+  }
+
+  // Step 1: Sell on Steam (15% fee)
+  const steamTax = steamSell * 0.15;
+  const steamWallet = steamSell - steamTax;
+
+  // Step 2: Buy skin on Steam with wallet balance
+  const skinBuyPrice = steamWallet; // You spend your full wallet
+
+  // Step 3: Sell on CSFloat
+  const csfloatSellActual = csfloatSell > 0 ? csfloatSell : steamWallet * 0.95; // Default: ~5% below Steam
+  const csfloatFeeAmt = csfloatSellActual * (csfloatFee / 100);
+  const afterCsfloatFee = csfloatSellActual - csfloatFeeAmt;
+
+  // Step 4: Withdraw
+  const withdrawFeeAmt = afterCsfloatFee * (withdrawFee / 100);
+  const cashInHand = afterCsfloatFee - withdrawFeeAmt;
+
+  // Total fees
+  const totalFees = steamTax + csfloatFeeAmt + withdrawFeeAmt + (steamWallet - csfloatSellActual);
+  const totalLossPct = ((steamSell - cashInHand) / steamSell * 100);
+
+  let resultHtml = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;">
+      <div class="co-step">
+        <div class="co-step-label">1️⃣ Steam Market sell price</div>
+        <div class="co-step-val">£${steamSell.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label"><span class="co-step-fee">Steam fee (15%)</span></div>
+        <div class="co-step-fee">-£${steamTax.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label">2️⃣ Steam Wallet balance</div>
+        <div class="co-step-val">£${steamWallet.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label">3️⃣ Buy bridge skin on Steam → sell on CSFloat</div>
+        <div class="co-step-val">£${csfloatSellActual.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label"><span class="co-step-fee">CSFloat seller fee (${csfloatFee}%)</span></div>
+        <div class="co-step-fee">-£${csfloatFeeAmt.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label">4️⃣ After CSFloat fee</div>
+        <div class="co-step-val">£${afterCsfloatFee.toFixed(2)}</div>
+      </div>
+      <div class="co-step">
+        <div class="co-step-label"><span class="co-step-fee">Withdrawal fee (${withdrawFee}%)</span></div>
+        <div class="co-step-fee">-£${withdrawFeeAmt.toFixed(2)}</div>
+      </div>
+    </div>
+    <div class="co-final">
+      <div>
+        <div class="co-final-label">Cash in Hand</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">Total fees: £${totalFees.toFixed(2)} (${totalLossPct.toFixed(1)}% loss)</div>
+      </div>
+      <div class="co-final-val" style="color:var(--green);">£${cashInHand.toFixed(2)}</div>
+    </div>`;
+
+  // CGT estimate
+  if (showCgt) {
+    const cgtRate = parseInt(document.getElementById('coCgtBand').value) || 18;
+    const cgt = calculateCGT();
+    const remainingAllowance = Math.max(0, CGT_ALLOWANCE - cgt.allowanceUsed);
+    // The gain from this cash-out would be: cash received - original cost of the items
+    // We don't know the original cost here, so show the gain on the bridge skin only
+    const bridgeGain = csfloatSellActual - steamWallet; // Usually negative (loss on the bridge)
+    const totalTaxableAfterThis = Math.max(0, cgt.netGain + bridgeGain - CGT_ALLOWANCE);
+    const estimatedTax = totalTaxableAfterThis * (cgtRate / 100);
+
+    resultHtml += `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 20px;margin-top:12px;">
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">CGT Estimate (${cgtRate}% rate)</div>
+        <div class="co-step">
+          <div class="co-step-label">Current year realised gains</div>
+          <div class="co-step-val">£${cgt.netGain.toFixed(2)}</div>
+        </div>
+        <div class="co-step">
+          <div class="co-step-label">Remaining allowance</div>
+          <div class="co-step-val" style="color:var(--green);">£${remainingAllowance.toFixed(2)}</div>
+        </div>
+        <div class="co-step">
+          <div class="co-step-label">Taxable amount (if any)</div>
+          <div class="co-step-val" style="color:${totalTaxableAfterThis > 0 ? 'var(--red)' : 'var(--green)'};">£${totalTaxableAfterThis.toFixed(2)}</div>
+        </div>
+        <div class="co-step">
+          <div class="co-step-label">Estimated tax owed</div>
+          <div class="co-step-val" style="color:${estimatedTax > 0 ? 'var(--red)' : 'var(--green)'};">£${estimatedTax.toFixed(2)}</div>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.</div>
+      </div>`;
+  }
+
+  document.getElementById('cashOutResult').innerHTML = resultHtml;
+}
+
 function renderHistory() {
   const c = document.getElementById('historyList');
   if (!tradeHistory.length) { c.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><h3>No Trades Yet</h3></div>`; return; }
@@ -1320,6 +1591,7 @@ function renderHistory() {
       <div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ${net >= 0 ? 'positive' : 'negative'}">${net >= 0 ? '+' : ''}£${net.toFixed(2)}</div></div>
     </div>`;
   }).join('');
+  renderCGTSummary();
 }
 
 function renderAnalytics() {

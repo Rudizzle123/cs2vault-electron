@@ -260,6 +260,24 @@ tr:hover .row-actions{opacity:1;}
 .sell-plat-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
 .sell-mode-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;}
 
+/* ===== CGT SUMMARY ===== */
+.cgt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;}
+.cgt-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;text-align:center;}
+.cgt-card-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:'Rajdhani',sans-serif;font-weight:600;margin-bottom:4px;}
+.cgt-card-val{font-size:18px;font-weight:700;font-family:'Share Tech Mono',monospace;}
+.cgt-allowance-bar{height:8px;background:var(--surface3);border-radius:4px;overflow:hidden;margin-top:6px;}
+.cgt-allowance-fill{height:100%;border-radius:4px;transition:width .4s ease;}
+
+/* ===== CASH OUT CALCULATOR ===== */
+.co-step{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(30,61,45,.25);}
+.co-step:last-child{border-bottom:none;}
+.co-step-label{font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px;}
+.co-step-val{font-family:'Share Tech Mono',monospace;font-size:13px;font-weight:600;}
+.co-step-fee{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red);}
+.co-final{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;}
+.co-final-label{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase;}
+.co-final-val{font-family:'Share Tech Mono',monospace;font-size:22px;font-weight:700;}
+
 /* ===== HEALTH REPORT ===== */
 .health-score-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 32px;display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
 
@@ -478,8 +496,11 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   <div class="tab-panel" id="tab-history">
     <div class="toolbar">
       <div class="search-box"><input type="text" placeholder="Search sold items..." oninput="filterHistory(this.value)"></div>
+      <button class="btn btn-secondary" onclick="openCashOutCalc()">💷 Cash Out Calculator</button>
       <button class="btn btn-secondary" onclick="exportHistoryCSV()">↓ Export CSV</button>
+      <button class="btn btn-secondary" onclick="exportCGTReport()">📋 Export CGT Report</button>
     </div>
+    <div id="cgtSummary" style="margin-bottom:16px;"></div>
     <div id="historyList"></div>
   </div>
 
@@ -1234,6 +1255,59 @@ async function initStore() {
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="clearTarget()">Clear Target</button>
       <button class="btn btn-primary" onclick="saveTarget()">Save Target</button>
+    </div>
+  </div>
+</div>
+
+<!-- CASH OUT CALCULATOR MODAL -->
+<div class="modal-overlay" id="cashOutModal">
+  <div class="modal-card" style="max-width:600px;">
+    <div class="modal-header">
+      <h3>💷 Cash Out Calculator</h3>
+      <button class="modal-close" onclick="closeCashOutCalc()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:16px 24px 24px;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:16px;font-family:'Share Tech Mono',monospace;">
+        Steam sell → Steam buy skin → CSFloat sell → Withdraw to bank
+      </div>
+      <div class="form-row">
+        <label>Steam Market Sell Price (£)</label>
+        <input type="number" id="coSteamSellPrice" step="0.01" oninput="updateCashOutCalc()" placeholder="What you list on Steam for">
+      </div>
+      <div class="form-row">
+        <label>CSFloat Sell Price (£)</label>
+        <input type="number" id="coCsfloatSellPrice" step="0.01" oninput="updateCashOutCalc()" placeholder="What the bridge skin sells for on CSFloat">
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">Usually slightly less than the Steam buy price</div>
+      </div>
+      <div class="form-two" style="margin-top:8px;">
+        <div class="form-row">
+          <label>CSFloat Seller Fee</label>
+          <select id="coCsfloatFee" onchange="updateCashOutCalc()" style="font-size:12px;padding:6px 8px;">
+            <option value="2" selected>2%</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>CSFloat Withdrawal Fee</label>
+          <select id="coWithdrawFee" onchange="updateCashOutCalc()" style="font-size:12px;padding:6px 8px;">
+            <option value="0.5">0.5% (High volume)</option>
+            <option value="1">1%</option>
+            <option value="1.5">1.5%</option>
+            <option value="2" selected>2%</option>
+            <option value="2.5">2.5% (Low volume)</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 8px;">
+        <label class="toggle-label" style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="coCgtToggle" onchange="updateCashOutCalc()" style="cursor:pointer;"> 
+          <span>Show CGT estimate</span>
+        </label>
+        <select id="coCgtBand" onchange="updateCashOutCalc()" style="font-size:11px;padding:3px 6px;display:none;">
+          <option value="18">Basic rate (18%)</option>
+          <option value="24">Higher rate (24%)</option>
+        </select>
+      </div>
+      <div id="cashOutResult" style="margin-top:16px;"></div>
     </div>
   </div>
 </div>
