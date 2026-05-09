@@ -879,6 +879,8 @@ async function fetchAllPlatformPrices(item) {
     if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker |')) {
       steamHash = 'Sticker | ' + steamHash;
     }
+    // Fix known capitalisation mismatches between CSFloat and Steam naming
+    steamHash = steamHash.replace('From the Deep', 'From The Deep');
     let stm = await fetchSteamPrices(steamHash);
     // If no result and the hash ends with a variant suffix, try stripping it
     if (!stm && item.type === 'sticker') {
