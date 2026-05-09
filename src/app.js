@@ -3724,9 +3724,6 @@ function populateSettingsFallback() {
 // ========================
 // ARBITRAGE DETECTION
 // ========================
-let _trendRange = 7;
-let _trendCategory = 'all';
-
 function getSteamImageUrl(marketHash) {
   if (!marketHash) return '';
   return `https://api.steamapis.com/image/item/730/${encodeURIComponent(marketHash)}`;
