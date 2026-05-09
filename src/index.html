@@ -443,7 +443,6 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   <button class="nav-tab" onclick="switchTab('portfolio',this)">Portfolio History</button>
   <button class="nav-tab" onclick="switchTab('watchlist',this)">Watchlist</button>
   <button class="nav-tab" onclick="switchTab('alerts',this)">🔔 Alerts</button>
-  <button class="nav-tab" onclick="switchTab('arbitrage',this)">⚡ Arbitrage</button>
   <button class="nav-tab" onclick="switchTab('health',this)">♥ Health</button>
   <button class="nav-tab" onclick="switchTab('tradeup',this)">⚙ Trade-Up</button>
   <button class="nav-tab" onclick="switchTab('intelligence',this)">⬡ Case Intel</button>
@@ -666,33 +665,6 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   </div>
 
   <!-- ARBITRAGE TAB -->
-  <div class="tab-panel" id="tab-arbitrage">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
-      <div>
-        <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">⚡ Arbitrage Scanner</div>
-        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Price gaps across CSFloat and Steam on your holdings — factoring in platform fees</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <label style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Min gap:</label>
-        <select id="arbMinGap" onchange="renderArbitrage()" style="font-size:12px;padding:4px 8px;">
-          <option value="5">5%</option>
-          <option value="10" selected>10%</option>
-          <option value="15">15%</option>
-          <option value="20">20%</option>
-          <option value="30">30%</option>
-        </select>
-        <button class="btn btn-secondary btn-sm" onclick="renderArbitrage()">↻ Scan</button>
-      </div>
-    </div>
-    <div class="arb-summary" id="arbSummary"></div>
-    <div id="arbList"></div>
-    <div class="empty-state" id="arbEmpty" style="display:none;">
-      <div class="empty-icon">⚡</div>
-      <h3>No Arbitrage Found</h3>
-      <p>Refresh prices first, then come back to scan for cross-platform price gaps</p>
-    </div>
-  </div>
-
   <!-- HEALTH REPORT TAB -->
   <div class="tab-panel" id="tab-health">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
@@ -898,28 +870,6 @@ header button, header input, header a { -webkit-app-region: no-drag; }
           Get your key at <span style="color:var(--accent);">pricempire.com → Subscribe (Trader — Free) → API Key</span>
         </div>
         <div id="pricempireTestResult" style="font-size:11px;margin-top:8px;font-family:'Share Tech Mono',monospace;"></div>
-      </div>
-
-      <!-- Data migration -->
-      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
-        <div class="section-heading">Import from Browser Version</div>
-        <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">
-          If you were using the browser HTML tracker, paste your exported data here to migrate everything across.
-        </p>
-        <div style="margin-bottom:12px;">
-          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Step 1 — In the old browser tracker, open DevTools (F12) → Console and run:</div>
-          <div style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:12px 14px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text2);line-height:1.8;white-space:pre-wrap;">copy(JSON.stringify({holdings:localStorage.getItem('cs2vault_holdings'),history:localStorage.getItem('cs2vault_history'),snapshots:localStorage.getItem('cs2vault_snapshots'),skins:localStorage.getItem('cs2vault_skins'),watchlist:localStorage.getItem('cs2vault_watchlist'),alerts:localStorage.getItem('cs2vault_alerts'),apikey:localStorage.getItem('cs2vault_apikey')}))</div>
-          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px;">This copies the JSON to your clipboard automatically.</div>
-        </div>
-        <div style="margin-bottom:12px;">
-          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Step 2 — Paste it here:</div>
-          <textarea id="migrationData" rows="5" placeholder='{"holdings":"...","history":"...",...}'
-            style="width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;resize:vertical;"></textarea>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="runMigration()">↓ Import Data</button>
-          <span style="font-size:11px;color:var(--text3);" id="migrationStatus"></span>
-        </div>
       </div>
 
       <!-- Data management -->
