@@ -823,26 +823,38 @@ async function fetchSteamPrices(marketHashName) {
     console.warn(`[Steam] priceoverview failed for ${marketHashName}:`, e.message);
   }
 
-  // Fallback: search/render API — returns sell_price in pence (GBP), always has data for listed items
+  // Fallback: listings/render API — exact market hash lookup, always has data for listed items
+  // sell_price is in pence (GBP currency=2), no USD conversion needed
   try {
-    const searchUrl = `https://steamcommunity.com/market/search/render/?query=${encoded}&appid=730&norender=1&count=1`;
-    const sres = await window.cs2vault.fetch(searchUrl);
-    sres.ok = sres.status >= 200 && sres.status < 300;
-    console.log(`[Steam] search/render ${sres.status} for ${marketHashName}`);
-    if (sres.ok) {
-      const sdata = JSON.parse(sres.body);
-      if (sdata.results && sdata.results.length > 0) {
-        const r = sdata.results[0];
-        // sell_price is in pence (GBP) — divide by 100
-        const lowest = r.sell_price ? r.sell_price / 100 : null;
-        console.log(`[Steam] search/render lowest=£${lowest?.toFixed(4)} for ${marketHashName}`);
-        if (lowest != null && lowest > 0) {
-          return { lowest, lastSold: null, avg7d: null, source: 'steam' };
+    const listingsUrl = `https://steamcommunity.com/market/listings/730/${encoded}/render/?query=&start=0&count=1&currency=2&language=english`;
+    const lres = await window.cs2vault.fetch(listingsUrl);
+    lres.ok = lres.status >= 200 && lres.status < 300;
+    console.log(`[Steam] listings/render ${lres.status} for ${marketHashName}`);
+    if (lres.ok) {
+      const ldata = JSON.parse(lres.body);
+      // lowest_sell_order is in pence (currency=2 = GBP)
+      if (ldata.lowest_sell_order) {
+        const lowest = parseInt(ldata.lowest_sell_order) / 100;
+        console.log(`[Steam] listings/render lowest=£${lowest.toFixed(4)} for ${marketHashName}`);
+        if (lowest > 0) return { lowest, lastSold: null, avg7d: null, source: 'steam' };
+      }
+      // Also try assets — if there are listings, grab the first price
+      if (ldata.listinginfo) {
+        const listings = Object.values(ldata.listinginfo);
+        if (listings.length > 0) {
+          const first = listings[0];
+          const converted = first.converted_price_per_unit != null ? first.converted_price_per_unit / 100 : null;
+          const raw = first.price != null ? (first.price + (first.fee || 0)) / 100 : null;
+          const lowest = converted || raw;
+          if (lowest != null && lowest > 0) {
+            console.log(`[Steam] listings/render (asset) lowest=£${lowest.toFixed(4)} for ${marketHashName}`);
+            return { lowest, lastSold: null, avg7d: null, source: 'steam' };
+          }
         }
       }
     }
   } catch(e) {
-    console.error(`[Steam] search/render failed for ${marketHashName}:`, e.message);
+    console.error(`[Steam] listings/render failed for ${marketHashName}:`, e.message);
   }
 
   return null;
