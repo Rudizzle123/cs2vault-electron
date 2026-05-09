@@ -233,10 +233,12 @@ tr:hover .row-actions{opacity:1;}
 .sparkline-wrap svg{vertical-align:middle;}
 
 /* ===== AUTO-UPDATER BANNER ===== */
-.update-banner{display:none;align-items:center;justify-content:center;padding:8px 20px;font-family:'Share Tech Mono',monospace;font-size:12px;letter-spacing:0.5px;gap:8px;z-index:99;}
-.update-banner.show{display:flex;}
-.update-banner.downloading{background:linear-gradient(90deg,rgba(59,130,246,.15),rgba(59,130,246,.08));color:var(--blue,#3b82f6);border-bottom:1px solid rgba(59,130,246,.2);}
-.update-banner.ready{background:linear-gradient(90deg,rgba(34,197,94,.15),rgba(34,197,94,.08));color:var(--green);border-bottom:1px solid rgba(34,197,94,.2);}
+.update-bar{position:fixed;bottom:0;left:0;right:0;height:0;background:rgba(8,12,8,.95);border-top:1px solid rgba(34,197,94,.2);z-index:9999;overflow:hidden;transition:height .25s ease;display:flex;align-items:center;padding:0 20px;gap:12px;font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text2);}
+.update-bar.show{height:36px;}
+.update-bar-track{flex:1;height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;}
+.update-bar-fill{height:100%;background:var(--green);border-radius:2px;transition:width .3s ease;width:0%;}
+.update-bar-label{min-width:160px;letter-spacing:.5px;}
+.update-bar-countdown{color:var(--green);font-weight:700;}
 
 /* ===== ARBITRAGE ===== */
 .arb-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}
@@ -432,7 +434,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     <span id="refreshScopeLabel" style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;"></span>
   </div>
 </header>
-<div class="update-banner" id="updateBanner"></div>
+
 <nav>
   <button class="nav-tab active" onclick="switchTab('holdings',this)">Holdings</button>
   <button class="nav-tab" onclick="switchTab('history',this)">Trade History</button>
@@ -1363,6 +1365,13 @@ async function initStore() {
       <div id="phSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;margin-top:16px;"></div>
     </div>
   </div>
+</div>
+
+<!-- Silent update bar (bottom of screen) -->
+<div class="update-bar" id="updateBar">
+  <span class="update-bar-label" id="updateBarLabel">Downloading update...</span>
+  <div class="update-bar-track"><div class="update-bar-fill" id="updateBarFill"></div></div>
+  <span class="update-bar-countdown" id="updateBarCountdown"></span>
 </div>
 
 </body>

@@ -4588,28 +4588,43 @@ function initApp() {
   } catch(e) { console.warn('[initApp] apiKeyInput:', e); }
   if (typeof window.cs2vault !== 'undefined') {
     window.cs2vault.version().then(v => { document.title = `CS2 Vault v${v}`; }).catch(() => {});
-    // Auto-updater listeners
+    // Auto-updater listeners — silent download bar + auto-restart
     if (window.cs2vault.updater) {
       window.cs2vault.updater.onStatus((status, detail) => {
-        const banner = document.getElementById('updateBanner');
-        if (!banner) return;
+        const bar = document.getElementById('updateBar');
+        const label = document.getElementById('updateBarLabel');
+        if (!bar || !label) return;
         if (status === 'available') {
-          banner.innerHTML = `<span>⬇ Downloading update v${detail}...</span>`;
-          banner.className = 'update-banner show downloading';
+          label.textContent = 'Downloading update v' + detail + '...';
+          bar.classList.add('show');
         } else if (status === 'ready') {
-          banner.innerHTML = `<span>✓ v${detail} ready</span><button class="btn btn-primary btn-sm" onclick="window.cs2vault.updater.install()" style="margin-left:12px;font-size:11px;">Restart & Install</button>`;
-          banner.className = 'update-banner show ready';
-        } else if (status === 'up-to-date') {
-          banner.className = 'update-banner';
-        } else if (status === 'error') {
-          console.warn('[Updater] Error:', detail);
+          label.textContent = 'Update ready — restarting in ';
+          const fill = document.getElementById('updateBarFill');
+          const countdown = document.getElementById('updateBarCountdown');
+          if (fill) fill.style.width = '100%';
+          if (countdown) countdown.textContent = '3s';
+          let secs = 3;
+          const tick = setInterval(() => {
+            secs--;
+            if (secs <= 0) {
+              clearInterval(tick);
+              if (countdown) countdown.textContent = '0s';
+              window.cs2vault.updater.install();
+            } else {
+              if (countdown) countdown.textContent = secs + 's';
+            }
+          }, 1000);
+        } else if (status === 'up-to-date' || status === 'error') {
+          bar.classList.remove('show');
+          if (status === 'error') console.warn('[Updater] Error:', detail);
         }
       });
       window.cs2vault.updater.onProgress((pct) => {
-        const banner = document.getElementById('updateBanner');
-        if (banner && banner.classList.contains('downloading')) {
-          const existing = banner.querySelector('span');
-          if (existing) existing.textContent = `⬇ Downloading update... ${pct}%`;
+        const fill = document.getElementById('updateBarFill');
+        const label = document.getElementById('updateBarLabel');
+        if (fill) fill.style.width = pct + '%';
+        if (label && label.textContent.indexOf('restarting') === -1) {
+          label.textContent = 'Downloading update... ' + pct + '%';
         }
       });
     }
