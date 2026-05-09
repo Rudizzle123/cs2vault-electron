@@ -793,68 +793,60 @@ async function fetchSteamPrices(marketHashName) {
   const encoded = encodeURIComponent(marketHashName);
   const gbpRate = await getGBPRate();
 
-  // Try priceoverview first (fast, accurate when it has data)
+  // Try priceoverview first (currency=2 = GBP, no conversion needed)
   try {
-    const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encoded}`;
+    const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=2&market_hash_name=${encoded}`;
     const res = await window.cs2vault.fetch(url);
     res.json = () => Promise.resolve(JSON.parse(res.body)); res.ok = res.status >= 200 && res.status < 300;
     console.log(`[Steam] priceoverview ${res.status} for ${marketHashName}`);
     if (res.ok) {
       const data = await res.json();
       if (data.success) {
-        // Parse USD strings like "$1.23" then convert to GBP
-        const parseUSD = s => {
+        const parseGBP = s => {
           if (!s) return null;
           const cleaned = s.replace(/[^0-9.]/g, '');
           const val = parseFloat(cleaned);
-          return isNaN(val) ? null : val * gbpRate;
+          return isNaN(val) ? null : val;
         };
-        const lowest   = parseUSD(data.lowest_price);
-        const lastSold = parseUSD(data.median_price);
+        const lowest   = parseGBP(data.lowest_price);
+        const lastSold = parseGBP(data.median_price);
         console.log(`[Steam] priceoverview lowest=£${lowest?.toFixed(4)}, median=£${lastSold?.toFixed(4)}`);
         if (lowest != null || lastSold != null) {
           return { lowest, lastSold, avg7d: null, source: 'steam' };
         }
-        // data.success but no prices — fall through to search/render fallback
-        console.log(`[Steam] priceoverview returned no prices for ${marketHashName}, trying search fallback`);
+        console.log(`[Steam] priceoverview no prices for ${marketHashName}, trying HTML fallback`);
       }
     }
   } catch(e) {
     console.warn(`[Steam] priceoverview failed for ${marketHashName}:`, e.message);
   }
 
-  // Fallback: listings/render API — exact market hash lookup, always has data for listed items
-  // sell_price is in pence (GBP currency=2), no USD conversion needed
+  // Fallback: parse the Steam market listing HTML page.
+  // This is the most reliable method — same page the browser loads, always has price history,
+  // prices already in GBP, uses our existing parseSteamPriceHistory() which is proven to work.
   try {
-    const listingsUrl = `https://steamcommunity.com/market/listings/730/${encoded}/render/?query=&start=0&count=1&currency=2&language=english`;
-    const lres = await window.cs2vault.fetch(listingsUrl);
-    lres.ok = lres.status >= 200 && lres.status < 300;
-    console.log(`[Steam] listings/render ${lres.status} for ${marketHashName}`);
-    if (lres.ok) {
-      const ldata = JSON.parse(lres.body);
-      // lowest_sell_order is in pence (currency=2 = GBP)
-      if (ldata.lowest_sell_order) {
-        const lowest = parseInt(ldata.lowest_sell_order) / 100;
-        console.log(`[Steam] listings/render lowest=£${lowest.toFixed(4)} for ${marketHashName}`);
-        if (lowest > 0) return { lowest, lastSold: null, avg7d: null, source: 'steam' };
+    const listingUrl = `https://steamcommunity.com/market/listings/730/${encoded}`;
+    console.log(`[Steam] HTML listing fallback for ${marketHashName}`);
+    const res = await window.cs2vault.fetch(listingUrl, {});
+    if (res.status === 200) {
+      const history = parseSteamPriceHistory(res.body);
+      if (history && history.length > 0) {
+        const lastEntry = history[history.length - 1];
+        const lastSold = lastEntry.price;
+        const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        const recent = history.filter(e => e.ts >= cutoff);
+        const avg30d = recent.length > 0
+          ? recent.reduce((s, e) => s + e.price, 0) / recent.length
+          : lastSold;
+        console.log(`[Steam] HTML fallback lastSold=£${lastSold?.toFixed(4)}, avg30d=£${avg30d?.toFixed(4)} for ${marketHashName}`);
+        return { lowest: lastSold, lastSold, avg7d: avg30d, source: 'steam' };
       }
-      // Also try assets — if there are listings, grab the first price
-      if (ldata.listinginfo) {
-        const listings = Object.values(ldata.listinginfo);
-        if (listings.length > 0) {
-          const first = listings[0];
-          const converted = first.converted_price_per_unit != null ? first.converted_price_per_unit / 100 : null;
-          const raw = first.price != null ? (first.price + (first.fee || 0)) / 100 : null;
-          const lowest = converted || raw;
-          if (lowest != null && lowest > 0) {
-            console.log(`[Steam] listings/render (asset) lowest=£${lowest.toFixed(4)} for ${marketHashName}`);
-            return { lowest, lastSold: null, avg7d: null, source: 'steam' };
-          }
-        }
-      }
+      console.warn(`[Steam] HTML listing no price history for ${marketHashName}`);
+    } else {
+      console.warn(`[Steam] HTML listing HTTP ${res.status} for ${marketHashName}`);
     }
   } catch(e) {
-    console.error(`[Steam] listings/render failed for ${marketHashName}:`, e.message);
+    console.error(`[Steam] HTML fallback failed for ${marketHashName}:`, e.message);
   }
 
   return null;
@@ -878,15 +870,24 @@ async function fetchAllPlatformPrices(item) {
   } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); }
 
   // Steam — always try (free, no auth)
-  // Stickers are stored without the "Sticker | " prefix in marketHash (CSFloat handles them
-  // via sticker_index), but Steam's API needs the full market hash name.
+  // Stickers have marketHash like "Sticker | Blinky (Holo)" for CSFloat sticker_index lookups,
+  // but Steam may list them without the variant suffix e.g. just "Sticker | Blinky".
+  // Strategy: try exact hash first, then retry with variant suffix stripped if nothing returned.
   try {
     let steamHash = item.marketHash;
-    if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker | ') && !steamHash.startsWith('Sticker |')) {
+    // If bare name (no "Sticker | " prefix), add it for Steam
+    if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker |')) {
       steamHash = 'Sticker | ' + steamHash;
-      console.log(`[MultiPrice] Sticker Steam hash resolved: ${steamHash}`);
     }
-    const stm = await fetchSteamPrices(steamHash);
+    let stm = await fetchSteamPrices(steamHash);
+    // If no result and the hash ends with a variant suffix, try stripping it
+    if (!stm && item.type === 'sticker') {
+      const stripped = steamHash.replace(/\s*\((Holo|Glitter|Foil|Lenticular)\)\s*$/, '').trim();
+      if (stripped !== steamHash) {
+        console.log(`[MultiPrice] Retrying Steam with stripped hash: ${stripped}`);
+        stm = await fetchSteamPrices(stripped);
+      }
+    }
     if (stm) results.steam = stm;
   } catch(e) { console.warn('[MultiPrice] Steam failed:', e.message); }
 
