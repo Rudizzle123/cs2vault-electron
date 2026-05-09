@@ -120,15 +120,13 @@ function recordPrice(itemId, prices) {
     best: null,
     cf: null,  // csfloat
     stm: null, // steam
-    sp: null,  // skinport
   };
   if (prices.platforms) {
     entry.cf  = prices.platforms.csfloat?.lowest || null;
     entry.stm = prices.platforms.steam?.lowest || null;
-    entry.sp  = prices.platforms.skinport?.lowest || null;
   }
   // Best price = lowest across platforms, fallback to top-level
-  const candidates = [entry.cf, entry.stm, entry.sp].filter(v => v != null && v > 0);
+  const candidates = [entry.cf, entry.stm].filter(v => v != null && v > 0);
   entry.best = candidates.length ? Math.min(...candidates) : (prices.lowest || prices.avg7d || null);
 
   if (entry.best === null) return; // Don't log if no price at all
@@ -794,107 +792,67 @@ async function fetchSteamPrices(marketHashName) {
   if (!marketHashName) return null;
   const encoded = encodeURIComponent(marketHashName);
   const gbpRate = await getGBPRate();
+
+  // Try priceoverview first (fast, accurate when it has data)
   try {
-    // Steam market price overview — currency 1 = USD, we convert to GBP
     const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encoded}`;
     const res = await window.cs2vault.fetch(url);
     res.json = () => Promise.resolve(JSON.parse(res.body)); res.ok = res.status >= 200 && res.status < 300;
-    console.log(`[Steam] ${res.status} for ${marketHashName}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    console.log(`[Steam] Raw response:`, JSON.stringify(data));
-    if (!data.success) return null;
-    // Parse USD strings like "$1.23" or "$1,234.56" then convert to GBP
-    const parseUSD = s => {
-      if (!s) return null;
-      // Remove currency symbol and thousands commas, keep decimal dot
-      const cleaned = s.replace(/[^0-9.]/g, '');
-      const val = parseFloat(cleaned);
-      return isNaN(val) ? null : val * gbpRate;
-    };
-    const lowest   = parseUSD(data.lowest_price);
-    const lastSold = parseUSD(data.median_price);
-    console.log(`[Steam] lowest=£${lowest?.toFixed(4)}, median=£${lastSold?.toFixed(4)}, gbpRate=${gbpRate}`);
-    if (lowest == null && lastSold == null) return null;
-    return { lowest, lastSold, avg7d: null, source: 'steam' };
-  } catch(e) {
-    console.error(`[Steam] Failed for ${marketHashName}:`, e.message);
-    return null;
-  }
-}
-
-// ========================
-// SKINPORT PRICES (free, no auth, bulk)
-// ========================
-let _skinportCache = null;
-let _skinportCacheTime = 0;
-const SKINPORT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes (matches their cache)
-
-async function fetchSkinportBulk() {
-  // Return cache if fresh
-  if (_skinportCache && (Date.now() - _skinportCacheTime) < SKINPORT_CACHE_TTL) {
-    console.log('[Skinport] Using cached data');
-    return _skinportCache;
-  }
-  try {
-    const url = 'https://api.skinport.com/v1/items?app_id=730&currency=GBP&tradable=0';
-    const res = await window.cs2vault.fetch(url, { 'Accept-Encoding': 'br' });
-    res.json = () => Promise.resolve(JSON.parse(res.body));
-    res.ok = res.status >= 200 && res.status < 300;
-    console.log(`[Skinport] Bulk fetch: ${res.status}`);
-    if (!res.ok) {
-      console.warn('[Skinport] Bulk fetch failed:', res.status);
-      return null;
+    console.log(`[Steam] priceoverview ${res.status} for ${marketHashName}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        // Parse USD strings like "$1.23" then convert to GBP
+        const parseUSD = s => {
+          if (!s) return null;
+          const cleaned = s.replace(/[^0-9.]/g, '');
+          const val = parseFloat(cleaned);
+          return isNaN(val) ? null : val * gbpRate;
+        };
+        const lowest   = parseUSD(data.lowest_price);
+        const lastSold = parseUSD(data.median_price);
+        console.log(`[Steam] priceoverview lowest=£${lowest?.toFixed(4)}, median=£${lastSold?.toFixed(4)}`);
+        if (lowest != null || lastSold != null) {
+          return { lowest, lastSold, avg7d: null, source: 'steam' };
+        }
+        // data.success but no prices — fall through to search/render fallback
+        console.log(`[Steam] priceoverview returned no prices for ${marketHashName}, trying search fallback`);
+      }
     }
-    const items = await res.json();
-    // Build lookup by market_hash_name
-    const lookup = {};
-    items.forEach(i => {
-      lookup[i.market_hash_name] = {
-        lowest: i.min_price,
-        suggested: i.suggested_price,
-        median: i.median_price,
-        mean: i.mean_price,
-        max: i.max_price,
-        qty: i.quantity,
-      };
-    });
-    _skinportCache = lookup;
-    _skinportCacheTime = Date.now();
-    console.log(`[Skinport] Cached ${Object.keys(lookup).length} items`);
-    return lookup;
   } catch(e) {
-    console.error('[Skinport] Bulk fetch error:', e.message);
-    return null;
+    console.warn(`[Steam] priceoverview failed for ${marketHashName}:`, e.message);
   }
+
+  // Fallback: search/render API — returns sell_price in pence (GBP), always has data for listed items
+  try {
+    const searchUrl = `https://steamcommunity.com/market/search/render/?query=${encoded}&appid=730&norender=1&count=1`;
+    const sres = await window.cs2vault.fetch(searchUrl);
+    sres.ok = sres.status >= 200 && sres.status < 300;
+    console.log(`[Steam] search/render ${sres.status} for ${marketHashName}`);
+    if (sres.ok) {
+      const sdata = JSON.parse(sres.body);
+      if (sdata.results && sdata.results.length > 0) {
+        const r = sdata.results[0];
+        // sell_price is in pence (GBP) — divide by 100
+        const lowest = r.sell_price ? r.sell_price / 100 : null;
+        console.log(`[Steam] search/render lowest=£${lowest?.toFixed(4)} for ${marketHashName}`);
+        if (lowest != null && lowest > 0) {
+          return { lowest, lastSold: null, avg7d: null, source: 'steam' };
+        }
+      }
+    }
+  } catch(e) {
+    console.error(`[Steam] search/render failed for ${marketHashName}:`, e.message);
+  }
+
+  return null;
 }
 
-async function fetchSkinportPrice(marketHashName) {
-  if (!marketHashName) return null;
-  const cache = await fetchSkinportBulk();
-  if (!cache) return null;
-
-  // For stickers/charms, the Skinport market_hash_name matches the Steam one
-  const data = cache[marketHashName];
-  if (!data) {
-    console.log(`[Skinport] No data for: ${marketHashName}`);
-    return null;
-  }
-  console.log(`[Skinport] ${marketHashName}: lowest=£${data.lowest}, suggested=£${data.suggested}`);
-  return {
-    lowest: data.lowest,
-    lastSold: data.median,
-    avg7d: data.mean,
-    suggested: data.suggested,
-    qty: data.qty,
-    source: 'skinport'
-  };
-}
-
+// ========================
+// SKINPORT REMOVED — only CSFloat and Steam are used
 // ========================
 // MULTI-PLATFORM PRICE FETCH
 // ========================
-let _compareMode = true; // Default to compare mode
 
 const CHARM_NAMES = Object.keys(CHARM_PATTERNS);
 
@@ -908,47 +866,43 @@ async function fetchAllPlatformPrices(item) {
   } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); }
 
   // Steam — always try (free, no auth)
+  // Stickers are stored without the "Sticker | " prefix in marketHash (CSFloat handles them
+  // via sticker_index), but Steam's API needs the full market hash name.
   try {
-    const stm = await fetchSteamPrices(item.marketHash);
+    let steamHash = item.marketHash;
+    if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker | ') && !steamHash.startsWith('Sticker |')) {
+      steamHash = 'Sticker | ' + steamHash;
+      console.log(`[MultiPrice] Sticker Steam hash resolved: ${steamHash}`);
+    }
+    const stm = await fetchSteamPrices(steamHash);
     if (stm) results.steam = stm;
   } catch(e) { console.warn('[MultiPrice] Steam failed:', e.message); }
-
-  // Skinport — bulk cached (free, no auth)
-  try {
-    const sp = await fetchSkinportPrice(item.marketHash);
-    if (sp) results.skinport = sp;
-  } catch(e) { console.warn('[MultiPrice] Skinport failed:', e.message); }
 
   if (Object.keys(results).length === 0) return null;
   return results;
 }
 
-// Legacy single-source fetch (kept for backward compat)
+// Fetch both platforms, return combined prices object
 async function fetchPrices(item) {
-  if (_compareMode) {
-    const multi = await fetchAllPlatformPrices(item);
-    if (!multi) return null;
-    // Build a combined prices object that's backward-compatible
-    // Pick best (lowest) price across platforms for the main price fields
-    const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest, multi.skinport?.lowest].filter(v => v != null && v > 0);
-    const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold, multi.skinport?.lastSold].filter(v => v != null && v > 0);
-    const allAvg = [multi.csfloat?.avg7d, multi.skinport?.avg7d].filter(v => v != null && v > 0);
-    return {
-      lowest: allLowest.length ? Math.min(...allLowest) : null,
-      lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
-      avg7d: allAvg.length ? allAvg[0] : null,
-      source: 'multi',
-      // Store per-platform data
-      platforms: multi,
-    };
-  }
-  return fetchCSFloatPrices(item.marketHash, item.name);
+  const multi = await fetchAllPlatformPrices(item);
+  if (!multi) return null;
+  const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest].filter(v => v != null && v > 0);
+  const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold].filter(v => v != null && v > 0);
+  const allAvg = [multi.csfloat?.avg7d].filter(v => v != null && v > 0);
+  return {
+    lowest: allLowest.length ? Math.min(...allLowest) : null,
+    lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
+    avg7d: allAvg.length ? allAvg[0] : null,
+    source: 'multi',
+    platforms: multi,
+  };
 }
 
 function getScopedHoldings() {
   const typeFilter = document.getElementById('filterType')?.value || '';
   const catFilters = ['character','elemental','austin','graphic','gallery'];
   if (!typeFilter) return holdings;
+  if (typeFilter === 'tuf') return holdings.filter(h => h.isTuf);
   if (catFilters.includes(typeFilter)) return holdings.filter(h => h.category === typeFilter);
   if (typeFilter === 'sticker') return holdings.filter(h => h.type === 'sticker');
   if (typeFilter === 'armory') return holdings.filter(h => h.type === 'armory');
@@ -979,13 +933,6 @@ async function refreshAllPrices() {
   btn.innerHTML = `<span class="loading-spinner"></span> Fetching ${scopeLabel}...`;
   btn.disabled = true;
 
-  // Pre-fetch Skinport bulk data (single call covers all items)
-  if (_compareMode) {
-    btn.innerHTML = `<span class="loading-spinner"></span> Loading Skinport...`;
-    _skinportCache = null; // Force fresh
-    await fetchSkinportBulk();
-  }
-
   let updated = 0, failed = 0;
   for (let i = 0; i < scoped.length; i++) {
     const item = scoped[i];
@@ -1004,7 +951,7 @@ async function refreshAllPrices() {
   captureHeatmapSnapshot();
   if (heatmapVisible) renderHeatmap();
   updateStats();
-  if (updated > 0) toast(`Updated ${updated} ${isFiltered ? scopeLabel : ''} item(s) across ${_compareMode ? '3 platforms' : 'CSFloat'}`, 'success'); checkAlertsAgainstHoldings();
+  if (updated > 0) toast(`Updated ${updated} ${isFiltered ? scopeLabel : ''} item(s) — CSFloat + Steam`, 'success'); checkAlertsAgainstHoldings();
   if (failed > 0) toast(`${failed} item(s) failed — check API key`, 'info');
 }
 
@@ -1035,91 +982,29 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // PRICE COLUMN RENDERING
 // ========================
 const PLAT_ICONS = {
-  csfloat:  { icon: '🟠', label: 'FLT', cls: 'plat-csfloat' },
-  steam:    { icon: '🟦', label: 'STM', cls: 'plat-steam' },
-  skinport: { icon: '🟣', label: 'SKP', cls: 'plat-skinport' },
+  csfloat: { icon: '🟠', label: 'FLT', cls: 'plat-csfloat' },
+  steam:   { icon: '🟦', label: 'STM', cls: 'plat-steam' },
 };
 
 function renderPriceColumns(item, p, ago) {
   const fmt = v => v != null ? `£${Number(v).toFixed(2)}` : '—';
 
-  if (_compareMode && p.platforms) {
-    const cheapest = getCheapestPlatform(item);
+  if (p.platforms) {
     const platHtml = (name) => {
       const info = PLAT_ICONS[name];
       const val = getPlatformPrice(item, name);
-      const isCheap = name === cheapest;
-      const cls = isCheap ? 'plat-price plat-cheapest' : 'plat-price';
-      const crown = isCheap ? '<span class="cheapest-badge">✦ BEST</span>' : '';
-      // Show qty for skinport
-      const qtyInfo = name === 'skinport' && p.platforms.skinport?.qty ? `<span class="plat-qty">${p.platforms.skinport.qty} listed</span>` : '';
-      return `<td class="mono ${cls}">
+      return `<td class="mono plat-price">
         <div class="plat-cell">
           <span class="plat-icon">${info.icon}</span>
-          <span class="plat-val ${isCheap ? 'plat-val-best' : ''}">${val != null ? fmt(val) : '<span class="price-loading">—</span>'}</span>
-          ${crown}${qtyInfo}
+          <span class="plat-val">${val != null ? fmt(val) : '<span class="price-loading">—</span>'}</span>
         </div>
       </td>`;
     };
-    return platHtml('csfloat') + platHtml('steam') + platHtml('skinport');
+    return platHtml('csfloat') + platHtml('steam');
   }
 
-  // Legacy single-source view
-  return `
-    <td class="mono priceLowest" title="Updated: ${ago}">${fmt(p.lowest)}${p.source ? `<span style="font-size:9px;opacity:0.5;margin-left:3px">${p.source==="steam"?"🟦STM":"🟠FLT"}</span>` : ""}${item.type==='case'?getBuffHtml(item.name,p.lowest||item.buyPrice):""}</td>
-    <td class="mono priceLastSold">${fmt(p.lastSold)}</td>
-    <td class="mono priceAvg">${fmt(p.avg7d)}</td>`;
-}
-
-function toggleCompareMode() {
-  _compareMode = !_compareMode;
-  updateTableHeaders();
-  renderHoldings();
-  const btn = document.getElementById('compareModeBtn');
-  if (btn) {
-    btn.textContent = _compareMode ? '⊟ Single View' : '⊞ Compare Prices';
-    btn.title = _compareMode ? 'Switch to single-source view' : 'Show CSFloat vs Steam vs Skinport';
-  }
-}
-
-function updateTableHeaders() {
-  const thead = document.querySelector('#holdingsTable thead tr');
-  if (!thead) return;
-  // Remove old price headers and re-insert
-  const ths = Array.from(thead.querySelectorAll('th'));
-  // Price columns are after "Total Invested" (index 5) and before "P&L"
-  // Find the indices
-  const totalInvIdx = ths.findIndex(th => th.textContent.includes('Total Invested'));
-  const pnlIdx = ths.findIndex(th => th.textContent.includes('P&L'));
-  if (totalInvIdx < 0 || pnlIdx < 0) return;
-
-  // Remove the 3 price columns between them
-  const toRemove = [];
-  for (let i = totalInvIdx + 1; i < pnlIdx; i++) toRemove.push(ths[i]);
-  toRemove.forEach(th => th.remove());
-
-  // Insert new headers
-  const pnlTh = thead.querySelectorAll('th')[totalInvIdx + 1]; // now P&L is shifted
-  if (_compareMode) {
-    const cfTh = document.createElement('th');
-    cfTh.innerHTML = '🟠 CSFloat';
-    cfTh.className = 'plat-header';
-    const stmTh = document.createElement('th');
-    stmTh.innerHTML = '🟦 Steam';
-    stmTh.className = 'plat-header';
-    const spTh = document.createElement('th');
-    spTh.innerHTML = '🟣 Skinport';
-    spTh.className = 'plat-header';
-    thead.insertBefore(cfTh, pnlTh);
-    thead.insertBefore(stmTh, pnlTh);
-    thead.insertBefore(spTh, pnlTh);
-  } else {
-    ['Lowest Listed', 'Last Sold', 'Avg 7d'].forEach(text => {
-      const th = document.createElement('th');
-      th.textContent = text;
-      thead.insertBefore(th, pnlTh);
-    });
-  }
+  // Fallback for items not yet refreshed with platform data
+  return `<td class="mono priceLowest" title="Updated: ${ago}">${fmt(p.lowest)}</td><td class="mono">—</td>`;
 }
 
 // ========================
@@ -1132,23 +1017,19 @@ function getBestPrice(item) {
   if (!item.prices) return null;
   if (item.prices.platforms) {
     const plats = item.prices.platforms;
-    if (item.type === 'case') {
-      // Cases sell on Steam Market — use Steam price first
+    // Cases, stickers, and TUF-tagged skins all use Steam price first
+    if (item.type === 'case' || item.type === 'sticker' || item.isTuf) {
       const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
       if (stm != null && stm > 0) return stm;
-      // Fallback to CSFloat then Skinport
+      // Fallback to CSFloat if Steam has nothing
       const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
       if (cf != null && cf > 0) return cf;
-      const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
-      if (sp != null && sp > 0) return sp;
     } else {
-      // Everything else (skins, stickers, charms, armory, knives) — CSFloat first
+      // Skins, knives, armory, charms — CSFloat first
       const cf = plats.csfloat?.lowest || plats.csfloat?.avg7d || null;
       if (cf != null && cf > 0) return cf;
       const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
       if (stm != null && stm > 0) return stm;
-      const sp = plats.skinport?.lowest || plats.skinport?.suggested || null;
-      if (sp != null && sp > 0) return sp;
     }
   }
   return item.prices.avg7d || item.prices.lowest || item.prices.lastSold || null;
@@ -1161,21 +1042,10 @@ function getPlatformPrice(item, platform) {
   return p.lowest || p.lastSold || p.avg7d || p.suggested || null;
 }
 
-// Find which platform has the cheapest price
-function getCheapestPlatform(item) {
-  if (!item.prices?.platforms) return null;
-  const plats = item.prices.platforms;
-  let best = null, bestName = null;
-  ['csfloat','steam','skinport'].forEach(name => {
-    const p = plats[name];
-    if (!p) return;
-    const val = p.lowest || p.lastSold || p.avg7d || p.suggested || null;
-    if (val != null && val > 0 && (best === null || val < best)) {
-      best = val;
-      bestName = name;
-    }
-  });
-  return bestName;
+// Find which platform drives the P&L price for this item
+function getPricingPlatform(item) {
+  if (item.type === 'case' || item.type === 'sticker' || item.isTuf) return 'steam';
+  return 'csfloat';
 }
 
 function renderHoldings() {
@@ -1190,7 +1060,8 @@ function renderHoldings() {
     if (q && !h.name.toLowerCase().includes(q)) return false;
     if (typeFilter) {
       const catFilters = ['character','elemental','austin','graphic','gallery'];
-      if (catFilters.includes(typeFilter)) { if (h.category !== typeFilter) return false; }
+      if (typeFilter === 'tuf') { if (!h.isTuf) return false; }
+      else if (catFilters.includes(typeFilter)) { if (h.category !== typeFilter) return false; }
       else if (h.type !== typeFilter) return false;
     }
     if (statusFilter) {
@@ -1252,7 +1123,7 @@ function renderHoldings() {
     }
 
     return `<tr data-id="${item.id}" ${target && best && best >= target ? 'style="border-left:3px solid var(--green);"' : ''}>
-      <td><div class="item-name">${escHtml(item.name)}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
+      <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
       <td><span class="type-badge ${typeBadge[item.type]}">${typeLabels[item.type]}</span></td>
       <td class="mono">${item.qty}</td>
       <td class="mono">£${Number(item.buyPrice).toFixed(2)}</td>
@@ -1762,6 +1633,7 @@ function openAddModal() {
   document.getElementById('itemQty').value = '1';
   document.getElementById('itemBuyPrice').value = '';
   document.getElementById('itemBuyDate').value = todayStr();
+  document.getElementById('itemIsTuf').checked = false;
   openModal('itemModal');
 }
 function openEditModal(id) {
@@ -1776,6 +1648,7 @@ function openEditModal(id) {
   document.getElementById('itemBuyDate').value = item.buyDate || '';
   document.getElementById('itemMarketHash').value = item.marketHash || '';
   document.getElementById('itemNotes').value = item.notes || '';
+  document.getElementById('itemIsTuf').checked = item.isTuf || false;
   openModal('itemModal');
 }
 
@@ -1877,7 +1750,8 @@ function saveItem() {
     qty: parseInt(document.getElementById('itemQty').value) || 1,
     buyPrice, buyDate: document.getElementById('itemBuyDate').value,
     marketHash: document.getElementById('itemMarketHash').value.trim(),
-    notes: document.getElementById('itemNotes').value.trim()
+    notes: document.getElementById('itemNotes').value.trim(),
+    isTuf: document.getElementById('itemIsTuf').checked
   };
   const editId = document.getElementById('editId').value;
   if (editId) { const item = holdings.find(h => h.id === editId); if (item) Object.assign(item, obj); }
@@ -1923,7 +1797,7 @@ function findSellItem(rawId) {
 }
 
 function setSellPlatform(plat) {
-  const fees = { csfloat: 2, steam: 15, skinport: 6 };
+  const fees = { csfloat: 2, steam: 15, custom: 2 };
   _currentSellPlatform = plat; // persist for CGT recording
   document.querySelectorAll('.sell-plat-btn').forEach(b => b.classList.remove('active'));
   if (plat === 'custom') {
@@ -2613,34 +2487,23 @@ async function refreshSkinPrices() {
   btn.innerHTML = '<span class="loading-spinner"></span> Fetching...';
   btn.disabled = true;
 
-  // Pre-fetch Skinport bulk if in compare mode
-  if (_compareMode) {
-    status.textContent = 'Loading Skinport data...';
-    _skinportCache = null;
-    await fetchSkinportBulk();
-  }
-
   let updated = 0, failed = 0;
   for (let i = 0; i < skins.length; i++) {
     const skin = skins[i];
     status.textContent = `Fetching ${i+1}/${skins.length}: ${skin.name}...`;
-    const prices = _compareMode ? await fetchAllPlatformPrices(skin) : await fetchCSFloatPrices(skin.marketHash, skin.name);
-    if (prices) {
-      if (_compareMode) {
-        const allLowest = [prices.csfloat?.lowest, prices.steam?.lowest, prices.skinport?.lowest].filter(v => v != null && v > 0);
-        const allLastSold = [prices.csfloat?.lastSold, prices.steam?.lastSold, prices.skinport?.lastSold].filter(v => v != null && v > 0);
-        const allAvg = [prices.csfloat?.avg7d, prices.skinport?.avg7d].filter(v => v != null && v > 0);
-        skin.prices = {
-          lowest: allLowest.length ? Math.min(...allLowest) : null,
-          lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
-          avg7d: allAvg.length ? allAvg[0] : null,
-          source: 'multi',
-          platforms: prices,
-          fetchedAt: Date.now()
-        };
-      } else {
-        skin.prices = { ...prices, fetchedAt: Date.now() };
-      }
+    const multi = await fetchAllPlatformPrices(skin);
+    if (multi) {
+      const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest].filter(v => v != null && v > 0);
+      const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold].filter(v => v != null && v > 0);
+      const allAvg = [multi.csfloat?.avg7d].filter(v => v != null && v > 0);
+      skin.prices = {
+        lowest: allLowest.length ? Math.min(...allLowest) : null,
+        lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
+        avg7d: allAvg.length ? allAvg[0] : null,
+        source: 'multi',
+        platforms: multi,
+        fetchedAt: Date.now()
+      };
       updated++;
     } else failed++;
     recordPrice(skin.id, skin.prices);
@@ -2657,28 +2520,22 @@ async function refreshSkinPrices() {
 async function refreshSingleSkin(id) {
   const skin = skins.find(s => s.id === id);
   if (!skin) return;
-  if (_compareMode) {
-    const multi = await fetchAllPlatformPrices(skin);
-    if (multi) {
-      const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest, multi.skinport?.lowest].filter(v => v != null && v > 0);
-      const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold, multi.skinport?.lastSold].filter(v => v != null && v > 0);
-      const allAvg = [multi.csfloat?.avg7d, multi.skinport?.avg7d].filter(v => v != null && v > 0);
-      skin.prices = {
-        lowest: allLowest.length ? Math.min(...allLowest) : null,
-        lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
-        avg7d: allAvg.length ? allAvg[0] : null,
-        source: 'multi',
-        platforms: multi,
-        fetchedAt: Date.now()
-      };
-      toast(`Updated: ${skin.name}`, 'success');
-      recordPrice(skin.id, skin.prices);
-    } else toast(`Failed: ${skin.name}`, 'error');
-  } else {
-    const prices = await fetchCSFloatPrices(skin.marketHash, skin.name);
-    if (prices) { skin.prices = { ...prices, fetchedAt: Date.now() }; recordPrice(skin.id, skin.prices); toast(`Updated: ${skin.name}`, 'success'); }
-    else toast(`Failed: ${skin.name}`, 'error');
-  }
+  const multi = await fetchAllPlatformPrices(skin);
+  if (multi) {
+    const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest].filter(v => v != null && v > 0);
+    const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold].filter(v => v != null && v > 0);
+    const allAvg = [multi.csfloat?.avg7d].filter(v => v != null && v > 0);
+    skin.prices = {
+      lowest: allLowest.length ? Math.min(...allLowest) : null,
+      lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
+      avg7d: allAvg.length ? allAvg[0] : null,
+      source: 'multi',
+      platforms: multi,
+      fetchedAt: Date.now()
+    };
+    toast(`Updated: ${skin.name}`, 'success');
+    recordPrice(skin.id, skin.prices);
+  } else toast(`Failed: ${skin.name}`, 'error');
   saveSkins(skins);
   renderSkins();
 }
@@ -3896,15 +3753,13 @@ function populateSettingsFallback() {
 // ARBITRAGE DETECTION
 // ========================
 const PLATFORM_FEES = {
-  csfloat:  0.02,   // 2% seller fee
-  steam:    0.15,   // 15% Steam tax
-  skinport: 0.06,   // ~6% Skinport fee
+  csfloat: 0.02,  // 2% seller fee
+  steam:   0.15,  // 15% Steam tax
 };
 
 const PLATFORM_LABELS = {
-  csfloat:  { icon: '🟠', name: 'CSFloat' },
-  steam:    { icon: '🟦', name: 'Steam' },
-  skinport: { icon: '🟣', name: 'Skinport' },
+  csfloat: { icon: '🟠', name: 'CSFloat' },
+  steam:   { icon: '🟦', name: 'Steam' },
 };
 
 function detectArbitrage(minGapPct) {
@@ -3916,7 +3771,7 @@ function detectArbitrage(minGapPct) {
 
     // Collect valid prices per platform
     const prices = {};
-    ['csfloat', 'steam', 'skinport'].forEach(name => {
+    ['csfloat', 'steam'].forEach(name => {
       const p = plats[name];
       if (!p) return;
       const val = p.lowest || p.lastSold || p.avg7d || p.suggested || null;
@@ -4009,7 +3864,7 @@ function renderArbitrage() {
     const netColor = o.netGapPct > 0 ? 'var(--green)' : 'var(--red)';
 
     // Build platform cells
-    const platCells = ['csfloat', 'steam', 'skinport'].map(name => {
+    const platCells = ['csfloat', 'steam'].map(name => {
       const info = PLATFORM_LABELS[name];
       const price = o.allPrices[name];
       const isBuy = name === o.buyPlat;
@@ -4449,15 +4304,13 @@ function filterHistory(q) {
 }
 function sortTable(key) { if (sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=1;} renderHoldings(); }
 async function exportCSV() {
-  const rows=[['Name','Type','Qty','Buy Price','Buy Date','Market Hash','CSFloat','Steam','Skinport','Best Price','P&L','Category','Notes']];
+  const rows=[['Name','Type','TUF','Qty','Buy Price','Buy Date','Market Hash','CSFloat','Steam','Best Price','P&L','Category','Notes']];
   holdings.forEach(h=>{
-    const p=h.prices||{};
     const best=getBestPrice(h);
     const pnl=best!=null?((best-h.buyPrice)*h.qty).toFixed(2):'';
     const cf=getPlatformPrice(h,'csfloat');
     const stm=getPlatformPrice(h,'steam');
-    const sp=getPlatformPrice(h,'skinport');
-    rows.push([h.name,h.type,h.qty,h.buyPrice,h.buyDate||'',h.marketHash||'',cf||'',stm||'',sp||'',best||'',pnl,h.category||'',h.notes||'']);
+    rows.push([h.name,h.type,h.isTuf?'Yes':'No',h.qty,h.buyPrice,h.buyDate||'',h.marketHash||'',cf||'',stm||'',best||'',pnl,h.category||'',h.notes||'']);
   });
   const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   if (typeof window.cs2vault !== 'undefined') {

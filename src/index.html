@@ -72,6 +72,7 @@ tr:hover td{background:rgba(232,153,60,.03);}
 .badge-sticker{background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.2);}
 .badge-armory{background:rgba(251,191,36,.15);color:var(--gold);border:1px solid rgba(251,191,36,.2);}
 .badge-knife{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.tuf-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:1px;font-weight:700;background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);margin-left:5px;vertical-align:middle;}
 .mono{font-family:'Share Tech Mono',monospace;font-size:12px;}
 .price-loading{color:var(--text3);font-style:italic;font-size:11px;}
 .action-btns{display:flex;gap:6px;}
@@ -469,6 +470,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <option value="graphic">↳ Graphic Design</option>
         <option value="gallery">↳ Gallery Case</option>
         <option value="knife">Knives/Gloves</option>
+        <option value="tuf">⚙ Trade-up Fillers (TUF)</option>
       </select>
       <select id="filterStatus" onchange="filterTable(document.getElementById('searchInput').value)">
         <option value="">All Status</option><option value="profit">In Profit</option><option value="loss">At Loss</option>
@@ -484,14 +486,13 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     </div>
     <div class="toolbar" style="margin-bottom:8px;margin-top:-4px;">
       <button class="btn btn-secondary btn-sm" onclick="toggleHeatmap()" id="heatmapToggleBtn">⊞ Show Heatmap</button>
-      <button class="btn btn-secondary btn-sm" onclick="toggleCompareMode()" id="compareModeBtn" title="Show CSFloat vs Steam vs Skinport" style="margin-left:6px;">⊟ Single View</button>
       <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="priceChangeNote"></span>
     </div>
     <div class="table-wrap">
       <table id="holdingsTable"><thead><tr>
         <th onclick="sortTable('name')">Item ↕</th><th onclick="sortTable('type')">Type ↕</th>
         <th onclick="sortTable('qty')">Qty ↕</th><th onclick="sortTable('buyPrice')">Buy Price ↕</th>
-        <th onclick="sortTable('buyDate')">Date ↕</th><th onclick="sortTable('totalInvested')">Total Invested ↕</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th><th class="plat-header">🟣 Skinport</th>
+        <th onclick="sortTable('buyDate')">Date ↕</th><th onclick="sortTable('totalInvested')">Total Invested ↕</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th>
         <th onclick="sortTable('pnl')">P&L ↕</th><th onclick="sortTable('roi')">ROI ↕</th><th>Refreshed</th><th>Actions</th>
       </tr></thead><tbody id="holdingsBody"></tbody></table>
       <div class="empty-state" id="holdingsEmpty" style="display:none"><div class="empty-icon">◈</div><h3>No Holdings</h3><p>Click + Add Item to get started</p></div>
@@ -578,7 +579,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     </div>
     <div class="table-wrap">
       <table id="skinsTable"><thead><tr>
-        <th>Item</th><th>Qty</th><th>Buy Price</th><th>Total Invested</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th><th class="plat-header">🟣 Skinport</th><th>P&L</th><th>Actions</th>
+        <th>Item</th><th>Qty</th><th>Buy Price</th><th>Total Invested</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th><th>P&L</th><th>Actions</th>
       </tr></thead><tbody id="skinsBody"></tbody></table>
     </div>
   </div>
@@ -667,7 +668,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
       <div>
         <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">⚡ Arbitrage Scanner</div>
-        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Price gaps across CSFloat, Steam and Skinport on your holdings — factoring in platform fees</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Price gaps across CSFloat and Steam on your holdings — factoring in platform fees</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <label style="font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;">Min gap:</label>
@@ -1109,6 +1110,10 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       </div>
       <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="itemMarketHash" placeholder="e.g. Recoil Case"><div class="fee-note">Exact Steam market name for auto price fetching</div></div>
       <div class="form-row"><label>Notes</label><textarea id="itemNotes" rows="2" style="resize:vertical"></textarea></div>
+      <div class="form-row" style="flex-direction:row;align-items:center;gap:10px;">
+        <input type="checkbox" id="itemIsTuf" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;">
+        <label for="itemIsTuf" style="margin:0;cursor:pointer;">Trade-up Filler (TUF) — uses Steam price for P&amp;L</label>
+      </div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('itemModal')">Cancel</button><button class="btn btn-primary" onclick="saveItem()">Save</button></div>
   </div>
@@ -1130,8 +1135,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div style="display:flex;gap:6px;">
           <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('csfloat')" id="sellPlatCsfloat">🟠 CSFloat (2%)</button>
           <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('steam')" id="sellPlatSteam">🟦 Steam (15%)</button>
-          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('skinport')" id="sellPlatSkinport">🟣 Skinport (6%)</button>
-          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('custom')" id="sellPlatCustom">Custom</button>
+          <button class="btn btn-secondary btn-sm sell-plat-btn" onclick="setSellPlatform('custom')" id="sellPlatCustom">✎ Custom</button>
         </div>
       </div>
       <div id="sellFeeRow" class="form-row" style="display:none;"><label>Custom Fee %</label><input type="number" id="sellFee" value="2" step="0.1" oninput="updateSellCalc()"></div>
