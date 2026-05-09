@@ -863,11 +863,13 @@ const CHARM_NAMES = Object.keys(CHARM_PATTERNS);
 async function fetchAllPlatformPrices(item) {
   const results = {};
 
-  // CSFloat — always try (needs API key)
-  try {
-    const cf = await fetchCSFloatPrices(item.marketHash, item.name);
-    if (cf) results.csfloat = cf;
-  } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); }
+  // CSFloat — skip for agents (not tradeable on CSFloat)
+  if (item.type !== 'agent') {
+    try {
+      const cf = await fetchCSFloatPrices(item.marketHash, item.name);
+      if (cf) results.csfloat = cf;
+    } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); }
+  }
 
   // Steam — always try (free, no auth)
   // Stickers have marketHash like "Sticker | Blinky (Holo)" for CSFloat sticker_index lookups,
@@ -881,6 +883,7 @@ async function fetchAllPlatformPrices(item) {
     }
     // Fix known capitalisation mismatches between CSFloat and Steam naming
     steamHash = steamHash.replace('From the Deep', 'From The Deep');
+    steamHash = steamHash.replace('| Axia', '| AXIA');
     let stm = await fetchSteamPrices(steamHash);
     // If no result and the hash ends with a variant suffix, try stripping it
     if (!stm && item.type === 'sticker') {
@@ -1032,8 +1035,8 @@ function getBestPrice(item) {
   if (!item.prices) return null;
   if (item.prices.platforms) {
     const plats = item.prices.platforms;
-    // Cases, stickers, and TUF-tagged skins all use Steam price first
-    if (item.type === 'case' || item.type === 'sticker' || item.isTuf) {
+    // Cases, stickers, TUF-tagged skins, and agents all use Steam price first
+    if (item.type === 'case' || item.type === 'sticker' || item.isTuf || item.type === 'agent') {
       const stm = plats.steam?.lowest || plats.steam?.lastSold || null;
       if (stm != null && stm > 0) return stm;
       // Fallback to CSFloat if Steam has nothing
@@ -1059,7 +1062,7 @@ function getPlatformPrice(item, platform) {
 
 // Find which platform drives the P&L price for this item
 function getPricingPlatform(item) {
-  if (item.type === 'case' || item.type === 'sticker' || item.isTuf) return 'steam';
+  if (item.type === 'case' || item.type === 'sticker' || item.isTuf || item.type === 'agent') return 'steam';
   return 'csfloat';
 }
 
@@ -2452,21 +2455,22 @@ function loadSkins() { try { return JSON.parse(window._store[SKINS_KEY]) || null
 function saveSkins(d) { window._storeSet(SKINS_KEY, JSON.stringify(d)); }
 
 const DEFAULT_SKINS = [
-  {id:'skin001',name:'Karambit Tiger Tooth (FN)',      qty:1,buyPrice:1295.95,marketHash:'★ Karambit | Tiger Tooth (Factory New)',       prices:null},
-  {id:'skin002',name:'M4A4 ASIIMOV (FT)',              qty:1,buyPrice:267.09, marketHash:'M4A4 | Asiimov (Field-Tested)',                prices:null},
-  {id:'skin003',name:'GLOCK-18 AXIA (MW)',             qty:1,buyPrice:71.00,  marketHash:'Glock-18 | Axia (Minimal Wear)',               prices:null},
-  {id:'skin004',name:'TEC-9 FUEL INJECTOR (MW)',       qty:1,buyPrice:7.73,   marketHash:'Tec-9 | Fuel Injector (Minimal Wear)',         prices:null},
-  {id:'skin005',name:'UMP-45 GOLD BISMUTH (FN)',       qty:1,buyPrice:18.08,  marketHash:'UMP-45 | Gold Bismuth (Factory New)',          prices:null},
-  {id:'skin006',name:'SPORTS GLOVES OMEGA (MW)',       qty:1,buyPrice:817.13, marketHash:'★ Sport Gloves | Omega (Minimal Wear)',        prices:null},
-  {id:'skin007',name:'USP-S BLACK LOTUS (FN)',         qty:1,buyPrice:19.99,  marketHash:'USP-S | Black Lotus (Factory New)',            prices:null},
-  {id:'skin008',name:'GALIL AR RAINBOW SPOON (FN)',    qty:1,buyPrice:67.23,  marketHash:'Galil AR | Rainbow Spoon (Factory New)',       prices:null},
-  {id:'skin009',name:'MAC-10 STALKER (BS)',            qty:1,buyPrice:27.14,  marketHash:'MAC-10 | Stalker (Battle-Scarred)',            prices:null},
-  {id:'skin010',name:'Number K',                       qty:1,buyPrice:64.64,  marketHash:'Number K',                                    prices:null},
-  {id:'skin011',name:'DESERT EAGLE STARCADE (FN)',     qty:1,buyPrice:300.24, marketHash:'Desert Eagle | Starcade (Factory New)',        prices:null},
+  {id:'skin001',name:'Karambit Tiger Tooth (FN)',      type:'knife', qty:1,buyPrice:1295.95,marketHash:'★ Karambit | Tiger Tooth (Factory New)',       prices:null},
+  {id:'skin002',name:'M4A4 ASIIMOV (FT)',              type:'skin',  qty:1,buyPrice:267.09, marketHash:'M4A4 | Asiimov (Field-Tested)',                prices:null},
+  {id:'skin003',name:'GLOCK-18 AXIA (MW)',             type:'skin',  qty:1,buyPrice:71.00,  marketHash:'Glock-18 | Axia (Minimal Wear)',               prices:null},
+  {id:'skin004',name:'TEC-9 FUEL INJECTOR (MW)',       type:'skin',  qty:1,buyPrice:7.73,   marketHash:'Tec-9 | Fuel Injector (Minimal Wear)',         prices:null},
+  {id:'skin005',name:'UMP-45 GOLD BISMUTH (FN)',       type:'skin',  qty:1,buyPrice:18.08,  marketHash:'UMP-45 | Gold Bismuth (Factory New)',          prices:null},
+  {id:'skin006',name:'SPORTS GLOVES OMEGA (MW)',       type:'knife', qty:1,buyPrice:817.13, marketHash:'★ Sport Gloves | Omega (Minimal Wear)',        prices:null},
+  {id:'skin007',name:'USP-S BLACK LOTUS (FN)',         type:'skin',  qty:1,buyPrice:19.99,  marketHash:'USP-S | Black Lotus (Factory New)',            prices:null},
+  {id:'skin008',name:'GALIL AR RAINBOW SPOON (FN)',    type:'skin',  qty:1,buyPrice:67.23,  marketHash:'Galil AR | Rainbow Spoon (Factory New)',       prices:null},
+  {id:'skin009',name:'MAC-10 STALKER (BS)',            type:'skin',  qty:1,buyPrice:27.14,  marketHash:'MAC-10 | Stalker (Battle-Scarred)',            prices:null},
+  {id:'skin010',name:'Number K',                       type:'agent', qty:1,buyPrice:64.64,  marketHash:'Number K | The Professionals',                prices:null},
+  {id:'skin011',name:'DESERT EAGLE STARCADE (FN)',     type:'skin',  qty:1,buyPrice:300.24, marketHash:'Desert Eagle | Starcade (Factory New)',        prices:null},
 ];
 
-let skins = loadSkins();
-if (!skins) { skins = DEFAULT_SKINS; saveSkins(skins); }
+// NOTE: skins is initialised in initApp() after initStore() completes,
+// so window._store is populated before we read from it.
+let skins = [];
 
 function renderSkins() {
   const tbody = document.getElementById('skinsBody');
@@ -4556,6 +4560,21 @@ function initApp() {
   try { seedIfMissing(); }             catch(e) { console.warn('[initApp] seedIfMissing:', e); }
   try { holdings     = loadData(); }      catch(e) { console.warn('[initApp] loadData:', e); holdings = []; }
   try { tradeHistory = loadHistory(); }   catch(e) { console.warn('[initApp] loadHistory:', e); tradeHistory = []; }
+  // Load play skins AFTER initStore so window._store is populated
+  try {
+    const storedSkins = loadSkins();
+    skins = storedSkins || DEFAULT_SKINS;
+    if (!storedSkins) saveSkins(skins);
+    // One-time fix: patch Number K market hash and type if stored with old bare name
+    let skinsPatched = false;
+    skins.forEach(s => {
+      if (s.id === 'skin010' || s.marketHash === 'Number K') {
+        if (s.marketHash !== 'Number K | The Professionals') { s.marketHash = 'Number K | The Professionals'; skinsPatched = true; }
+        if (s.type !== 'agent') { s.type = 'agent'; skinsPatched = true; }
+      }
+    });
+    if (skinsPatched) saveSkins(skins);
+  } catch(e) { console.warn('[initApp] loadSkins:', e); skins = DEFAULT_SKINS; }
   try { seedNewItems(); }                 catch(e) { console.warn('[initApp] seedNewItems:', e); }
   try { renderHoldings(); }               catch(e) { console.warn('[initApp] renderHoldings:', e); }
   try { updateStats(); }                  catch(e) { console.warn('[initApp] updateStats:', e); }
