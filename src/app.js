@@ -1333,9 +1333,9 @@ function calculateCGT() {
   const taxYearStart = getTaxYearStart();
   const taxYear = getCurrentTaxYear();
 
-  // Only include trades within the current tax year that were cashed out (CSFloat sales, not Steam)
-  // For simplicity, include all trades — the user can filter later
-  const yearTrades = tradeHistory.filter(t => t.sellDate >= taxYearStart);
+  // Exclude Steam Market sales — selling to Steam Wallet is not a taxable disposal under UK CGT.
+  // Trades without a platform field (older records) default to included (assume CSFloat).
+  const yearTrades = tradeHistory.filter(t => t.sellDate >= taxYearStart && t.platform !== 'steam');
 
   let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
 
@@ -1373,7 +1373,7 @@ function renderCGTSummary() {
       <div class="cgt-card">
         <div class="cgt-card-label">Tax Year</div>
         <div class="cgt-card-val" style="font-size:14px;">${cgt.taxYear}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cgt.tradeCount} trade${cgt.tradeCount !== 1 ? 's' : ''}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cgt.tradeCount} taxable disposal${cgt.tradeCount !== 1 ? 's' : ''}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Realised Gains</div>
@@ -1581,15 +1581,21 @@ function renderHistory() {
   const c = document.getElementById('historyList');
   if (!tradeHistory.length) { c.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><h3>No Trades Yet</h3></div>`; return; }
   const sorted = [...tradeHistory].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
+  const platLabel = { csfloat: 'CSFloat', steam: 'Steam', skinport: 'Skinport', custom: 'Custom' };
+  const platBadgeClass = { csfloat: 'plat-badge-cf', steam: 'plat-badge-stm', skinport: 'plat-badge-sp', custom: 'plat-badge-custom' };
   c.innerHTML = sorted.map(t => {
     const gross = t.sellPrice * t.qty, fee = gross * (t.feePercent / 100), net = gross - fee - (t.buyPrice * t.qty);
-    return `<div class="sold-card">
-      <div><strong>${escHtml(t.name)}</strong><div class="sold-date">${t.sellDate} · Qty: ${t.qty}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£${Number(t.buyPrice).toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£${Number(t.sellPrice).toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Fee (${t.feePercent}%)</div><div class="sold-col-val negative">-£${fee.toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ${net >= 0 ? 'positive' : 'negative'}">${net >= 0 ? '+' : ''}£${net.toFixed(2)}</div></div>
-    </div>`;
+    const plat = t.platform || 'csfloat';
+    const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
+    const steamNote = plat === 'steam' ? '<span style="font-size:9px;color:var(--text3);margin-left:6px;">not CGT</span>' : '';
+    return '<div class="sold-card">' +
+      '<div><strong>' + escHtml(t.name) + '</strong>' +
+      '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + steamNote + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£' + Number(t.buyPrice).toFixed(2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£' + Number(t.sellPrice).toFixed(2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-£' + fee.toFixed(2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + '£' + net.toFixed(2) + '</div></div>' +
+      '</div>';
   }).join('');
   renderCGTSummary();
 }
@@ -1905,6 +1911,7 @@ function openSellModal(id) {
 
 let _sellFeePercent = 2;
 let _sellMode = 'perunit'; // 'perunit' or 'total'
+let _currentSellPlatform = 'csfloat'; // track selected platform for CGT persistence
 
 // Look up item from holdings or skins (for sell modal)
 function findSellItem(rawId) {
@@ -1917,6 +1924,7 @@ function findSellItem(rawId) {
 
 function setSellPlatform(plat) {
   const fees = { csfloat: 2, steam: 15, skinport: 6 };
+  _currentSellPlatform = plat; // persist for CGT recording
   document.querySelectorAll('.sell-plat-btn').forEach(b => b.classList.remove('active'));
   if (plat === 'custom') {
     document.getElementById('sellPlatCustom').classList.add('active');
@@ -2004,7 +2012,7 @@ function confirmSell() {
   const feePercent = _sellFeePercent;
   if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
   if (qty > item.qty) { toast(`Only ${item.qty} in stock`, 'error'); return; }
-  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent });
+  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform });
   saveHistory(tradeHistory);
   if (qty >= item.qty) holdings = holdings.filter(h => h.id !== id);
   else item.qty -= qty;
@@ -2706,7 +2714,7 @@ confirmSell = function() {
     const feePercent = _sellFeePercent;
     if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
     if (qty > skin.qty) { toast(`Only ${skin.qty} in stock`, 'error'); return; }
-    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent });
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform });
     saveHistory(tradeHistory);
     if (qty >= skin.qty) skins = skins.filter(s => s.id !== skinId);
     else skin.qty -= qty;
