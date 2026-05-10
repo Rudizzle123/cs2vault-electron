@@ -146,6 +146,51 @@ function prunePriceLog() {
 }
 
 // ========================
+// CASE SUPPLY LOG
+// ========================
+const CASE_SUPPLY_KEY = 'cs2vault_case_supply';
+const CASE_SUPPLY_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000; // 6 months
+
+function loadCaseSupply() {
+  try { return JSON.parse(window._store[CASE_SUPPLY_KEY]) || {}; }
+  catch { return {}; }
+}
+
+function saveCaseSupply(data) {
+  window._storeSet(CASE_SUPPLY_KEY, JSON.stringify(data));
+}
+
+function recordCaseSupplySnapshot(marketHash, count) {
+  if (!marketHash || count == null) return;
+  const data = loadCaseSupply();
+  if (!data[marketHash]) data[marketHash] = [];
+  data[marketHash].push({ ts: Date.now(), count });
+  saveCaseSupply(data);
+}
+
+function pruneCaseSupply() {
+  const data = loadCaseSupply();
+  const cutoff = Date.now() - CASE_SUPPLY_MAX_AGE_MS;
+  let changed = false;
+  for (const key of Object.keys(data)) {
+    const before = data[key].length;
+    data[key] = data[key].filter(e => e.ts > cutoff);
+    if (data[key].length !== before) changed = true;
+  }
+  if (changed) saveCaseSupply(data);
+}
+
+// Get previous snapshot for a marketHash (most recent entry before today)
+function getPreviousSupplySnapshot(marketHash) {
+  const data = loadCaseSupply();
+  const snaps = (data[marketHash] || []).sort((a, b) => a.ts - b.ts);
+  // Return the snapshot from at least 1 day ago (not current session)
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  const old = snaps.filter(e => e.ts < cutoff);
+  return old.length ? old[old.length - 1] : null;
+}
+
+// ========================
 // STEAM HISTORICAL PRICE DATA
 // ========================
 const STEAM_HISTORY_KEY = 'cs2vault_steam_history';
@@ -2866,6 +2911,23 @@ const UNBOX_HISTORY = {
 let ciData = null;
 let ciRunning = false;
 
+function getPriceMomentum(itemId, days) {
+  const log = loadPriceLog();
+  const now = Date.now();
+  const cutoff = now - (days * 24 * 60 * 60 * 1000);
+  const halfCutoff = now - ((days / 2) * 24 * 60 * 60 * 1000);
+
+  const entries = log.filter(e => e.id === itemId && e.ts > cutoff && e.best != null).sort((a, b) => a.ts - b.ts);
+  if (entries.length < 2) return null;
+
+  // Use earliest entry in the window as the start price
+  const startPrice = entries[0].best;
+  const endPrice = entries[entries.length - 1].best;
+  if (!startPrice || !endPrice) return null;
+
+  return ((endPrice - startPrice) / startPrice) * 100;
+}
+
 function getMonthsDiscontinued(discontinuedStr) {
   if (!discontinuedStr) return 0;
   const disc = new Date(discontinuedStr);
@@ -2981,6 +3043,19 @@ async function runCaseIntelligence() {
     const atl = meta.atl || currentPrice || 0.5;
     const listings = steam?.listings || null;
 
+    // Record supply snapshot for trend tracking
+    if (listings !== null && c.marketHash) {
+      const prevSnap = getPreviousSupplySnapshot(c.marketHash);
+      recordCaseSupplySnapshot(c.marketHash, listings);
+      var supplyPrev = prevSnap ? prevSnap.count : null;
+    } else {
+      var supplyPrev = null;
+    }
+
+    // Price momentum from price log
+    const momentum7d  = getPriceMomentum(c.id, 7);
+    const momentum30d = getPriceMomentum(c.id, 30);
+
     // ---- SCORE COMPONENTS (each 0-100) ----
 
     // 1. Supply Depletion Score (30%) — fewer listings = better
@@ -3042,8 +3117,9 @@ async function runCaseIntelligence() {
       score: finalScore,
       grade, signal,
       depletionScore, discScore, priceScore, trendScore,
-      listings, currentPrice, atl,
+      listings, supplyPrev, currentPrice, atl,
       monthsDisc, isActive,
+      momentum7d, momentum30d,
       qty: c.qty,
       buyPrice: c.buyPrice,
       meta,
@@ -3109,56 +3185,77 @@ function renderCaseIntelligence(results) {
       ? (r.listings >= 1000000 ? (r.listings/1000000).toFixed(2)+'M' : r.listings >= 1000 ? (r.listings/1000).toFixed(0)+'K' : r.listings.toString())
       : '—';
 
-    const priceVsAtl = r.currentPrice && r.atl
-      ? '+' + (((r.currentPrice / r.atl) - 1) * 100).toFixed(0) + '% vs ATL'
-      : '—';
+    // Supply trend vs previous snapshot
+    let supplyTrendHtml = '';
+    if (r.listings !== null && r.supplyPrev !== null) {
+      const delta = r.listings - r.supplyPrev;
+      const deltaPct = ((delta / r.supplyPrev) * 100).toFixed(1);
+      const deltaStr = delta >= 0 ? '+' + (delta/1000).toFixed(1)+'K' : (delta/1000).toFixed(1)+'K';
+      const trendCol = delta <= 0 ? 'var(--green)' : 'var(--red)';
+      const arrow = delta <= 0 ? '↓' : '↑';
+      supplyTrendHtml = '<span style="color:' + trendCol + ';font-size:10px;margin-left:4px;">' + arrow + ' ' + deltaStr + ' (' + deltaPct + '%)</span>';
+    } else if (r.listings !== null) {
+      supplyTrendHtml = '<span style="color:var(--text3);font-size:10px;margin-left:4px;">first snapshot</span>';
+    }
+
+    // Momentum badges
+    function momentumBadge(pct) {
+      if (pct === null) return '<span style="color:var(--text3);">—</span>';
+      const col = pct >= 0 ? 'var(--green)' : 'var(--red)';
+      const sign = pct >= 0 ? '+' : '';
+      return '<span style="color:' + col + ';">' + sign + pct.toFixed(1) + '%</span>';
+    }
 
     const holdingsVal = r.qty * (r.currentPrice || r.buyPrice);
 
-    return `
-    <div class="ci-card">
-      <div class="ci-card-header">
-        <div>
-          <div class="ci-case-name">${r.name}</div>
-          <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
-            <div class="ci-grade-badge ${getGradeClass(r.grade)}">${r.grade}</div>
-            <span class="ci-signal ${r.signal.cls}">${r.signal.icon} ${r.signal.label}</span>
-          </div>
-        </div>
-        <div class="ci-score-ring">
-          ${buildRingPath(r.score)}
-          <div class="ci-score-num" style="color:${scoreColor(r.score)}">${r.score}</div>
-        </div>
-      </div>
-      <div class="ci-card-body">
-        <div class="ci-bars">
-          ${bars.map(b => `
-          <div class="ci-bar-row">
-            <div class="ci-bar-label">${b.label} <span style="opacity:.5">${b.weight}</span></div>
-            <div class="ci-bar-track"><div class="ci-bar-fill" style="width:${b.val}%;background:${b.color};box-shadow:0 0 6px ${b.color}55;"></div></div>
-            <div class="ci-bar-val">${Math.round(b.val)}</div>
-          </div>`).join('')}
-        </div>
-        <div class="ci-card-metrics">
-          <div class="ci-metric">
-            <div class="ci-metric-label">Listings</div>
-            <div class="ci-metric-val" style="color:var(--blue)">${listingsStr}</div>
-          </div>
-          <div class="ci-metric">
-            <div class="ci-metric-label">vs ATL</div>
-            <div class="ci-metric-val" style="color:var(--text2)">${priceVsAtl}</div>
-          </div>
-          <div class="ci-metric">
-            <div class="ci-metric-label">Disc.</div>
-            <div class="ci-metric-val" style="color:var(--purple)">${r.isActive ? 'Active' : r.monthsDisc+'mo'}</div>
-          </div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-          <div class="ci-holdings-chip">◆ ${r.qty.toLocaleString()} held · £${holdingsVal.toFixed(0)}</div>
-          ${r.listings === null ? '<div class="ci-error-chip">⚠ No Steam data</div>' : ''}
-        </div>
-      </div>
-    </div>`;
+    return '<div class="ci-card">' +
+      '<div class="ci-card-header">' +
+        '<div>' +
+          '<div class="ci-case-name">' + r.name + '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;">' +
+            '<div class="ci-grade-badge ' + getGradeClass(r.grade) + '">' + r.grade + '</div>' +
+            '<span class="ci-signal ' + r.signal.cls + '">' + r.signal.icon + ' ' + r.signal.label + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ci-score-ring">' +
+          buildRingPath(r.score) +
+          '<div class="ci-score-num" style="color:' + scoreColor(r.score) + '">' + r.score + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="ci-card-body">' +
+        '<div class="ci-bars">' +
+          bars.map(b =>
+            '<div class="ci-bar-row">' +
+              '<div class="ci-bar-label">' + b.label + ' <span style="opacity:.5">' + b.weight + '</span></div>' +
+              '<div class="ci-bar-track"><div class="ci-bar-fill" style="width:' + b.val + '%;background:' + b.color + ';box-shadow:0 0 6px ' + b.color + '55;"></div></div>' +
+              '<div class="ci-bar-val">' + Math.round(b.val) + '</div>' +
+            '</div>'
+          ).join('') +
+        '</div>' +
+        '<div class="ci-card-metrics">' +
+          '<div class="ci-metric">' +
+            '<div class="ci-metric-label">Supply</div>' +
+            '<div class="ci-metric-val" style="color:var(--blue);font-size:12px;">' + listingsStr + supplyTrendHtml + '</div>' +
+          '</div>' +
+          '<div class="ci-metric">' +
+            '<div class="ci-metric-label">7D</div>' +
+            '<div class="ci-metric-val">' + momentumBadge(r.momentum7d) + '</div>' +
+          '</div>' +
+          '<div class="ci-metric">' +
+            '<div class="ci-metric-label">30D</div>' +
+            '<div class="ci-metric-val">' + momentumBadge(r.momentum30d) + '</div>' +
+          '</div>' +
+          '<div class="ci-metric">' +
+            '<div class="ci-metric-label">Disc.</div>' +
+            '<div class="ci-metric-val" style="color:var(--purple)">' + (r.isActive ? 'Active' : r.monthsDisc + 'mo') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">' +
+          '<div class="ci-holdings-chip">◆ ' + r.qty.toLocaleString() + ' held · £' + holdingsVal.toFixed(0) + '</div>' +
+          (r.listings === null ? '<div class="ci-error-chip">⚠ No Steam data</div>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
   }).join('');
 
   // ---- Table ----
@@ -3166,30 +3263,47 @@ function renderCaseIntelligence(results) {
     const listingsStr = r.listings !== null
       ? (r.listings >= 1000000 ? (r.listings/1000000).toFixed(2)+'M' : r.listings >= 1000 ? (r.listings/1000).toFixed(1)+'K' : r.listings.toString())
       : '—';
-    const depletionPct = r.listings !== null && r.meta.peakSupply
-      ? ((1 - r.listings / r.meta.peakSupply) * 100).toFixed(0) + '%'
-      : '—';
+
+    // Supply trend cell
+    let supplyTrendCell = '—';
+    if (r.listings !== null && r.supplyPrev !== null) {
+      const delta = r.listings - r.supplyPrev;
+      const deltaPct = ((delta / r.supplyPrev) * 100).toFixed(1);
+      const arrow = delta <= 0 ? '↓' : '↑';
+      const col = delta <= 0 ? 'var(--green)' : 'var(--red)';
+      const absDeltaK = (Math.abs(delta)/1000).toFixed(1) + 'K';
+      supplyTrendCell = '<span style="color:' + col + ';">' + arrow + ' ' + absDeltaK + ' (' + deltaPct + '%)</span>';
+    } else if (r.listings !== null) {
+      supplyTrendCell = '<span style="color:var(--text3);font-size:10px;">first snap</span>';
+    }
+
+    // Momentum cells
+    function momCell(pct) {
+      if (pct === null) return '<span style="color:var(--text3);">—</span>';
+      const col = pct >= 0 ? 'var(--green)' : 'var(--red)';
+      const sign = pct >= 0 ? '+' : '';
+      return '<span style="color:' + col + ';">' + sign + pct.toFixed(1) + '%</span>';
+    }
+
     const priceStr = r.currentPrice ? '£' + r.currentPrice.toFixed(2) : '—';
-    const atlStr = r.currentPrice && r.atl
-      ? '+' + (((r.currentPrice / r.atl) - 1) * 100).toFixed(0) + '%'
-      : '—';
     const trendLabel = { growing:'↑ Growing', stable:'→ Stable', declining:'↓ Declining', very_low:'↓↓ Very Low' }[r.meta.unboxTrend] || '—';
     const trendColor = { growing:'var(--red)', stable:'var(--text2)', declining:'var(--green)', very_low:'var(--green)' }[r.meta.unboxTrend] || 'var(--text3)';
-    const scoreStyle = `color:${scoreColor(r.score)};font-family:'Share Tech Mono',monospace;font-weight:700;`;
+    const scoreStyle = 'color:' + scoreColor(r.score) + ';font-family:\'Share Tech Mono\',monospace;font-weight:700;';
 
-    return `<tr>
-      <td><strong>${r.name}</strong></td>
-      <td><span style="${scoreStyle}">${r.score}</span></td>
-      <td><span class="ci-grade-badge ${getGradeClass(r.grade)}">${r.grade}</span></td>
-      <td class="mono">${listingsStr}</td>
-      <td class="mono" style="color:var(--green)">${depletionPct}</td>
-      <td class="mono">${r.isActive ? '<span style="color:var(--accent)">Active</span>' : r.monthsDisc + ' months'}</td>
-      <td class="mono">${priceStr}</td>
-      <td class="mono">${atlStr}</td>
-      <td style="color:${trendColor};font-family:'Share Tech Mono',monospace;font-size:11px;">${trendLabel}</td>
-      <td class="mono">${r.qty.toLocaleString()}</td>
-      <td><span class="ci-signal ${r.signal.cls}">${r.signal.icon} ${r.signal.label}</span></td>
-    </tr>`;
+    return '<tr>' +
+      '<td><strong>' + r.name + '</strong></td>' +
+      '<td><span style="' + scoreStyle + '">' + r.score + '</span></td>' +
+      '<td><span class="ci-grade-badge ' + getGradeClass(r.grade) + '">' + r.grade + '</span></td>' +
+      '<td class="mono">' + listingsStr + '</td>' +
+      '<td class="mono">' + supplyTrendCell + '</td>' +
+      '<td class="mono">' + momCell(r.momentum7d) + '</td>' +
+      '<td class="mono">' + momCell(r.momentum30d) + '</td>' +
+      '<td class="mono">' + (r.isActive ? '<span style="color:var(--accent)">Active</span>' : r.monthsDisc + ' months') + '</td>' +
+      '<td class="mono">' + priceStr + '</td>' +
+      '<td style="color:' + trendColor + ';font-family:\'Share Tech Mono\',monospace;font-size:11px;">' + trendLabel + '</td>' +
+      '<td class="mono">' + r.qty.toLocaleString() + '</td>' +
+      '<td><span class="ci-signal ' + r.signal.cls + '">' + r.signal.icon + ' ' + r.signal.label + '</span></td>' +
+    '</tr>';
   }).join('');
 }
 
@@ -4383,6 +4497,7 @@ function initApp() {
   try { checkTargetsOnLoad(); }           catch(e) { console.warn('[initApp] checkTargetsOnLoad:', e); }
   try { checkAutoSnapshot(); }            catch(e) { console.warn('[initApp] checkAutoSnapshot:', e); }
   try { prunePriceLog(); }                catch(e) { console.warn('[initApp] prunePriceLog:', e); }
+  try { pruneCaseSupply(); }              catch(e) { console.warn('[initApp] pruneCaseSupply:', e); }
   try {
     const apiEl = document.getElementById('apiKeyInput');
     if (apiEl) apiEl.value = getApiKey() || '';
