@@ -1267,31 +1267,39 @@ function calculateCGT() {
   const taxYearStart = getTaxYearStart();
   const taxYear = getCurrentTaxYear();
 
-  // Exclude Steam Market sales — selling to Steam Wallet is not a taxable disposal under UK CGT.
+  // Helper: roll up gains/losses for a given set of trades
+  const rollup = (trades) => {
+    let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
+    trades.forEach(t => {
+      const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+      const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
+      const costBasis = t.buyPrice * t.qty;
+      const gain = gross - fee - costBasis;
+      totalFees += fee;
+      if (gain > 0) totalGains += gain;
+      else totalLosses += Math.abs(gain);
+      tradeCount++;
+    });
+    const netGain = totalGains - totalLosses;
+    const taxableGain = Math.max(0, netGain - CGT_ALLOWANCE);
+    const allowanceUsed = Math.min(Math.max(0, netGain), CGT_ALLOWANCE);
+    const allowancePct = Math.min(100, (allowanceUsed / CGT_ALLOWANCE) * 100);
+    const taxBasic = taxableGain * (CGT_RATES.basic / 100);
+    const taxHigher = taxableGain * (CGT_RATES.higher / 100);
+    return { totalGains, totalLosses, totalFees, netGain, taxableGain, allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount };
+  };
+
+  const inYear = tradeHistory.filter(t => t.sellDate >= taxYearStart);
+
+  // CURRENT app position: exclude Steam Market sales (Steam Wallet ≠ taxable disposal).
   // Trades without a platform field (older records) default to included (assume CSFloat).
-  const yearTrades = tradeHistory.filter(t => t.sellDate >= taxYearStart && t.platform !== 'steam');
+  const yearTrades = inYear.filter(t => t.platform !== 'steam');
+  const exclSteam = rollup(yearTrades);
 
-  let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
+  // HYPOTHETICAL position: include ALL sales (treats Steam-to-Steam as a disposal too).
+  const inclSteam = rollup(inYear);
 
-  yearTrades.forEach(t => {
-    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
-    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
-    const costBasis = t.buyPrice * t.qty;
-    const gain = gross - fee - costBasis;
-    totalFees += fee;
-    if (gain > 0) totalGains += gain;
-    else totalLosses += Math.abs(gain);
-    tradeCount++;
-  });
-
-  const netGain = totalGains - totalLosses;
-  const taxableGain = Math.max(0, netGain - CGT_ALLOWANCE);
-  const allowanceUsed = Math.min(netGain, CGT_ALLOWANCE);
-  const allowancePct = Math.min(100, (allowanceUsed / CGT_ALLOWANCE) * 100);
-  const taxBasic = taxableGain * (CGT_RATES.basic / 100);
-  const taxHigher = taxableGain * (CGT_RATES.higher / 100);
-
-  return { taxYear, taxYearStart, yearTrades, totalGains, totalLosses, totalFees, netGain, taxableGain, allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount };
+  return Object.assign({ taxYear, taxYearStart, yearTrades, inYear, inclSteam }, exclSteam);
 }
 
 function renderCGTSummary() {
@@ -1301,6 +1309,9 @@ function renderCGTSummary() {
 
   const cgt = calculateCGT();
   const barColor = cgt.allowancePct >= 90 ? 'var(--red)' : cgt.allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
+  const incl = cgt.inclSteam;
+  const inclBarColor = incl.allowancePct >= 90 ? 'var(--red)' : incl.allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
+  const steamDiffers = incl.tradeCount !== cgt.tradeCount;
 
   el.innerHTML = `
     <div class="cgt-summary">
@@ -1323,17 +1334,29 @@ function renderCGTSummary() {
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Allowance Used</div>
-        <div class="cgt-card-val">£${cgt.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div class="cgt-card-val" style="font-size:14px;">£${cgt.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+          <span class="plat-badge plat-badge-cf" style="font-size:8px;">CSFloat only</span>
+        </div>
         <div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${cgt.allowancePct}%;background:${barColor};"></div></div>
+        ${steamDiffers ? `
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+          <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">£${incl.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+          <span class="plat-badge plat-badge-stm" style="font-size:8px;">incl. Steam</span>
+        </div>
+        <div class="cgt-allowance-bar" style="opacity:.55;"><div class="cgt-allowance-fill" style="width:${incl.allowancePct}%;background:${inclBarColor};"></div></div>
+        <div style="font-size:8px;color:var(--text3);margin-top:3px;">hypothetical if Steam sales counted (${incl.tradeCount} disposals)</div>
+        ` : ''}
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Est. Tax Owed</div>
         <div class="cgt-card-val" style="color:${cgt.taxableGain > 0 ? 'var(--red)' : 'var(--green)'};">${cgt.taxableGain > 0 ? '£' + cgt.taxBasic.toFixed(2) + ' – £' + cgt.taxHigher.toFixed(2) : '£0.00'}</div>
         <div style="font-size:9px;color:var(--text3);margin-top:2px;">${cgt.taxableGain > 0 ? '18% basic / 24% higher' : 'Within allowance'}</div>
+        ${steamDiffers && incl.taxableGain > 0 ? `<div style="font-size:8px;color:var(--text3);margin-top:4px;">incl. Steam: £${incl.taxBasic.toFixed(2)} – £${incl.taxHigher.toFixed(2)}</div>` : ''}
       </div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'Share Tech Mono',monospace;text-align:center;">
-      ⚠ Estimated only — selling on Steam Market into Steam Wallet is not a taxable event. CGT applies when you cash out to real money. Consult a tax professional.
+      ⚠ Estimated only. The app's position: Steam Wallet sales aren't taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts — an unsettled area. Consult a tax professional.
     </div>`;
 }
 
@@ -1525,10 +1548,13 @@ function renderHistory() {
     const net = netRealised - (t.buyPrice * t.qty);
     const plat = t.platform || 'csfloat';
     const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
-    const steamNote = plat === 'steam' ? '<span style="font-size:9px;color:var(--text3);margin-left:6px;">not CGT</span>' : '';
+    const countsCGT = plat !== 'steam';
+    const cgtBadge = countsCGT
+      ? '<span class="cgt-tag cgt-tag-yes" title="Counts toward CGT">✓ CGT</span>'
+      : '<span class="cgt-tag cgt-tag-no" title="Excluded from CGT (Steam Wallet sale)">✕ not CGT</span>';
     return '<div class="sold-card">' +
       '<div><strong>' + escHtml(t.name) + '</strong>' +
-      '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + steamNote + '</div></div>' +
+      '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + ' ' + cgtBadge + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£' + Number(t.buyPrice).toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£' + Number(t.sellPrice).toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-£' + fee.toFixed(2) + '</div></div>' +
