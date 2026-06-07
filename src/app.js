@@ -1274,8 +1274,8 @@ function calculateCGT() {
   let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
 
   yearTrades.forEach(t => {
-    const gross = t.sellPrice * t.qty;
-    const fee = gross * (t.feePercent / 100);
+    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
     const costBasis = t.buyPrice * t.qty;
     const gain = gross - fee - costBasis;
     totalFees += fee;
@@ -1359,18 +1359,19 @@ async function exportCGTReport() {
     [`Estimated Tax (Higher 24%),£${cgt.taxHigher.toFixed(2)}`],
     [''],
     ['DISPOSALS'],
-    ['Date,Item,Type,Qty,Cost Basis (£),Sale Proceeds (£),Platform Fee %,Fee Amount (£),Gain/Loss (£)'],
+    ['Date,Item,Type,Qty,Platform,Cost Basis (£),Gross Proceeds (£),Platform Fee %,Fee Amount (£),Net Realised (£),Gain/Loss (£)'],
   ];
 
   cgt.yearTrades.forEach(t => {
-    const gross = t.sellPrice * t.qty;
-    const fee = gross * (t.feePercent / 100);
+    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
+    const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
     const costBasis = t.buyPrice * t.qty;
     const gain = gross - fee - costBasis;
     rows.push([
-      t.sellDate, `"${t.name}"`, t.type, t.qty,
+      t.sellDate, `"${t.name}"`, t.type, t.qty, (t.platform || 'csfloat'),
       costBasis.toFixed(2), gross.toFixed(2), t.feePercent,
-      fee.toFixed(2), gain.toFixed(2)
+      fee.toFixed(2), netRealised.toFixed(2), gain.toFixed(2)
     ].join(','));
   });
 
@@ -1518,7 +1519,10 @@ function renderHistory() {
   const platLabel = { csfloat: 'CSFloat', steam: 'Steam', skinport: 'Skinport', custom: 'Custom' };
   const platBadgeClass = { csfloat: 'plat-badge-cf', steam: 'plat-badge-stm', skinport: 'plat-badge-sp', custom: 'plat-badge-custom' };
   c.innerHTML = sorted.map(t => {
-    const gross = t.sellPrice * t.qty, fee = gross * (t.feePercent / 100), net = gross - fee - (t.buyPrice * t.qty);
+    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
+    const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
+    const net = netRealised - (t.buyPrice * t.qty);
     const plat = t.platform || 'csfloat';
     const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
     const steamNote = plat === 'steam' ? '<span style="font-size:9px;color:var(--text3);margin-left:6px;">not CGT</span>' : '';
@@ -1528,6 +1532,7 @@ function renderHistory() {
       '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£' + Number(t.buyPrice).toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£' + Number(t.sellPrice).toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-£' + fee.toFixed(2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Realised</div><div class="sold-col-val">£' + netRealised.toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + '£' + net.toFixed(2) + '</div></div>' +
       '</div>';
   }).join('');
@@ -1949,7 +1954,10 @@ function confirmSell() {
   const feePercent = _sellFeePercent;
   if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
   if (qty > item.qty) { toast(`Only ${item.qty} in stock`, 'error'); return; }
-  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform });
+  const _gross = sellPrice * qty;
+  const _feeAmount = _gross * (feePercent / 100);
+  const _netRealised = _gross - _feeAmount;
+  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
   saveHistory(tradeHistory);
   if (qty >= item.qty) holdings = holdings.filter(h => h.id !== id);
   else item.qty -= qty;
@@ -2635,7 +2643,10 @@ confirmSell = function() {
     const feePercent = _sellFeePercent;
     if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
     if (qty > skin.qty) { toast(`Only ${skin.qty} in stock`, 'error'); return; }
-    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform });
+    const _gross = sellPrice * qty;
+    const _feeAmount = _gross * (feePercent / 100);
+    const _netRealised = _gross - _feeAmount;
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
     saveHistory(tradeHistory);
     if (qty >= skin.qty) skins = skins.filter(s => s.id !== skinId);
     else skin.qty -= qty;
@@ -4253,8 +4264,14 @@ async function exportCSV() {
   }
 }
 async function exportHistoryCSV() {
-  const rows=[['Name','Type','Qty','Buy Price','Sell Price','Date','Fee %','Net Profit']];
-  tradeHistory.forEach(t=>{const g=t.sellPrice*t.qty,f=g*(t.feePercent/100),n=(g-f-(t.buyPrice*t.qty)).toFixed(2);rows.push([t.name,t.type,t.qty,t.buyPrice,t.sellPrice,t.sellDate,t.feePercent,n]);});
+  const rows=[['Name','Type','Qty','Buy Price','Sell Price','Date','Platform','Fee %','Fee Amount','Net Realised','Net Profit']];
+  tradeHistory.forEach(t=>{
+    const g=(t.gross!=null)?t.gross:t.sellPrice*t.qty;
+    const f=(t.feeAmount!=null)?t.feeAmount:g*(t.feePercent/100);
+    const nr=(t.netRealised!=null)?t.netRealised:g-f;
+    const n=(nr-(t.buyPrice*t.qty)).toFixed(2);
+    rows.push([t.name,t.type,t.qty,t.buyPrice,t.sellPrice,t.sellDate,(t.platform||'csfloat'),t.feePercent,f.toFixed(2),nr.toFixed(2),n]);
+  });
   const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   if (typeof window.cs2vault !== 'undefined') {
     const result = await window.cs2vault.exportSave('cs2vault_history.csv', csvStr);
