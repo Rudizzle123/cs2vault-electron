@@ -658,17 +658,17 @@ function seedNewItems() {
   // Add WC1 trade history if missing
   const existingT = JSON.parse(window._store['cs2vault_history'] || '[]');
   const wc1Trades = [
-    {id:'trade001',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade002',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade003',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.54,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade004',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.95,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade005',name:'Gamma Case',               type:'case',   qty:1,buyPrice:790.09,  sellPrice:1356.62, sellDate:'',feePercent:15},
-    {id:'trade006',name:'FAMAS BAD TRIP (MW)',      type:'skin',   qty:1,buyPrice:4.08,    sellPrice:36.54,   sellDate:'',feePercent:15},
-    {id:'trade007',name:'FAMAS STYX (FN)',          type:'skin',   qty:1,buyPrice:31.27,   sellPrice:86.31,   sellDate:'',feePercent:15},
-    {id:'trade008',name:'Gallery Case',             type:'case',   qty:1,buyPrice:524.53,  sellPrice:911.06,  sellDate:'',feePercent:2},
-    {id:'trade009',name:'STILETTO RUBY (MW)',       type:'knife',  qty:1,buyPrice:1279.24, sellPrice:1350.71, sellDate:'',feePercent:2},
-    {id:'trade010',name:'Austin Contenders',        type:'sticker',qty:1,buyPrice:140.4,   sellPrice:253.6,   sellDate:'',feePercent:15},
-    {id:'trade011',name:'G2 Austin (Holo)',         type:'sticker',qty:1,buyPrice:7.83,    sellPrice:11.25,   sellDate:'',feePercent:15},
+    {id:'trade001',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade002',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade003',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.54,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade004',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.95,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade005',name:'Gamma Case',               type:'case',   qty:1,buyPrice:790.09,  sellPrice:1356.62, sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade006',name:'FAMAS BAD TRIP (MW)',      type:'skin',   qty:1,buyPrice:4.08,    sellPrice:36.54,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade007',name:'FAMAS STYX (FN)',          type:'skin',   qty:1,buyPrice:31.27,   sellPrice:86.31,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade008',name:'Gallery Case',             type:'case',   qty:1,buyPrice:524.53,  sellPrice:911.06,  sellDate:'',feePercent:2,platform:'csfloat'},
+    {id:'trade009',name:'STILETTO RUBY (MW)',       type:'knife',  qty:1,buyPrice:1279.24, sellPrice:1350.71, sellDate:'',feePercent:2,platform:'csfloat'},
+    {id:'trade010',name:'Austin Contenders',        type:'sticker',qty:1,buyPrice:140.4,   sellPrice:253.6,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade011',name:'G2 Austin (Holo)',         type:'sticker',qty:1,buyPrice:7.83,    sellPrice:11.25,   sellDate:'',feePercent:15,platform:'steam'},
   ];
   let tChanged = false;
   wc1Trades.forEach(t => {
@@ -1263,6 +1263,17 @@ function getTaxYearStart() {
   return `${year - 1}-04-06`;
 }
 
+// Resolve the effective platform for a trade record.
+// Explicit platform wins. For older records that predate consistent platform
+// capture, infer from the fee rate: ~15% = Steam Market, anything else = CSFloat.
+// (Steam Market total fee is 15%; CSFloat is 2%.) This stops a 15%-fee Steam
+// sale from being mislabelled "CSFloat" and wrongly counted toward CGT.
+function tradePlatform(t) {
+  if (t.platform) return t.platform;
+  if (t.feePercent != null && t.feePercent >= 13) return 'steam';
+  return 'csfloat';
+}
+
 function calculateCGT() {
   const taxYearStart = getTaxYearStart();
   const taxYear = getCurrentTaxYear();
@@ -1292,8 +1303,8 @@ function calculateCGT() {
   const inYear = tradeHistory.filter(t => t.sellDate >= taxYearStart);
 
   // CURRENT app position: exclude Steam Market sales (Steam Wallet ≠ taxable disposal).
-  // Trades without a platform field (older records) default to included (assume CSFloat).
-  const yearTrades = inYear.filter(t => t.platform !== 'steam');
+  // Platform is inferred from the fee rate for older records lacking an explicit field.
+  const yearTrades = inYear.filter(t => tradePlatform(t) !== 'steam');
   const exclSteam = rollup(yearTrades);
 
   // HYPOTHETICAL position: include ALL sales (treats Steam-to-Steam as a disposal too).
@@ -1392,7 +1403,7 @@ async function exportCGTReport() {
     const costBasis = t.buyPrice * t.qty;
     const gain = gross - fee - costBasis;
     rows.push([
-      t.sellDate, `"${t.name}"`, t.type, t.qty, (t.platform || 'csfloat'),
+      t.sellDate, `"${t.name}"`, t.type, t.qty, tradePlatform(t),
       costBasis.toFixed(2), gross.toFixed(2), t.feePercent,
       fee.toFixed(2), netRealised.toFixed(2), gain.toFixed(2)
     ].join(','));
@@ -1546,7 +1557,7 @@ function renderHistory() {
     const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
     const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
     const net = netRealised - (t.buyPrice * t.qty);
-    const plat = t.platform || 'csfloat';
+    const plat = tradePlatform(t);
     const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
     const countsCGT = plat !== 'steam';
     const cgtBadge = countsCGT
@@ -4335,7 +4346,7 @@ async function exportHistoryCSV() {
     const f=(t.feeAmount!=null)?t.feeAmount:g*(t.feePercent/100);
     const nr=(t.netRealised!=null)?t.netRealised:g-f;
     const n=(nr-(t.buyPrice*t.qty)).toFixed(2);
-    rows.push([t.name,t.type,t.qty,t.buyPrice,t.sellPrice,t.sellDate,(t.platform||'csfloat'),t.feePercent,f.toFixed(2),nr.toFixed(2),n]);
+    rows.push([t.name,t.type,t.qty,t.buyPrice,t.sellPrice,t.sellDate,tradePlatform(t),t.feePercent,f.toFixed(2),nr.toFixed(2),n]);
   });
   const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   if (typeof window.cs2vault !== 'undefined') {
@@ -4531,21 +4542,29 @@ function seedNewItems() {
   // Add WC1 trade history if missing
   const existingT = JSON.parse(window._store['cs2vault_history'] || '[]');
   const wc1Trades = [
-    {id:'trade001',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade002',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade003',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.54,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade004',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.95,  sellDate:'2026-02-20',feePercent:2},
-    {id:'trade005',name:'Gamma Case',               type:'case',   qty:1,buyPrice:790.09,  sellPrice:1356.62, sellDate:'',feePercent:15},
-    {id:'trade006',name:'FAMAS BAD TRIP (MW)',      type:'skin',   qty:1,buyPrice:4.08,    sellPrice:36.54,   sellDate:'',feePercent:15},
-    {id:'trade007',name:'FAMAS STYX (FN)',          type:'skin',   qty:1,buyPrice:31.27,   sellPrice:86.31,   sellDate:'',feePercent:15},
-    {id:'trade008',name:'Gallery Case',             type:'case',   qty:1,buyPrice:524.53,  sellPrice:911.06,  sellDate:'',feePercent:2},
-    {id:'trade009',name:'STILETTO RUBY (MW)',       type:'knife',  qty:1,buyPrice:1279.24, sellPrice:1350.71, sellDate:'',feePercent:2},
-    {id:'trade010',name:'Austin Contenders',        type:'sticker',qty:1,buyPrice:140.4,   sellPrice:253.6,   sellDate:'',feePercent:15},
-    {id:'trade011',name:'G2 Austin (Holo)',         type:'sticker',qty:1,buyPrice:7.83,    sellPrice:11.25,   sellDate:'',feePercent:15},
+    {id:'trade001',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade002',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:123.04,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade003',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.54,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade004',name:'CS:GO Weapon Case',        type:'case',   qty:1,buyPrice:80.261,  sellPrice:122.95,  sellDate:'2026-02-20',feePercent:2,platform:'csfloat'},
+    {id:'trade005',name:'Gamma Case',               type:'case',   qty:1,buyPrice:790.09,  sellPrice:1356.62, sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade006',name:'FAMAS BAD TRIP (MW)',      type:'skin',   qty:1,buyPrice:4.08,    sellPrice:36.54,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade007',name:'FAMAS STYX (FN)',          type:'skin',   qty:1,buyPrice:31.27,   sellPrice:86.31,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade008',name:'Gallery Case',             type:'case',   qty:1,buyPrice:524.53,  sellPrice:911.06,  sellDate:'',feePercent:2,platform:'csfloat'},
+    {id:'trade009',name:'STILETTO RUBY (MW)',       type:'knife',  qty:1,buyPrice:1279.24, sellPrice:1350.71, sellDate:'',feePercent:2,platform:'csfloat'},
+    {id:'trade010',name:'Austin Contenders',        type:'sticker',qty:1,buyPrice:140.4,   sellPrice:253.6,   sellDate:'',feePercent:15,platform:'steam'},
+    {id:'trade011',name:'G2 Austin (Holo)',         type:'sticker',qty:1,buyPrice:7.83,    sellPrice:11.25,   sellDate:'',feePercent:15,platform:'steam'},
   ];
   let tChanged = false;
   wc1Trades.forEach(t => {
     if (!existingT.some(h => h.id === t.id)) { existingT.push(t); tChanged = true; }
+  });
+  // Migration: backfill missing platform on older records (infer from fee rate).
+  // 15% fee = Steam Market sale (excluded from CGT); anything else = CSFloat.
+  existingT.forEach(t => {
+    if (!t.platform) {
+      t.platform = (t.feePercent != null && t.feePercent >= 13) ? 'steam' : 'csfloat';
+      tChanged = true;
+    }
   });
   if (tChanged) {
     window._storeSet('cs2vault_history', JSON.stringify(existingT));
