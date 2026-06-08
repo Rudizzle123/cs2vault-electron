@@ -2605,7 +2605,15 @@ async function refreshSkinPrices() {
       updated++;
     } else failed++;
     recordPrice(skin.id, skin.prices);
-    saveSkins(skins);
+    // Re-sync against storage in case a sale removed an item mid-refresh,
+    // then merge this item's fresh prices back in without resurrecting sold items.
+    const _live = loadSkins() || skins;
+    if (_live.some(s => s.id === skin.id)) {
+      skins = _live.map(s => s.id === skin.id ? { ...s, prices: skin.prices } : s);
+      saveSkins(skins);
+    } else {
+      skins = _live;
+    }
     renderSkins();
     await sleep(3000);
   }
@@ -2634,7 +2642,15 @@ async function refreshSingleSkin(id) {
     toast(`Updated: ${skin.name}`, 'success');
     recordPrice(skin.id, skin.prices);
   } else toast(`Failed: ${skin.name}`, 'error');
-  saveSkins(skins);
+  // Re-sync against storage so a skin sold while this single refresh was in
+  // flight is not written back. Only persist if the item still exists.
+  const _live = loadSkins() || skins;
+  if (_live.some(s => s.id === skin.id)) {
+    skins = _live.map(s => s.id === skin.id ? { ...s, prices: skin.prices } : s);
+    saveSkins(skins);
+  } else {
+    skins = _live;
+  }
   renderSkins();
 }
 
@@ -2669,15 +2685,25 @@ confirmSell = function() {
     const feePercent = _sellFeePercent;
     if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
     if (qty > skin.qty) { toast(`Only ${skin.qty} in stock`, 'error'); return; }
+    const _buyPrice = skin.buyPrice;
     const _gross = sellPrice * qty;
     const _feeAmount = _gross * (feePercent / 100);
     const _netRealised = _gross - _feeAmount;
-    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: skin.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: _buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
     saveHistory(tradeHistory);
-    if (qty >= skin.qty) skins = skins.filter(s => s.id !== skinId);
-    else skin.qty -= qty;
+    // Atomic update: re-read the canonical array from storage, mutate, write back.
+    // Prevents a concurrent price-refresh loop from re-persisting a stale array
+    // that still contains this just-sold skin.
+    const _stored = loadSkins() || skins;
+    let _next = _stored.map(s => ({ ...s }));
+    const _target = _next.find(s => s.id === skinId);
+    if (_target) {
+      if (qty >= _target.qty) _next = _next.filter(s => s.id !== skinId);
+      else _target.qty -= qty;
+    }
+    skins = _next;
     saveSkins(skins); renderSkins(); renderHistory(); updateStats(); closeModal('sellModal');
-    const net = (sellPrice * qty) * (1 - feePercent/100) - (skin.buyPrice * qty);
+    const net = (sellPrice * qty) * (1 - feePercent/100) - (_buyPrice * qty);
     toast(`Sold! Net: ${net >= 0 ? '+' : ''}£${net.toFixed(2)}`, net >= 0 ? 'success' : 'info');
   } else {
     _originalConfirmSell();
