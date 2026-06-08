@@ -1560,9 +1560,22 @@ function renderHistory() {
       '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-£' + fee.toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Realised</div><div class="sold-col-val">£' + netRealised.toFixed(2) + '</div></div>' +
       '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + '£' + net.toFixed(2) + '</div></div>' +
+      '<div class="sold-col sold-col-action">' + (t.id ? '<button class="btn btn-danger btn-sm" title="Delete this trade" onclick="deleteTrade(\'' + t.id + '\')">✕</button>' : '') + '</div>' +
       '</div>';
   }).join('');
   renderCGTSummary();
+}
+
+function deleteTrade(id) {
+  const t = tradeHistory.find(x => x.id === id);
+  if (!t) return;
+  if (!confirm('Delete this trade?\n\n' + t.name + ' · sold ' + t.sellDate + ' · qty ' + t.qty + '\n\nThis only removes the trade-history record. It does NOT restore the item to your holdings or play skins.')) return;
+  // Atomic: re-read canonical history, remove, write back.
+  const stored = (function(){ try { return JSON.parse(window._store['cs2vault_history']) || []; } catch { return tradeHistory; } })();
+  tradeHistory = stored.filter(x => x.id !== id);
+  saveHistory(tradeHistory);
+  renderHistory(); updateStats();
+  toast('Trade deleted', 'info');
 }
 
 function renderAnalytics() {
