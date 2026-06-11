@@ -2597,7 +2597,9 @@ function renderSkins() {
       <td>${pnlHtml}</td>
       <td><div class="action-btns row-actions">
         <button class="btn btn-secondary btn-sm" onclick="refreshSingleSkin('${item.id}')">↻</button>
+        <button class="btn btn-secondary btn-sm" onclick="openEditSkinModal('${item.id}')">Edit</button>
         <button class="btn btn-secondary btn-sm" onclick="openSellSkinModal('${item.id}')">✓ Sell</button>
+        <button class="btn btn-secondary btn-sm" onclick="deleteSkin('${item.id}')">✕</button>
       </div></td>
     </tr>`;
   }).join('');
@@ -2676,6 +2678,62 @@ async function refreshSingleSkin(id) {
     skins = _live;
   }
   renderSkins();
+}
+
+function openAddSkinModal() {
+  document.getElementById('skinModalTitle').innerHTML = 'Add <span>Play Skin</span>';
+  document.getElementById('skinEditId').value = '';
+  document.getElementById('skinName').value = '';
+  document.getElementById('skinMarketHash').value = '';
+  document.getElementById('skinType').value = 'skin';
+  document.getElementById('skinQty').value = '1';
+  document.getElementById('skinBuyPrice').value = '';
+  openModal('skinModal');
+}
+
+function openEditSkinModal(id) {
+  const skin = skins.find(s => s.id === id);
+  if (!skin) return;
+  document.getElementById('skinModalTitle').innerHTML = 'Edit <span>Play Skin</span>';
+  document.getElementById('skinEditId').value = id;
+  document.getElementById('skinName').value = skin.name;
+  document.getElementById('skinType').value = skin.type || 'skin';
+  document.getElementById('skinQty').value = skin.qty;
+  document.getElementById('skinBuyPrice').value = skin.buyPrice;
+  document.getElementById('skinMarketHash').value = skin.marketHash || '';
+  openModal('skinModal');
+}
+
+function saveSkin() {
+  const name = document.getElementById('skinName').value.trim();
+  const buyPrice = parseFloat(document.getElementById('skinBuyPrice').value);
+  const marketHash = document.getElementById('skinMarketHash').value.trim();
+  if (!name || isNaN(buyPrice) || buyPrice <= 0) { toast('Fill in Name and Buy Price', 'error'); return; }
+  const obj = {
+    name, type: document.getElementById('skinType').value,
+    qty: parseInt(document.getElementById('skinQty').value) || 1,
+    buyPrice, marketHash
+  };
+  const editId = document.getElementById('skinEditId').value;
+  // Re-read storage to stay safe against a concurrent price refresh.
+  const live = loadSkins() || skins;
+  if (editId) {
+    skins = live.map(s => s.id === editId ? { ...s, ...obj } : s);
+  } else {
+    skins = [...live, { id: uid(), ...obj, prices: null }];
+  }
+  saveSkins(skins); renderSkins(); updateStats(); closeModal('skinModal');
+  toast(editId ? 'Play skin updated' : 'Play skin added!', 'success');
+}
+
+function deleteSkin(id) {
+  const skin = skins.find(s => s.id === id);
+  if (!skin) return;
+  if (!confirm(`Delete "${skin.name}" from Play Skins? This does not record a sale.`)) return;
+  const live = loadSkins() || skins;
+  skins = live.filter(s => s.id !== id);
+  saveSkins(skins); renderSkins(); updateStats();
+  toast('Play skin deleted', 'success');
 }
 
 function openSellSkinModal(id) {
@@ -4447,7 +4505,9 @@ function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function todayStr(){return new Date().toISOString().split('T')[0];}
 function timeAgo(ts){const d=(Date.now()-ts)/60000;if(d<1)return 'just now';if(d<60)return`${Math.floor(d)}m ago`;if(d<1440)return`${Math.floor(d/60)}h ago`;return`${Math.floor(d/1440)}d ago`;}
 
-document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+// Modals stay open on backdrop click — close only via the ✕, Cancel, or Save buttons.
+// (Price-history chart modal is exempt: backdrop click still dismisses it.)
+document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o&&o.id==='priceHistoryModal')o.classList.remove('open');}));
 
 // ========================
 // INIT

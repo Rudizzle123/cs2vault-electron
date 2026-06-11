@@ -579,6 +579,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 
   <div class="tab-panel" id="tab-skins">
     <div class="toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-primary btn-sm" onclick="openAddSkinModal()">+ Add Play Skin</button>
       <button class="btn btn-secondary btn-sm" onclick="refreshSkinPrices()" id="refreshSkinsBtn">↻ Refresh Skin Prices</button>
       <span id="skinsStatus" style="font-size:11px;color:var(--text3);">Prices fetch only when you click refresh on this tab</span>
     </div>
@@ -1073,6 +1074,24 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       </div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('itemModal')">Cancel</button><button class="btn btn-primary" onclick="saveItem()">Save</button></div>
+  </div>
+</div>
+
+<!-- Play Skin Modal -->
+<div class="modal-overlay" id="skinModal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="skinModalTitle">Add <span>Play Skin</span></div><button class="modal-close" onclick="closeModal('skinModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="skinEditId">
+      <div class="form-row"><label>Item Name</label><input type="text" id="skinName" placeholder="e.g. AK-47 ASIIMOV (FT)"></div>
+      <div class="form-two">
+        <div class="form-row"><label>Type</label><select id="skinType"><option value="skin">Skin</option><option value="knife">Knife/Glove</option><option value="agent">Agent</option></select></div>
+        <div class="form-row"><label>Quantity</label><input type="number" id="skinQty" value="1" min="1"></div>
+      </div>
+      <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="skinBuyPrice" placeholder="0.00" step="0.01"></div>
+      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="skinMarketHash" placeholder="e.g. AK-47 | Asiimov (Field-Tested)"><div class="fee-note">Exact Steam market name for auto price fetching. Agents use Steam only.</div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('skinModal')">Cancel</button><button class="btn btn-primary" onclick="saveSkin()">Save</button></div>
   </div>
 </div>
 
