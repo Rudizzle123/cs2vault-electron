@@ -1237,7 +1237,77 @@ function updateStats() {
   document.getElementById('stat-realised').textContent = `${realised >= 0 ? '+' : ''}£${realised.toFixed(2)}`;
   document.getElementById('stat-trades').textContent = `${tradeHistory.length} trade${tradeHistory.length !== 1 ? 's' : ''}`;
   document.getElementById('stat-fees').textContent = `£${fees.toFixed(2)}`;
+  renderAllocBar();
   renderAnalytics();
+}
+
+// ---- Holdings allocation strip (v2.5.0) ----
+// Stacked bar of portfolio value by bucket. TUF items are their own bucket
+// regardless of underlying type; everything else groups by item type.
+// Clicking a segment/legend chip applies the matching type filter (click again to clear).
+const ALLOC_BUCKETS = [
+  { key:'case',    label:'Cases',    color:'#38bdf8', filter:'case' },
+  { key:'sticker', label:'Stickers', color:'#a78bfa', filter:'sticker' },
+  { key:'tuf',     label:'TUF',      color:'#22c55e', filter:'tuf' },
+  { key:'skin',    label:'Skins',    color:'#fbbf24', filter:'skin' },
+  { key:'knife',   label:'Knives',   color:'#f97316', filter:'knife' },
+  { key:'armory',  label:'Armory',   color:'#ef4444', filter:'armory' },
+  { key:'other',   label:'Other',    color:'#64748b', filter:null },
+];
+
+function allocBucketFor(h) {
+  if (h.isTuf) return 'tuf';
+  if (['case','sticker','skin','knife','armory'].includes(h.type)) return h.type;
+  return 'other';
+}
+
+function renderAllocBar() {
+  const wrap = document.getElementById('allocBarWrap');
+  if (!wrap) return;
+  const totals = {};
+  let total = 0;
+  holdings.forEach(h => {
+    const best = getBestPrice(h);
+    const val = (best != null ? best : h.buyPrice) * h.qty;
+    const b = allocBucketFor(h);
+    totals[b] = (totals[b] || 0) + val;
+    total += val;
+  });
+  if (!total) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+
+  const active = ALLOC_BUCKETS.filter(b => totals[b.key] > 0);
+  const curFilter = document.getElementById('filterType')?.value || '';
+
+  document.getElementById('allocBar').innerHTML = active.map(b => {
+    const pct = (totals[b.key] / total) * 100;
+    const dim = curFilter && curFilter !== b.filter;
+    return '<div onclick="allocFilterClick(\'' + (b.filter || '') + '\')" ' +
+      'title="' + b.label + ': £' + totals[b.key].toFixed(0) + ' (' + pct.toFixed(1) + '%)" ' +
+      'style="width:' + pct + '%;background:' + b.color + ';cursor:' + (b.filter ? 'pointer' : 'default') + ';' +
+      (dim ? 'opacity:.25;' : '') + 'transition:opacity .15s;"></div>';
+  }).join('');
+
+  document.getElementById('allocLegend').innerHTML = active.map(b => {
+    const pct = (totals[b.key] / total) * 100;
+    const dim = curFilter && curFilter !== b.filter;
+    return '<span onclick="allocFilterClick(\'' + (b.filter || '') + '\')" ' +
+      'style="display:inline-flex;align-items:center;gap:5px;font-family:\'Share Tech Mono\',monospace;font-size:10px;color:var(--text2);cursor:' + (b.filter ? 'pointer' : 'default') + ';' + (dim ? 'opacity:.35;' : '') + '">' +
+      '<span style="width:8px;height:8px;border-radius:2px;background:' + b.color + ';display:inline-block;"></span>' +
+      b.label + ' <span style="color:var(--text3)">' + pct.toFixed(1) + '% · £' + totals[b.key].toFixed(0) + '</span></span>';
+  }).join('');
+
+  document.getElementById('allocFilterHint').textContent = curFilter ? 'filtered — click again to clear' : 'click to filter';
+}
+
+function allocFilterClick(filter) {
+  if (!filter) return;
+  const sel = document.getElementById('filterType');
+  if (!sel) return;
+  sel.value = (sel.value === filter) ? '' : filter;
+  filterTable(document.getElementById('searchInput')?.value || '');
+  if (typeof updateRefreshScopeLabel === 'function') updateRefreshScopeLabel();
+  renderAllocBar();
 }
 
 // ========================
@@ -3019,42 +3089,40 @@ function exportMonthlyPDF() {
 // ========================
 
 // ======================== CASE INTELLIGENCE ENGINE ========================
+// v2.5.0: score rebuilt on signals the app actually measures (supply snapshots,
+// own price log, factual discontinuation dates). Hardcoded ATLs and estimated
+// unbox-rate tables removed — they were static guesses, not live data.
 
 const CASE_INTEL_DATA = {
-  'Clutch Case':               { released:'2018-02-15', discontinued:'2018-11-08', atl:0.42, unboxTrend:'declining', peakSupply:4800000 },
-  'Prisma Case':               { released:'2019-03-14', discontinued:'2019-11-18', atl:0.65, unboxTrend:'declining', peakSupply:5200000 },
-  'Prisma 2 Case':             { released:'2020-03-31', discontinued:'2020-09-23', atl:0.68, unboxTrend:'declining', peakSupply:4900000 },
-  'Snakebite Case':            { released:'2021-05-03', discontinued:'2022-07-01', atl:0.20, unboxTrend:'stable',    peakSupply:9800000 },
-  'Horizon Case':              { released:'2018-11-08', discontinued:'2019-03-14', atl:0.72, unboxTrend:'declining', peakSupply:3100000 },
-  'Danger Zone Case':          { released:'2018-12-06', discontinued:'2019-03-14', atl:0.68, unboxTrend:'declining', peakSupply:2900000 },
-  'Revolver Case':             { released:'2015-12-08', discontinued:'2016-06-15', atl:0.80, unboxTrend:'very_low',  peakSupply:1200000 },
-  'Fracture Case':             { released:'2020-08-06', discontinued:'2021-05-03', atl:0.22, unboxTrend:'stable',    peakSupply:7400000 },
-  'Falchion Case':             { released:'2015-05-26', discontinued:'2015-09-17', atl:0.90, unboxTrend:'very_low',  peakSupply:1100000 },
-  'Recoil Case':               { released:'2022-07-01', discontinued:'2023-10-10', atl:0.18, unboxTrend:'growing',   peakSupply:12000000 },
-  'Fever Case':                { released:'2025-01-21', discontinued:null,         atl:0.48, unboxTrend:'growing',   peakSupply:null },
-  'Anubis Collection Package': { released:'2022-11-18', discontinued:null,         atl:1.20, unboxTrend:'declining', peakSupply:null },
-  'CS:GO Weapon Case':         { released:'2013-08-14', discontinued:'2013-11-27', atl:35.00,unboxTrend:'very_low',  peakSupply:180000 },
-};
-
-// Monthly unbox estimates (millions) - from public csgocasetracker data
-const UNBOX_HISTORY = {
-  'Snakebite Case':  [4.2, 3.9, 3.7, 3.5, 3.3, 3.1],
-  'Recoil Case':     [5.8, 5.4, 5.1, 4.8, 4.5, 4.2],
-  'Fracture Case':   [2.1, 2.0, 1.9, 1.8, 1.7, 1.6],
-  'Prisma Case':     [1.4, 1.3, 1.2, 1.2, 1.1, 1.0],
-  'Prisma 2 Case':   [1.6, 1.5, 1.4, 1.3, 1.3, 1.2],
-  'Clutch Case':     [1.1, 1.0, 0.9, 0.9, 0.8, 0.8],
-  'Horizon Case':    [0.6, 0.6, 0.5, 0.5, 0.5, 0.4],
-  'Danger Zone Case':[0.5, 0.5, 0.4, 0.4, 0.4, 0.4],
-  'Revolver Case':   [0.08,0.07,0.07,0.06,0.06,0.05],
-  'Falchion Case':   [0.07,0.06,0.06,0.05,0.05,0.04],
-  'Fever Case':      [8.2, 7.9, 7.4, 7.0, 6.8, 6.5],
-  'Anubis Collection Package': [0.3,0.3,0.2,0.2,0.2,0.2],
-  'CS:GO Weapon Case':[0.005,0.004,0.004,0.003,0.003,0.003],
+  'Clutch Case':               { released:'2018-02-15', discontinued:'2018-11-08' },
+  'Prisma Case':               { released:'2019-03-14', discontinued:'2019-11-18' },
+  'Prisma 2 Case':             { released:'2020-03-31', discontinued:'2020-09-23' },
+  'Snakebite Case':            { released:'2021-05-03', discontinued:'2022-07-01' },
+  'Horizon Case':              { released:'2018-11-08', discontinued:'2019-03-14' },
+  'Danger Zone Case':          { released:'2018-12-06', discontinued:'2019-03-14' },
+  'Revolver Case':             { released:'2015-12-08', discontinued:'2016-06-15' },
+  'Fracture Case':             { released:'2020-08-06', discontinued:'2021-05-03' },
+  'Falchion Case':             { released:'2015-05-26', discontinued:'2015-09-17' },
+  'Recoil Case':               { released:'2022-07-01', discontinued:'2023-10-10' },
+  'Fever Case':                { released:'2025-01-21', discontinued:null },
+  'Anubis Collection Package': { released:'2022-11-18', discontinued:null },
+  'CS:GO Weapon Case':         { released:'2013-08-14', discontinued:'2013-11-27' },
 };
 
 let ciData = null;
 let ciRunning = false;
+
+// Lowest price seen in this app's own price log over the trailing window.
+// Returns null until there's enough history (3+ points spanning 14+ days).
+function getTrailingLow(itemId, days) {
+  const log = loadPriceLog();
+  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+  const entries = log.filter(e => e.id === itemId && e.ts > cutoff && e.best != null).sort((a, b) => a.ts - b.ts);
+  if (entries.length < 3) return null;
+  const spanDays = (entries[entries.length - 1].ts - entries[0].ts) / (24 * 60 * 60 * 1000);
+  if (spanDays < 14) return null;
+  return Math.min.apply(null, entries.map(e => e.best));
+}
 
 function getPriceMomentum(itemId, days) {
   const log = loadPriceLog();
@@ -3080,21 +3148,6 @@ function getMonthsDiscontinued(discontinuedStr) {
   return Math.max(0, (now.getFullYear() - disc.getFullYear()) * 12 + (now.getMonth() - disc.getMonth()));
 }
 
-function getUnboxTrendScore(caseName) {
-  const hist = UNBOX_HISTORY[caseName];
-  if (!hist || hist.length < 3) return 50;
-  // Linear regression slope on last 6 months
-  const n = hist.length;
-  const xs = hist.map((_, i) => i);
-  const meanX = xs.reduce((a,b) => a+b,0) / n;
-  const meanY = hist.reduce((a,b) => a+b,0) / n;
-  const slope = xs.reduce((acc, x, i) => acc + (x - meanX) * (hist[i] - meanY), 0) /
-                xs.reduce((acc, x) => acc + (x - meanX) ** 2, 0);
-  // Negative slope = declining unboxing = supply depleting faster = GOOD for holders
-  const normalised = Math.max(0, Math.min(100, 50 + (-slope / meanY) * 500));
-  return normalised;
-}
-
 function getGrade(score) {
   if (score >= 85) return 'S';
   if (score >= 72) return 'A';
@@ -3106,15 +3159,6 @@ function getGrade(score) {
 
 function getGradeClass(grade) {
   return { S:'grade-s', A:'grade-a', B:'grade-b', C:'grade-c', D:'grade-d', F:'grade-f' }[grade] || 'grade-f';
-}
-
-function getSignal(score, isActive) {
-  if (isActive) return { label:'ACTIVE DROP', cls:'signal-watch', icon:'⚡' };
-  if (score >= 80) return { label:'STRONG BUY', cls:'signal-strong-buy', icon:'▲▲' };
-  if (score >= 65) return { label:'BUY', cls:'signal-buy', icon:'▲' };
-  if (score >= 48) return { label:'HOLD', cls:'signal-hold', icon:'◆' };
-  if (score >= 35) return { label:'WATCH', cls:'signal-watch', icon:'◉' };
-  return { label:'AVOID', cls:'signal-avoid', icon:'▼' };
 }
 
 function scoreColor(score) {
@@ -3185,38 +3229,48 @@ async function runCaseIntelligence() {
     const monthsDisc = getMonthsDiscontinued(meta.discontinued);
     const isActive = !meta.discontinued;
     const currentPrice = c.prices?.lowest || c.prices?.lastSold || null;
-    const atl = meta.atl || currentPrice || 0.5;
     const listings = steam?.listings || null;
 
     // Record supply snapshot for trend tracking
+    var supplyPrev = null;
     if (listings !== null && c.marketHash) {
       const prevSnap = getPreviousSupplySnapshot(c.marketHash);
       recordCaseSupplySnapshot(c.marketHash, listings);
-      var supplyPrev = prevSnap ? prevSnap.count : null;
-    } else {
-      var supplyPrev = null;
+      supplyPrev = prevSnap ? prevSnap.count : null;
     }
 
     // Price momentum from price log
     const momentum7d  = getPriceMomentum(c.id, 7);
     const momentum30d = getPriceMomentum(c.id, 30);
 
-    // ---- SCORE COMPONENTS (each 0-100) ----
+    // Trailing 90-day low from own price log
+    const low90 = getTrailingLow(c.id, 90);
 
-    // 1. Supply Depletion Score (30%) — fewer listings = better
-    // Baseline: 10M listings = 0 score, 500k = 50, 100k = 80, <50k = 100
-    let depletionScore = 50;
-    if (listings !== null) {
-      if (listings < 50000)       depletionScore = 95;
-      else if (listings < 150000) depletionScore = 85;
-      else if (listings < 400000) depletionScore = 72;
-      else if (listings < 800000) depletionScore = 60;
-      else if (listings < 2000000)depletionScore = 45;
-      else if (listings < 5000000)depletionScore = 30;
-      else                        depletionScore = 15;
+    // ---- SCORE COMPONENTS (each 0-100, all from measured data) ----
+    // Components without enough history fall back to a neutral 50 and are
+    // flagged so the UI can show the score is still building confidence.
+    const neutralFlags = [];
+
+    // 1. Supply Trend Score (35%) — shrinking Steam listings = supply being absorbed
+    let supplyTrendScore = 50;
+    let supplyDeltaPct = null;
+    if (listings !== null && supplyPrev !== null && supplyPrev > 0) {
+      supplyDeltaPct = ((listings - supplyPrev) / supplyPrev) * 100;
+      const d = supplyDeltaPct;
+      if (d <= -10)      supplyTrendScore = 95;
+      else if (d <= -5)  supplyTrendScore = 85;
+      else if (d <= -2)  supplyTrendScore = 72;
+      else if (d <= -0.5)supplyTrendScore = 60;
+      else if (d < 0.5)  supplyTrendScore = 50;
+      else if (d < 2)    supplyTrendScore = 42;
+      else if (d < 5)    supplyTrendScore = 30;
+      else if (d < 10)   supplyTrendScore = 20;
+      else               supplyTrendScore = 10;
+    } else {
+      neutralFlags.push('supply');
     }
 
-    // 2. Discontinuation Age Score (25%)
+    // 2. Discontinuation Age Score (30%) — factual, from release/removal dates
     let discScore = 0;
     if (isActive) {
       discScore = 5; // active cases score low here
@@ -3230,39 +3284,55 @@ async function runCaseIntelligence() {
       else                       discScore = 65;
     }
 
-    // 3. Price vs ATL Score (25%) — closer to ATL = more opportunity
+    // 3. Price vs 90-Day Low Score (20%) — measured from this app's price log
     let priceScore = 50;
-    if (currentPrice && atl) {
-      const ratio = currentPrice / atl;
-      if (ratio <= 1.05)      priceScore = 95; // essentially at ATL
-      else if (ratio <= 1.20) priceScore = 85;
-      else if (ratio <= 1.50) priceScore = 70;
-      else if (ratio <= 2.00) priceScore = 50;
-      else if (ratio <= 3.00) priceScore = 30;
-      else                    priceScore = 15;
+    let vsLowPct = null;
+    if (currentPrice && low90) {
+      const ratio = currentPrice / low90;
+      vsLowPct = (ratio - 1) * 100;
+      if (ratio <= 1.05)      priceScore = 90; // at/near its 90d low
+      else if (ratio <= 1.15) priceScore = 78;
+      else if (ratio <= 1.30) priceScore = 62;
+      else if (ratio <= 1.50) priceScore = 50;
+      else if (ratio <= 2.00) priceScore = 35;
+      else                    priceScore = 20;
+    } else {
+      neutralFlags.push('price');
     }
 
-    // 4. Unbox Trend Score (20%) — declining unboxing means supply dying
-    const trendScore = getUnboxTrendScore(c.name);
+    // 4. 30D Momentum Score (15%) — confirmation that price is moving up
+    const momRef = momentum30d !== null ? momentum30d : momentum7d;
+    let momentumScore = 50;
+    if (momRef !== null) {
+      if (momRef >= 10)      momentumScore = 90;
+      else if (momRef >= 5)  momentumScore = 78;
+      else if (momRef >= 2)  momentumScore = 65;
+      else if (momRef > -2)  momentumScore = 50;
+      else if (momRef > -5)  momentumScore = 38;
+      else if (momRef > -10) momentumScore = 25;
+      else                   momentumScore = 12;
+    } else {
+      neutralFlags.push('momentum');
+    }
 
     // Weighted final score
     const finalScore = Math.round(
-      depletionScore * 0.30 +
-      discScore      * 0.25 +
-      priceScore     * 0.25 +
-      trendScore     * 0.20
+      supplyTrendScore * 0.35 +
+      discScore        * 0.30 +
+      priceScore       * 0.20 +
+      momentumScore    * 0.15
     );
 
-    const grade  = getGrade(finalScore);
-    const signal = getSignal(finalScore, isActive);
+    const grade = getGrade(finalScore);
 
     results.push({
       name: c.name,
       id: c.id,
       score: finalScore,
-      grade, signal,
-      depletionScore, discScore, priceScore, trendScore,
-      listings, supplyPrev, currentPrice, atl,
+      grade,
+      supplyTrendScore, discScore, priceScore, momentumScore,
+      neutralFlags,
+      listings, supplyPrev, supplyDeltaPct, currentPrice, low90, vsLowPct,
       monthsDisc, isActive,
       momentum7d, momentum30d,
       qty: c.qty,
@@ -3291,7 +3361,8 @@ function renderCaseIntelligence(results) {
   // ---- Summary stats ----
   const avgScore = Math.round(results.reduce((a,r) => a + r.score, 0) / results.length);
   const topCase  = results[0];
-  const strongBuys = results.filter(r => r.score >= 65 && !r.isActive).length;
+  const withTrend = results.filter(r => r.supplyDeltaPct !== null);
+  const shrinking = withTrend.filter(r => r.supplyDeltaPct < 0).length;
   const totalListings = results.reduce((a,r) => a + (r.listings || 0), 0);
 
   document.getElementById('ciSummaryGrid').innerHTML = `
@@ -3306,9 +3377,9 @@ function renderCaseIntelligence(results) {
       <div class="ci-stat-sub">Score ${topCase.score}/100 · Grade ${topCase.grade}</div>
     </div>
     <div class="ci-stat blue">
-      <div class="ci-stat-label">Buy Signals</div>
-      <div class="ci-stat-val" style="color:var(--blue)">${strongBuys}</div>
-      <div class="ci-stat-sub">Cases scoring 65+ (discontinued only)</div>
+      <div class="ci-stat-label">Supply Shrinking</div>
+      <div class="ci-stat-val" style="color:var(--blue)">${withTrend.length ? shrinking + '<span style="font-size:16px;color:var(--text3)">/' + withTrend.length + '</span>' : '—'}</div>
+      <div class="ci-stat-sub">${withTrend.length ? 'Cases with falling Steam listings' : 'Builds after a 2nd run on another day'}</div>
     </div>
     <div class="ci-stat purple">
       <div class="ci-stat-label">Total Steam Listings</div>
@@ -3320,10 +3391,10 @@ function renderCaseIntelligence(results) {
   // ---- Cards ----
   document.getElementById('ciCardsGrid').innerHTML = results.map(r => {
     const bars = [
-      { label:'Supply Depletion', val: r.depletionScore, color:'#38bdf8', weight:'30%' },
-      { label:'Disc. Age',        val: r.discScore,      color:'#a78bfa', weight:'25%' },
-      { label:'Price vs ATL',     val: r.priceScore,     color:'#22c55e', weight:'25%' },
-      { label:'Unbox Trend',      val: r.trendScore,     color:'#f97316', weight:'20%' },
+      { label:'Supply Trend',     val: r.supplyTrendScore, color:'#38bdf8', weight:'35%', neutral: r.neutralFlags.includes('supply') },
+      { label:'Disc. Age',        val: r.discScore,        color:'#a78bfa', weight:'30%', neutral: false },
+      { label:'Price vs 90D Low', val: r.priceScore,       color:'#22c55e', weight:'20%', neutral: r.neutralFlags.includes('price') },
+      { label:'30D Momentum',     val: r.momentumScore,    color:'#f97316', weight:'15%', neutral: r.neutralFlags.includes('momentum') },
     ];
 
     const listingsStr = r.listings !== null
@@ -3359,7 +3430,9 @@ function renderCaseIntelligence(results) {
           '<div class="ci-case-name">' + r.name + '</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;">' +
             '<div class="ci-grade-badge ' + getGradeClass(r.grade) + '">' + r.grade + '</div>' +
-            '<span class="ci-signal ' + r.signal.cls + '">' + r.signal.icon + ' ' + r.signal.label + '</span>' +
+            (r.isActive
+              ? '<span style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;">⚡ ACTIVE DROP</span>'
+              : '<span style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:2px 6px;">DISCONTINUED ' + r.monthsDisc + 'MO</span>') +
           '</div>' +
         '</div>' +
         '<div class="ci-score-ring">' +
@@ -3372,8 +3445,8 @@ function renderCaseIntelligence(results) {
           bars.map(b =>
             '<div class="ci-bar-row">' +
               '<div class="ci-bar-label">' + b.label + ' <span style="opacity:.5">' + b.weight + '</span></div>' +
-              '<div class="ci-bar-track"><div class="ci-bar-fill" style="width:' + b.val + '%;background:' + b.color + ';box-shadow:0 0 6px ' + b.color + '55;"></div></div>' +
-              '<div class="ci-bar-val">' + Math.round(b.val) + '</div>' +
+              '<div class="ci-bar-track"><div class="ci-bar-fill" style="width:' + b.val + '%;background:' + (b.neutral ? 'var(--text3)' : b.color) + ';box-shadow:0 0 6px ' + b.color + '55;' + (b.neutral ? 'opacity:.45;' : '') + '"></div></div>' +
+              '<div class="ci-bar-val">' + (b.neutral ? '<span style="color:var(--text3)" title="Not enough data yet — scored neutral">·50</span>' : Math.round(b.val)) + '</div>' +
             '</div>'
           ).join('') +
         '</div>' +
@@ -3397,7 +3470,11 @@ function renderCaseIntelligence(results) {
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">' +
           '<div class="ci-holdings-chip">◆ ' + r.qty.toLocaleString() + ' held · £' + holdingsVal.toFixed(0) + '</div>' +
-          (r.listings === null ? '<div class="ci-error-chip">⚠ No Steam data</div>' : '') +
+          (r.listings === null
+            ? '<div class="ci-error-chip">⚠ No Steam data</div>'
+            : (r.neutralFlags.length
+              ? '<div style="font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--text3);" title="' + r.neutralFlags.join(', ') + ' scored neutral — data builds with use">◔ ' + (4 - r.neutralFlags.length) + '/4 signals live</div>'
+              : '<div style="font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--green);">● 4/4 signals live</div>')) +
         '</div>' +
       '</div>' +
     '</div>';
@@ -3431,8 +3508,11 @@ function renderCaseIntelligence(results) {
     }
 
     const priceStr = r.currentPrice ? '£' + r.currentPrice.toFixed(2) : '—';
-    const trendLabel = { growing:'↑ Growing', stable:'→ Stable', declining:'↓ Declining', very_low:'↓↓ Very Low' }[r.meta.unboxTrend] || '—';
-    const trendColor = { growing:'var(--red)', stable:'var(--text2)', declining:'var(--green)', very_low:'var(--green)' }[r.meta.unboxTrend] || 'var(--text3)';
+    let vsLowCell = '<span style="color:var(--text3);font-size:10px;" title="Needs 3+ price points over 14+ days">building</span>';
+    if (r.vsLowPct !== null) {
+      const col = r.vsLowPct <= 15 ? 'var(--green)' : r.vsLowPct <= 50 ? 'var(--text2)' : 'var(--red)';
+      vsLowCell = '<span style="color:' + col + ';" title="90d low: £' + r.low90.toFixed(2) + '">+' + r.vsLowPct.toFixed(1) + '%</span>';
+    }
     const scoreStyle = 'color:' + scoreColor(r.score) + ';font-family:\'Share Tech Mono\',monospace;font-weight:700;';
 
     return '<tr>' +
@@ -3445,9 +3525,8 @@ function renderCaseIntelligence(results) {
       '<td class="mono">' + momCell(r.momentum30d) + '</td>' +
       '<td class="mono">' + (r.isActive ? '<span style="color:var(--accent)">Active</span>' : r.monthsDisc + ' months') + '</td>' +
       '<td class="mono">' + priceStr + '</td>' +
-      '<td style="color:' + trendColor + ';font-family:\'Share Tech Mono\',monospace;font-size:11px;">' + trendLabel + '</td>' +
+      '<td class="mono">' + vsLowCell + '</td>' +
       '<td class="mono">' + r.qty.toLocaleString() + '</td>' +
-      '<td><span class="ci-signal ' + r.signal.cls + '">' + r.signal.icon + ' ' + r.signal.label + '</span></td>' +
     '</tr>';
   }).join('');
 }
@@ -3564,7 +3643,7 @@ function checkAlertsAgainstHoldings() {
   saveAlerts(alerts);
   if (hits > 0) toast(`🔔 ${hits} price alert${hits>1?'s':''} triggered!`, 'success');
   window.cs2vault.notify('CS2 Vault — Price Alert', `${hits} price target${hits>1?'s':''} hit! Open the app to review.`);
-  if (document.getElementById('tab-alerts')?.classList.contains('active')) renderAlerts();
+  if (document.getElementById('tab-watchlist')?.classList.contains('active')) renderAlerts();
 }
 
 async function refreshAlertPrices() {
@@ -3647,155 +3726,6 @@ function renderAlerts() {
     <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);">${alerts.length} alerts · triggered first</div></div>
     <div class="alert-col-hd"><div>Item</div><div>Direction</div><div>Target</div><div>Current Price</div><div>Distance</div><div></div></div>
     ${rows}</div>`;
-}
-
-// ================================================================
-// TRADE-UP CONTRACT CALCULATOR
-// ================================================================
-const TUC_NEXT  = {consumer:'industrial',industrial:'milspec',milspec:'restricted',restricted:'classified',classified:'covert'};
-const TUC_COLOR = {consumer:'#b0c3d9',industrial:'#5e98d9',milspec:'#4b69ff',restricted:'#8847ff',classified:'#d32ce6',covert:'#eb4b4b'};
-const TUC_NAME  = {consumer:'Consumer',industrial:'Industrial',milspec:'Mil-Spec',restricted:'Restricted',classified:'Classified',covert:'Covert'};
-const TUC_WEAR  = [{w:'Factory New',min:0,max:.07},{w:'Minimal Wear',min:.07,max:.15},{w:'Field-Tested',min:.15,max:.38},{w:'Well-Worn',min:.38,max:.45},{w:'Battle-Scarred',min:.45,max:1}];
-let tucOutIds = [];
-
-function wearFromFloat(f) {
-  if (f == null || isNaN(f)) return '—';
-  return (TUC_WEAR.find(w => f >= w.min && f < w.max) || TUC_WEAR[4]).w;
-}
-
-function initTUC() {
-  const c = document.getElementById('tucSlots');
-  if (!c) return;
-  c.innerHTML = '';
-  for (let i = 0; i < 10; i++) {
-    const row = document.createElement('div');
-    row.className = 'tuc-slot'; row.id = 'tucSlot'+i;
-    row.innerHTML = `
-      <div class="tuc-num" id="tucNum${i}">${i+1}</div>
-      <input class="tuc-inp" type="text"   placeholder="Skin name…" id="tucN${i}" oninput="onTucIn(${i})">
-      <input class="tuc-inp" type="number" placeholder="0.00"        id="tucC${i}" step="0.01"  oninput="calcTradeUp()">
-      <input class="tuc-inp" type="number" placeholder="0.000"       id="tucF${i}" step="0.001" min="0" max="1" oninput="calcTradeUp()">
-      <div class="mono" id="tucW${i}" style="font-size:10px;color:var(--text3);">—</div>`;
-    c.appendChild(row);
-  }
-  tucOutIds = [];
-  addTUCOut(); addTUCOut(); addTUCOut();
-  calcTradeUp();
-}
-
-function onTucIn(i) {
-  const name = document.getElementById('tucN'+i)?.value.trim();
-  document.getElementById('tucSlot'+i)?.classList.toggle('filled', !!name);
-  calcTradeUp();
-}
-
-function addTUCOut() {
-  const id = 'tuco_'+Date.now()+'_'+Math.random().toString(36).slice(2,5);
-  tucOutIds.push(id);
-  const c = document.getElementById('tucOutputs');
-  if (!c) return;
-  const div = document.createElement('div');
-  div.className = 'out-row'; div.id = id;
-  div.innerHTML = `
-    <button class="tuc-del-btn" onclick="removeTUCOut('${id}')">✕</button>
-    <input class="tuc-inp" type="text"   placeholder="Output skin name…" id="${id}_n">
-    <input class="tuc-inp" type="number" placeholder="e.g. 25"  step="0.1" min="0" max="100" id="${id}_ch" oninput="calcTradeUp()">
-    <input class="tuc-inp" type="number" placeholder="0.00"      step="0.01" id="${id}_p" oninput="calcTradeUp()">
-    <div class="mono" id="${id}_ev" style="font-size:10px;color:var(--text3);">—</div>
-    <div class="mono" id="${id}_w"  style="font-size:10px;color:var(--text3);">—</div>`;
-  c.appendChild(div);
-}
-
-function removeTUCOut(id) {
-  tucOutIds = tucOutIds.filter(r => r !== id);
-  document.getElementById(id)?.remove();
-  calcTradeUp();
-}
-
-function clearTUC() {
-  for (let i = 0; i < 10; i++) {
-    ['tucN','tucC','tucF'].forEach(p => { const el = document.getElementById(p+i); if(el) el.value=''; });
-    const w = document.getElementById('tucW'+i); if(w) w.textContent='—';
-    document.getElementById('tucSlot'+i)?.classList.remove('filled');
-  }
-  tucOutIds.forEach(id => document.getElementById(id)?.remove());
-  tucOutIds = [];
-  addTUCOut(); addTUCOut(); addTUCOut();
-  calcTradeUp();
-}
-
-function fillTUCFromSkins() {
-  const skins = holdings.filter(h => h.type==='skin').slice(0,10);
-  skins.forEach((s,i) => {
-    const nEl = document.getElementById('tucN'+i);
-    const cEl = document.getElementById('tucC'+i);
-    if (nEl) { nEl.value = s.name; document.getElementById('tucSlot'+i)?.classList.add('filled'); }
-    if (cEl && s.prices?.lowest) cEl.value = s.prices.lowest.toFixed(2);
-  });
-  calcTradeUp();
-}
-
-function calcTradeUp() {
-  const fee = (parseFloat(document.getElementById('tucFee')?.value)||13)/100;
-  let totalCost=0, floatSum=0, floatCount=0;
-  for (let i=0;i<10;i++) {
-    const c=parseFloat(document.getElementById('tucC'+i)?.value)||0;
-    const f=parseFloat(document.getElementById('tucF'+i)?.value);
-    if (c>0) totalCost+=c;
-    const wEl=document.getElementById('tucW'+i);
-    if (!isNaN(f)&&f>=0&&f<=1) { floatSum+=f; floatCount++; if(wEl) wEl.textContent=wearFromFloat(f); }
-    else { if(wEl) wEl.textContent='—'; }
-  }
-  const avgFloat=floatCount>0?floatSum/floatCount:null;
-  const outWear=avgFloat!=null?wearFromFloat(avgFloat):'—';
-  let ev=0, totalChance=0;
-  tucOutIds.forEach(id => {
-    const ch=parseFloat(document.getElementById(id+'_ch')?.value)||0;
-    const p=parseFloat(document.getElementById(id+'_p')?.value)||0;
-    totalChance+=ch;
-    const contrib=(ch/100)*p*(1-fee); ev+=contrib;
-    const evEl=document.getElementById(id+'_ev');
-    const wEl=document.getElementById(id+'_w');
-    if (evEl) evEl.textContent=p>0?`£${contrib.toFixed(3)}`:'—';
-    if (wEl)  wEl.textContent=avgFloat!=null?outWear:'—';
-  });
-  const profit=ev-totalCost;
-  const pct=totalCost>0?profit/totalCost*100:0;
-  const be=totalCost>0?totalCost/(1-fee):0;
-  const barPct=Math.max(0,Math.min(100,50+pct));
-  const barCol=profit>0?'var(--green)':profit<0?'var(--red)':'var(--text3)';
-  let verdict='—',vCol='var(--text3)',vSub='';
-  if (totalCost>0&&ev>0) {
-    if      (pct>20) { verdict='STRONG BUY'; vCol='var(--green)';  vSub='High EV — excellent contract worth running in volume.'; }
-    else if (pct>8)  { verdict='PROFITABLE'; vCol='var(--green)';  vSub='Positive EV. Run this contract.'; }
-    else if (pct>-5) { verdict='MARGINAL';   vCol='var(--gold)';   vSub='Near break-even. High variance — outcome dependent.'; }
-    else if (pct>-15){ verdict='RISKY';      vCol='var(--accent)'; vSub='Negative EV. Only if chasing a specific output.'; }
-    else             { verdict='AVOID';      vCol='var(--red)';    vSub='Poor expected return. Do not run this contract.'; }
-  }
-  const rarity=document.getElementById('tucRarity')?.value||'milspec';
-  const nextR=TUC_NEXT[rarity]||'covert';
-  const nrEl=document.getElementById('tucNextRarity');
-  if (nrEl) { nrEl.textContent='→ '+TUC_NAME[nextR]; nrEl.style.color=TUC_COLOR[nextR]; }
-  const chanceOk=Math.abs(totalChance-100)<=1;
-  const S=(id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=v; };
-  const SC=(id,p,v)=>{ const el=document.getElementById(id); if(el) el.style[p]=v; };
-  S('tucCostVal',`£${totalCost.toFixed(2)}`);
-  S('tucCostSub',`Avg: £${(totalCost/10).toFixed(3)} per skin`);
-  S('tucEVVal',ev>0?`£${ev.toFixed(2)}`:'£0.00');
-  SC('tucEVVal','color',ev>totalCost?'var(--green)':ev>0?'var(--text)':'var(--red)');
-  S('tucEVSub',`After ${(fee*100).toFixed(1)}% fee · Chances: ${totalChance.toFixed(1)}%${!chanceOk&&totalChance>0?' ⚠ should = 100%':''}`);
-  S('tucProfitVal',`${profit>=0?'+':''}£${profit.toFixed(2)}`);
-  SC('tucProfitVal','color',profit>0?'var(--green)':profit<0?'var(--red)':'var(--text3)');
-  S('tucProfitSub',`${pct>=0?'+':''}${pct.toFixed(1)}% expected ROI`);
-  SC('tucProfitBar','width',barPct+'%');
-  SC('tucProfitBar','background',barCol);
-  S('tucFloatVal',avgFloat!=null?avgFloat.toFixed(4):'—');
-  S('tucWearVal',avgFloat!=null?`Wear: ${outWear}`:'Enter floats above');
-  S('tucBEVal',be>0?`£${be.toFixed(2)}`:'—');
-  S('tucVerdictVal',verdict); SC('tucVerdictVal','color',vCol);
-  S('tucVerdictSub',vSub);
-  const bdg=document.getElementById('tucBadge');
-  if (bdg) { bdg.textContent=totalCost>0&&ev>0?`${pct>=0?'+':''}${pct.toFixed(1)}% EV`:'—'; bdg.style.color=pct>0?'var(--green)':pct<0?'var(--red)':'var(--text3)'; }
 }
 
 
@@ -4354,13 +4284,10 @@ function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   if (tab === 'skins') renderSkins();
-  if (tab === 'portfolio') renderPortfolio();
   if (tab === 'intelligence' && !ciData) { /* show empty */ }
-  if (tab === 'alerts')  renderAlerts();
-  if (tab === 'health') renderHealthReport();
+  if (tab === 'analytics') { renderPortfolio(); renderHealthReport(); }
   if (tab === 'settings') { if (typeof window.cs2vault !== 'undefined') updateSettingsInfo(); else populateSettingsFallback(); }
-  if (tab === 'tradeup') { if (!document.getElementById('tucSlot0')) initTUC(); }
-  if (tab === 'watchlist') renderWatchlist();
+  if (tab === 'watchlist') { renderWatchlist(); renderAlerts(); }
   el.classList.add('active');
   const tabEl = document.getElementById(`tab-${tab}`);
   if (tabEl) tabEl.classList.add('active');
