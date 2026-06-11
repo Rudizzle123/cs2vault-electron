@@ -627,11 +627,11 @@ function seedNewItems() {
     {id:'sticker018',name:'Ribbon Tie',             type:'sticker',qty:110, buyPrice:0.3273, buyDate:'2025-09-01',marketHash:'Sticker | Ribbon Tie (Holo)',             notes:'Character Craft Sep 2025',category:'character',prices:null},
     {id:'sticker019',name:'Fly High',               type:'sticker',qty:31,  buyPrice:0.159,  buyDate:'2025-09-01',marketHash:'Sticker | Fly High (Holo)',               notes:'Character Craft Sep 2025',category:'character',prices:null},
     {id:'sticker020',name:'From The Deep (Glitter)',type:'sticker',qty:401, buyPrice:0.51,   buyDate:'2025-09-01',marketHash:'Sticker | From the Deep (Glitter)',notes:'Character Craft Sep 2025',category:'character',prices:null},
-    {id:'sticker021',name:'Bolt Strike',              type:'sticker',qty:198,  buyPrice:0.15,   buyDate:'2026-01-01',marketHash:'Sticker | Bolt Strike (Holo)',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker022',name:'Bolt Charge',              type:'sticker',qty:1262, buyPrice:0.2667, buyDate:'2026-01-01',marketHash:'Sticker | Bolt Charge (Holo)',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker023',name:'Boom Trail',               type:'sticker',qty:335,  buyPrice:0.09,   buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail (Holo)',               category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker021',name:'Bolt Strike',              type:'sticker',qty:198,  buyPrice:0.15,   buyDate:'2026-01-01',marketHash:'Sticker | Bolt Strike',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker022',name:'Bolt Charge',              type:'sticker',qty:1262, buyPrice:0.2667, buyDate:'2026-01-01',marketHash:'Sticker | Bolt Charge',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker023',name:'Boom Trail',               type:'sticker',qty:335,  buyPrice:0.09,   buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail',               category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
     {id:'sticker024',name:'Boom Trail (Glitter)',     type:'sticker',qty:2741, buyPrice:0.2725, buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail (Glitter)',     category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker025',name:'High Heat',                type:'sticker',qty:1117, buyPrice:0.6487, buyDate:'2026-01-01',marketHash:'Sticker | High Heat (Holo)',                category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker025',name:'High Heat',                type:'sticker',qty:1117, buyPrice:0.6487, buyDate:'2026-01-01',marketHash:'Sticker | High Heat',                category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
     {id:'gskin001',name:'M249 Spectrogram (FN)',    type:'skin',   qty:517, buyPrice:0.7028, buyDate:'2025-09-01',marketHash:'M249 | Spectrogram (Factory New)',          category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
     {id:'gskin002',name:'P2000 Coral Halftone (FN)',type:'skin',   qty:497, buyPrice:0.7444, buyDate:'2025-09-01',marketHash:'P2000 | Coral Halftone (Factory New)',        category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
     {id:'gskin003',name:'FAMAS Halftone (FN)',       type:'skin',   qty:190, buyPrice:0.7947, buyDate:'2025-09-01',marketHash:'FAMAS | Halftone Wash (Factory New)',               category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
@@ -738,10 +738,15 @@ const STICKER_INDEXES = {
   'Sticker | Ribbon Tie (Holo)':           7911,
   'Sticker | Fly High (Holo)':             4590,
   'Sticker | Taste Buddy (Holo)':          7916,
+  'Sticker | Bolt Strike':                 7882,
+  'Sticker | Bolt Charge':                 7883,
+  'Sticker | Boom Trail':                  7895,
+  'Sticker | Boom Trail (Glitter)':        7900,
+  'Sticker | High Heat':                   7885,
+  // Legacy aliases — Elemental Craft papers were wrongly stored with "(Holo)" pre-v2.5.1
   'Sticker | Bolt Strike (Holo)':          7882,
   'Sticker | Bolt Charge (Holo)':          7883,
   'Sticker | Boom Trail (Holo)':           7895,
-  'Sticker | Boom Trail (Glitter)':        7900,
 };
 
 // Pattern ranges for charm variants
@@ -922,8 +927,9 @@ async function fetchAllPlatformPrices(item) {
   // Strategy: try exact hash first, then retry with variant suffix stripped if nothing returned.
   try {
     let steamHash = item.marketHash;
-    // If bare name (no "Sticker | " prefix), add it for Steam
-    if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker |')) {
+    // If bare name (no "Sticker | " prefix), add it for Steam — but NOT for capsules/packs,
+    // which are listed on Steam under their plain name (e.g. "Austin 2025 Legends Sticker Capsule")
+    if (item.type === 'sticker' && steamHash && !steamHash.startsWith('Sticker |') && !/(capsule|pack)/i.test(steamHash)) {
       steamHash = 'Sticker | ' + steamHash;
     }
     // Fix known capitalisation mismatches between CSFloat and Steam naming
@@ -4498,11 +4504,11 @@ function seedNewItems() {
     {id:'sticker018',name:'Ribbon Tie',             type:'sticker',qty:110, buyPrice:0.3273, buyDate:'2025-09-01',marketHash:'Sticker | Ribbon Tie (Holo)',             notes:'Character Craft Sep 2025',category:'character',prices:null},
     {id:'sticker019',name:'Fly High',               type:'sticker',qty:31,  buyPrice:0.159,  buyDate:'2025-09-01',marketHash:'Sticker | Fly High (Holo)',               notes:'Character Craft Sep 2025',category:'character',prices:null},
     {id:'sticker020',name:'From The Deep (Glitter)',type:'sticker',qty:401, buyPrice:0.51,   buyDate:'2025-09-01',marketHash:'Sticker | From the Deep (Glitter)',notes:'Character Craft Sep 2025',category:'character',prices:null},
-    {id:'sticker021',name:'Bolt Strike',              type:'sticker',qty:198,  buyPrice:0.15,   buyDate:'2026-01-01',marketHash:'Sticker | Bolt Strike (Holo)',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker022',name:'Bolt Charge',              type:'sticker',qty:1262, buyPrice:0.2667, buyDate:'2026-01-01',marketHash:'Sticker | Bolt Charge (Holo)',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker023',name:'Boom Trail',               type:'sticker',qty:335,  buyPrice:0.09,   buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail (Holo)',               category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker021',name:'Bolt Strike',              type:'sticker',qty:198,  buyPrice:0.15,   buyDate:'2026-01-01',marketHash:'Sticker | Bolt Strike',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker022',name:'Bolt Charge',              type:'sticker',qty:1262, buyPrice:0.2667, buyDate:'2026-01-01',marketHash:'Sticker | Bolt Charge',              category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker023',name:'Boom Trail',               type:'sticker',qty:335,  buyPrice:0.09,   buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail',               category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
     {id:'sticker024',name:'Boom Trail (Glitter)',     type:'sticker',qty:2741, buyPrice:0.2725, buyDate:'2026-01-01',marketHash:'Sticker | Boom Trail (Glitter)',     category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
-    {id:'sticker025',name:'High Heat',                type:'sticker',qty:1117, buyPrice:0.6487, buyDate:'2026-01-01',marketHash:'Sticker | High Heat (Holo)',                category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
+    {id:'sticker025',name:'High Heat',                type:'sticker',qty:1117, buyPrice:0.6487, buyDate:'2026-01-01',marketHash:'Sticker | High Heat',                category:'elemental',notes:'Elemental Craft Jan 2026',prices:null},
     {id:'gskin001',name:'M249 Spectrogram (FN)',    type:'skin',   qty:517, buyPrice:0.7028, buyDate:'2025-09-01',marketHash:'M249 | Spectrogram (Factory New)',          category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
     {id:'gskin002',name:'P2000 Coral Halftone (FN)',type:'skin',   qty:497, buyPrice:0.7444, buyDate:'2025-09-01',marketHash:'P2000 | Coral Halftone (Factory New)',        category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
     {id:'gskin003',name:'FAMAS Halftone (FN)',       type:'skin',   qty:190, buyPrice:0.7947, buyDate:'2025-09-01',marketHash:'FAMAS | Halftone Wash (Factory New)',               category:'graphic',notes:'Graphic Design Collection Sep/Oct 2025',prices:null},
@@ -4518,6 +4524,21 @@ function seedNewItems() {
   newItems.forEach(item => {
     if (!existingH.some(h => h.id === item.id)) {
       existingH.push(item);
+      changed = true;
+    }
+  });
+  // Migration (v2.5.1): Elemental Craft papers have no "(Holo)" variant on Steam -
+  // fix wrongly-stored market hashes so the Steam lookup hits first time (no strip-retry needed)
+  const HASH_FIXES = {
+    'Sticker | Bolt Strike (Holo)': 'Sticker | Bolt Strike',
+    'Sticker | Bolt Charge (Holo)': 'Sticker | Bolt Charge',
+    'Sticker | Boom Trail (Holo)':  'Sticker | Boom Trail',
+    'Sticker | High Heat (Holo)':   'Sticker | High Heat',
+  };
+  existingH.forEach(h => {
+    if (h.marketHash && HASH_FIXES[h.marketHash]) {
+      console.log('[Migration] Fixing market hash: ' + h.marketHash + ' -> ' + HASH_FIXES[h.marketHash]);
+      h.marketHash = HASH_FIXES[h.marketHash];
       changed = true;
     }
   });
