@@ -4453,6 +4453,7 @@ function renderHealthReport() {
 function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  if (tab === 'holdings') updateStats();
   if (tab === 'skins') renderSkins();
   if (tab === 'intelligence' && !ciData) { /* show empty */ }
   if (tab === 'analytics') { renderPortfolio(); renderHealthReport(); }
@@ -4462,7 +4463,7 @@ function switchTab(tab, el) {
   const tabEl = document.getElementById(`tab-${tab}`);
   if (tabEl) tabEl.classList.add('active');
   else console.error('[switchTab] panel not found: tab-' + tab);
-  if (tab === 'history') renderHistory();
+  if (tab === 'history') { updateStats(); renderHistory(); }
 }
 function filterTable(q) { currentFilter = q; renderHoldings(); }
 function filterHistory(q) {
