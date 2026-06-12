@@ -205,7 +205,7 @@ function doFetch(url, options = {}, _redirects = 0, _cookies = '') {
       if (loc && [301, 302, 303, 307, 308].includes(res.statusCode)) {
         res.resume(); // discard body
         if (_redirects >= 5) {
-          resolve({ status: res.statusCode, body: '', headers: res.headers });
+          resolve({ status: res.statusCode, body: '', headers: res.headers, finalUrl: url });
           return;
         }
         let cookies = _cookies;
@@ -227,7 +227,7 @@ function doFetch(url, options = {}, _redirects = 0, _cookies = '') {
         const encoding = (res.headers['content-encoding'] || '').toLowerCase();
 
         const done = (decoded) => {
-          resolve({ status: res.statusCode, body: decoded.toString('utf8'), headers: res.headers });
+          resolve({ status: res.statusCode, body: decoded.toString('utf8'), headers: res.headers, finalUrl: url });
         };
 
         if (encoding === 'br') {
@@ -260,7 +260,7 @@ function doFetch(url, options = {}, _redirects = 0, _cookies = '') {
 ipcMain.handle('fetch:get', async (_e, url, headers) => {
   try {
     const result = await doFetch(url, { headers: headers || {} });
-    return { ok: result.status >= 200 && result.status < 300, status: result.status, body: result.body };
+    return { ok: result.status >= 200 && result.status < 300, status: result.status, body: result.body, finalUrl: result.finalUrl || url };
   } catch (e) {
     return { ok: false, status: 0, body: '', error: e.message };
   }

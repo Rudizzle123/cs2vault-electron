@@ -49,7 +49,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v2.7.0)
+## Features (current as of v2.8.0)
 
 ### Holdings Tab
 - **Allocation strip (v2.5.0)** — stacked bar + legend under the stat cards showing portfolio value split across Cases / Stickers / TUF / Skins / Knives / Armory / Other; click a segment to filter the table, click again to clear
@@ -65,6 +65,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - Heatmap view for visual price changes
 - CSV export (with per-platform prices, TUF flag) and CSV import
 - Bulk sell modal
+- **Bulk edit/delete (v2.8.0)** — checkbox per row + select-all (visible rows); action bar shows selection count/units/£ invested with Bulk Edit (Type / TUF / Category — untouched fields stay as-is), Delete Selected (does not record sales), and Clear. All writes atomic against concurrent refreshes
 
 ### Price Refreshing (v2.7.0)
 - **Two-lane engine** — bulk refreshes run CSFloat (6 parallel requests) and Steam (sequential, adaptive 1.5–6s delay) as independent lanes; each row updates the moment both lanes finish for that item. Roughly halves full-refresh time vs the old single sequential chain
@@ -127,9 +128,9 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - Components without enough history yet score a neutral 50, render dimmed, and each card shows a "N/4 signals live" confidence chip — accuracy builds automatically with regular use
 - **Real supply tracking** — fetches live Steam listing counts on each analysis run, saves snapshots to `cs2vault_case_supply`. On subsequent runs shows actual supply delta vs previous snapshot (e.g. ↓ 3.2K (-4%)) — green = shrinking supply, red = growing
 - **Price momentum columns** — 7D and 30D % price change pulled from existing price log, shown on both cards and table
-- Neutral grades only (S/A–F) plus a factual Active/Discontinued status chip — no buy/sell signal labels
+- Neutral grades only (S/A–F) plus a **drop-pool status badge (v2.8.0)** on every card and table row: ⚡ ACTIVE DROP / RARE DROP / ARMORY · STILL SOLD / DISCONTINUED — hardcoded per case, verified June 2026 (Valve removed the entire rare drop pool 17 Dec 2025, so legacy cases no longer drop at all; Armory cases like Fever are still sold in-game). Disc. Age scoring is pool-aware — no buy/sell signal labels
 - Snapshots pruned after 6 months on launch
-- Table columns: Score, Grade, Steam Listings, Supply Trend, 7D, 30D, Months Discontinued, Current Price, vs 90D Low, Holdings
+- Table columns: Score, Grade, Drop Pool, Steam Listings, Supply Trend, 7D, 30D, Months Discontinued, Current Price, vs 90D Low, Holdings
 
 ### Settings Tab
 - CSFloat API key management with test connection
@@ -140,7 +141,9 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 ### Infrastructure
 - Auto-updater via GitHub Releases (electron-updater) — silent download, auto-restart
 - GitHub Actions CI/CD: push a version tag → builds Windows NSIS installer automatically
-- Steam historical price data fetcher (parses embedded data from market listing pages)
+- Steam historical price data fetcher (parses embedded data from market listing pages; sends browser-like headers, v2.7.2)
+- HTTP proxy follows redirects with cookie carry (v2.7.1) — required for Steam community pages
+- Resilient tab switching + global error toasts (v2.7.1) — a render exception can never blank a tab; uncaught errors surface on screen
 
 ---
 

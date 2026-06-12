@@ -1,6 +1,6 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v2.7.0
+Last updated: June 2026 | Current version: v2.8.0
 
 ---
 
@@ -118,6 +118,28 @@ Last updated: June 2026 | Current version: v2.7.0
 - **Caveat noted to Rudi**: the silent behaviour fully applies from the *next* update onward. The installed v2.4.5 was built with the old assisted config, so its uninstaller (invoked during the v2.4.5 → v2.4.6 upgrade) may still flash one dialog this one time; v2.4.6+ updates are fully silent
 - **Restart is unavoidable** — Windows locks the running .exe, so every Electron auto-updater must quit → swap files → relaunch. One-click reduces this to a brief flicker with zero user interaction (matches VS Code / Slack / Discord behaviour). There is no in-place hot-swap for a packaged Electron app
 
+### v2.8.0 — Case Intel Drop-Pool Badges + Bulk Edit/Delete ✅
+- **Drop-pool status per case** — hardcoded `pool` field in `CASE_INTEL_DATA` ('active'/'rare'/'armory'/'discontinued'), verified June 2026:
+  - Valve removed the entire **Rare Drop Pool on 17 Dec 2025** — every former RDP case no longer drops AT ALL (supply permanently capped). All legacy cases marked `discontinued`
+  - **Recoil Case date corrected** 2023-10-10 → **2026-03-12** (it stayed in the ACTIVE pool until the Dead Hand Terminal release — sourced from the community drop-pool changelog)
+  - **Fever Case** = `armory` (never in the weekly pool, but still SOLD in-game via Armory Stars — supply still growing)
+  - **Anubis Collection Package** = `discontinued` (per Rudi, June 2026; exact store-removal date unverified, so Disc. Age scores neutral 50 + flags it)
+- **Badges everywhere**: pool chip on each Case Intel card (replaces the binary ACTIVE/DISCONTINUED chip) and a new "Drop Pool" table column; colours: active=accent, rare=blue, armory=orange "ARMORY · STILL SOLD", discontinued=grey. Hover tooltips explain each status
+- **Pool-aware Disc. Age scoring**: active=5, armory=8 (supply growing), rare=40, discontinued-no-date=neutral 50 (flagged), else existing month curve
+- **Bulk edit/delete on Holdings** — checkbox column + header select-all (visible/filtered rows only); selection bar shows count/units/£ invested with **✎ Bulk Edit** (Type / TUF / Category, "leave unchanged" semantics), **✕ Delete Selected** (confirm with preview; does NOT record sales), and Clear. All writes atomic (re-read storage → mutate → write back); `deleteItem()` hardened to the same pattern. Selection survives re-renders (tracked by id in `_bulkSel` Set); stale ids pruned automatically
+- ⚠ **Follow-up flagged**: the OTHER legacy `discontinued` dates in CASE_INTEL_DATA follow the old "left active pool" model and several look wrong vs the 2026 community changelog (e.g. Fracture was ACTIVE until Sep 2025, his data says 2021; Clutch went to rare pool Apr 2023, data says 2018). Correcting them would materially change Disc. Age scores — needs a per-case sourcing pass + Rudi's sign-off before rewriting
+
+### v2.7.2 — Blank Holdings Root Cause + Steam History Diagnostics ✅
+- **Root cause of the blank Holdings tab found**: `_trendRange`/`_trendCategory` declarations were lost in a refactor → `renderTrending()` threw `ReferenceError` → `updateStats()` died → tab panel never activated. Declarations restored (30 days / 'all')
+- **Steam history fetch**: now sends browser-like headers (Chrome UA, Accept, Accept-Language) — Steam serves a stripped page without the embedded `var line1` data to non-browser requests. Parser regex made whitespace-tolerant
+- **Failure diagnostics**: on a parse miss, console now logs body size, whether 'line1' appears, login-page/listing-page detection, and the post-redirect final URL (`finalUrl` plumbed through `doFetch` → IPC result)
+
+### v2.7.1 — Redirect Following + Resilient Tabs + Error Surfacing ✅
+- **`doFetch` (main.js) now follows redirects** (up to 5 hops, carrying Set-Cookie across hops) — Steam listing pages 302 to set a country/session cookie; previously every Steam-history fetch died on the bare 302
+- **`switchTab` hardened**: panel activates BEFORE per-tab renders; each render wrapped in try/catch that console.errors + toasts the failure — a render exception can never blank a tab again
+- **Global error surfacing**: `window.onerror` + `unhandledrejection` → red toast (throttled, 10s per unique message) so silent breakage is visible without DevTools
+- `renderTrending` DOM lookups null-guarded
+
 ### v2.7.0 — Fast Refresh Engine + Background Auto-Refresh ✅
 - **Two-lane refresh engine** (`runTwoLaneRefresh`) — bulk refreshes now run CSFloat and Steam as independent lanes instead of one sequential chain:
   - **CSFloat lane**: parallel pool of 6 concurrent requests (API-keyed, tolerant) via new `runPool()` helper
@@ -213,9 +235,14 @@ Last updated: June 2026 | Current version: v2.7.0
    - Supply Trend needs a 2nd analysis run on a later day; Price vs 90D Low needs 3+ price-log points spanning 14+ days; Momentum needs 2+ points in window
    - Until then those components score neutral 50 and the card shows "N/4 signals live" — expected behaviour, improves automatically with regular use
 
-2. **Steam historical data — not tested by user**
-   - The "📈 Fetch Steam History" button on Analytics tab was built but user hasn't confirmed it works
-   - Could fail if Steam rate-limits or if the HTML parsing breaks on certain items
+2. **Steam historical data — testing in progress (June 2026 session)**
+   - First test: every fetch died on HTTP 302 (proxy didn't follow redirects) → fixed v2.7.1
+   - Second test: 200s but no `var line1` data in HTML → v2.7.2 added browser-like headers (likely Steam serving stripped pages to non-browser requests) + full diagnostics (body size, line1 presence, login/listing-page detection, final URL)
+   - Awaiting third test on v2.7.2+; if Steam withholds the data even with browser headers, pivot chart history to Pricempire (already on roadmap)
+
+3. **Case Intel legacy `discontinued` dates need a sourcing pass**
+   - Existing dates follow the old "left active pool" model; the 2026 community changelog contradicts several (Fracture was ACTIVE until Sep 2025 vs stored 2021; Clutch → rare pool Apr 2023 vs stored 2018). Recoil already corrected to 2026-03-12 in v2.8.0
+   - Correcting the rest would materially shift Disc. Age scores — needs per-case sourcing + Rudi's sign-off
 
 ### 🟢 Minor / Polish
 - Portfolio History chart annotation labels could overlap on narrow windows
@@ -228,18 +255,16 @@ Last updated: June 2026 | Current version: v2.7.0
 ## Next Steps (Prioritised)
 
 ### Short-term
-- **Test Steam historical data fetcher** — verify the 📈 button works, fix any parsing issues
+- **Re-test Steam historical data fetcher on v2.7.2+** — diagnostics now pinpoint any remaining failure; pivot to Pricempire for chart history if Steam withholds the data
 - **Pricempire historical data** — the API integration is built but `fetchPricempireHistory()` isn't wired into the price charts yet as a toggleable data source
-- **Case Intel drop pool status badge** — hardcode Active/Rare/Discontinued status per case (no API needed), show as badge on each card and table row
+- **Case Intel legacy date sourcing pass** — verify/correct remaining `discontinued` dates against the 2026 community changelog (see Known Issues #3)
 
 ### Medium-term
 - **£41k full-cashout tax modelling** — Rudi wants to model his actual CGT position if he sold his entire ~£41k portfolio and realised it to his bank: the real taxable gain after deducting acquisition costs, and spreading disposals across tax years to use multiple £3,000 allowances. Needs his rough total acquisition cost as input. Revisit in a future session
-- **Bulk edit/delete** — multi-select holdings with checkboxes for batch operations
 - **Phase 6 — Steam inventory import** — limited usefulness for users with storage units (items in storage units are invisible to Steam's inventory API). Worth building for floating inventory items only
 
 ### Ideas (not yet scoped)
 - Case Intel squeeze score — composite chip combining the now-real supply trend + momentum + discontinued status (post-v2.5.0 the inputs all exist)
-- Case Intel drop pool status badge (Active / Rare / Discontinued) — hardcoded, no API needed
 - Seed initial price history from current prices on first install
 - Dark/light theme toggle
 

@@ -207,7 +207,8 @@ function saveSteamHistory(data) {
 // Parse price history from Steam market listing page HTML
 function parseSteamPriceHistory(html) {
   // Steam embeds price data as: var line1=[[...],[...],...];
-  const match = html.match(/var line1=(\[.+?\]);/);
+  // (tolerant of whitespace variations around the assignment)
+  const match = html.match(/var\s+line1\s*=\s*(\[.+?\]);/);
   if (!match) return null;
   try {
     const raw = JSON.parse(match[1]);
@@ -232,14 +233,27 @@ async function fetchSteamHistory(marketHashName) {
   if (!marketHashName) return null;
   const url = `https://steamcommunity.com/market/listings/730/${encodeURIComponent(marketHashName)}`;
   try {
-    const res = await window.cs2vault.fetch(url, {});
+    // Browser-like headers — Steam serves a stripped page (no embedded line1
+    // price data) to requests that don't look like a real browser
+    const res = await window.cs2vault.fetch(url, {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-GB,en;q=0.9',
+    });
     if (res.status !== 200) {
-      console.warn(`[SteamHistory] ${marketHashName}: HTTP ${res.status}`);
+      console.warn(`[SteamHistory] ${marketHashName}: HTTP ${res.status}${res.finalUrl && res.finalUrl !== url ? ' (ended at ' + res.finalUrl + ')' : ''}`);
       return null;
     }
     const data = parseSteamPriceHistory(res.body);
     if (!data || data.length === 0) {
-      console.warn(`[SteamHistory] ${marketHashName}: No price data found in HTML`);
+      // Diagnostics: figure out WHAT page we actually got
+      const body = res.body || '';
+      const landed = res.finalUrl && res.finalUrl !== url ? ` | landed at: ${res.finalUrl}` : '';
+      const hasLine1 = body.includes('line1');
+      const looksLogin = /login/i.test(res.finalUrl || '') || body.includes('id="loginForm"');
+      const looksListing = body.includes('market_listing_largeimage') || body.includes('market_commodity');
+      console.warn(`[SteamHistory] ${marketHashName}: No price data found in HTML` +
+        ` | bytes: ${body.length} | mentions line1: ${hasLine1} | login page: ${looksLogin} | listing page: ${looksListing}${landed}`);
       return null;
     }
     console.log(`[SteamHistory] ${marketHashName}: ${data.length} data points`);
@@ -1405,6 +1419,7 @@ function renderHoldings() {
     }
 
     return `<tr data-id="${item.id}" ${target && best && best >= target ? 'style="border-left:3px solid var(--green);"' : ''}>
+      <td style="text-align:center;"><input type="checkbox" class="bulk-cb" ${_bulkSel.has(item.id) ? 'checked' : ''} onclick="bulkToggleOne('${item.id}', this.checked)"></td>
       <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
       <td><span class="type-badge ${typeBadge[item.type]}">${typeLabels[item.type]}</span></td>
       <td class="mono">${item.qty}</td>
@@ -2168,8 +2183,107 @@ function saveItem() {
 }
 function deleteItem(id) {
   if (!confirm('Delete this holding?')) return;
-  holdings = holdings.filter(h => h.id !== id);
-  saveData(holdings); renderHoldings(); updateStats(); toast('Removed', 'info');
+  // Atomic: re-read storage before mutating (v2.4.3 pattern)
+  const fresh = loadData();
+  holdings = fresh.filter(h => h.id !== id);
+  saveData(holdings);
+  _bulkSel.delete(id);
+  renderHoldings(); updateStats(); updateBulkBar(); toast('Removed', 'info');
+}
+
+// ========================
+// BULK SELECT / EDIT / DELETE (v2.8.0)
+// ========================
+const _bulkSel = new Set();
+
+function bulkToggleOne(id, checked) {
+  if (checked) _bulkSel.add(id); else _bulkSel.delete(id);
+  updateBulkBar();
+}
+
+function bulkToggleAll(checked) {
+  // Applies to currently VISIBLE (filtered) rows only
+  document.querySelectorAll('#holdingsBody .bulk-cb').forEach(cb => {
+    cb.checked = checked;
+    const id = cb.closest('tr')?.dataset.id;
+    if (!id) return;
+    if (checked) _bulkSel.add(id); else _bulkSel.delete(id);
+  });
+  updateBulkBar();
+}
+
+function bulkClearSelection() {
+  _bulkSel.clear();
+  document.querySelectorAll('#holdingsBody .bulk-cb').forEach(cb => { cb.checked = false; });
+  const allCb = document.getElementById('bulkAllCb');
+  if (allCb) allCb.checked = false;
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  if (!bar) return;
+  // Drop ids that no longer exist (sold/deleted elsewhere)
+  for (const id of [..._bulkSel]) {
+    if (!holdings.some(h => h.id === id)) _bulkSel.delete(id);
+  }
+  const n = _bulkSel.size;
+  bar.style.display = n ? 'flex' : 'none';
+  if (n) {
+    const sel = holdings.filter(h => _bulkSel.has(h.id));
+    const invested = sel.reduce((a, h) => a + h.buyPrice * h.qty, 0);
+    const units = sel.reduce((a, h) => a + h.qty, 0);
+    document.getElementById('bulkCount').textContent =
+      n + ' selected · ' + units.toLocaleString() + ' units · £' + invested.toFixed(2) + ' invested';
+  }
+}
+
+function bulkDeleteSelected() {
+  const n = _bulkSel.size;
+  if (!n) return;
+  const sel = holdings.filter(h => _bulkSel.has(h.id));
+  const invested = sel.reduce((a, h) => a + h.buyPrice * h.qty, 0);
+  const preview = sel.slice(0, 5).map(h => '• ' + h.name).join('\n') + (n > 5 ? '\n…and ' + (n - 5) + ' more' : '');
+  if (!confirm('Delete ' + n + ' holding' + (n !== 1 ? 's' : '') + ' (£' + invested.toFixed(2) + ' invested)?\n\n' + preview + '\n\nThis does NOT record any sales — records are simply removed.')) return;
+  // Atomic: re-read storage, filter, write back
+  const fresh = loadData();
+  holdings = fresh.filter(h => !_bulkSel.has(h.id));
+  saveData(holdings);
+  _bulkSel.clear();
+  renderHoldings(); updateStats(); updateBulkBar();
+  toast(n + ' holdings deleted', 'info');
+}
+
+function openBulkEditModal() {
+  if (!_bulkSel.size) return;
+  document.getElementById('bulkEditInfo').textContent =
+    'Applies to ' + _bulkSel.size + ' selected holding' + (_bulkSel.size !== 1 ? 's' : '') + '. Fields left unchanged are not touched.';
+  document.getElementById('bulkEditType').value = '';
+  document.getElementById('bulkEditTuf').value = '';
+  document.getElementById('bulkEditCategory').value = '';
+  document.getElementById('bulkEditModal').classList.add('open');
+}
+
+function saveBulkEdit() {
+  const type = document.getElementById('bulkEditType').value;
+  const tuf = document.getElementById('bulkEditTuf').value;
+  const cat = document.getElementById('bulkEditCategory').value;
+  if (!type && !tuf && !cat) { toast('Nothing to change — all fields left unchanged', 'info'); return; }
+  // Atomic: re-read storage, mutate fresh copy, write back
+  const fresh = loadData();
+  let touched = 0;
+  fresh.forEach(h => {
+    if (!_bulkSel.has(h.id)) return;
+    if (type) h.type = type;
+    if (tuf) h.isTuf = (tuf === 'yes');
+    if (cat) { if (cat === '__clear__') delete h.category; else h.category = cat; }
+    touched++;
+  });
+  saveData(fresh);
+  holdings = fresh;
+  closeModal('bulkEditModal');
+  renderHoldings(); updateStats(); updateBulkBar();
+  toast(touched + ' holdings updated', 'success');
 }
 function openSellModal(id) {
   const item = holdings.find(h => h.id === id);
@@ -3316,21 +3430,43 @@ function exportMonthlyPDF() {
 // own price log, factual discontinuation dates). Hardcoded ATLs and estimated
 // unbox-rate tables removed — they were static guesses, not live data.
 
+// Drop-pool status per case (v2.8.0) — hardcoded, verified June 2026.
+// Valve removed the Rare Drop Pool entirely on 17 Dec 2025: every former
+// rare-pool case no longer drops AT ALL — supply is permanently capped.
+// 'armory' = still purchasable in-game via Armory Stars (supply still growing).
+// 'rare' kept as a supported status in case Valve ever reinstates the pool.
 const CASE_INTEL_DATA = {
-  'Clutch Case':               { released:'2018-02-15', discontinued:'2018-11-08' },
-  'Prisma Case':               { released:'2019-03-14', discontinued:'2019-11-18' },
-  'Prisma 2 Case':             { released:'2020-03-31', discontinued:'2020-09-23' },
-  'Snakebite Case':            { released:'2021-05-03', discontinued:'2022-07-01' },
-  'Horizon Case':              { released:'2018-11-08', discontinued:'2019-03-14' },
-  'Danger Zone Case':          { released:'2018-12-06', discontinued:'2019-03-14' },
-  'Revolver Case':             { released:'2015-12-08', discontinued:'2016-06-15' },
-  'Fracture Case':             { released:'2020-08-06', discontinued:'2021-05-03' },
-  'Falchion Case':             { released:'2015-05-26', discontinued:'2015-09-17' },
-  'Recoil Case':               { released:'2022-07-01', discontinued:'2023-10-10' },
-  'Fever Case':                { released:'2025-01-21', discontinued:null },
-  'Anubis Collection Package': { released:'2022-11-18', discontinued:null },
-  'CS:GO Weapon Case':         { released:'2013-08-14', discontinued:'2013-11-27' },
+  'Clutch Case':               { released:'2018-02-15', discontinued:'2018-11-08', pool:'discontinued' },
+  'Prisma Case':               { released:'2019-03-14', discontinued:'2019-11-18', pool:'discontinued' },
+  'Prisma 2 Case':             { released:'2020-03-31', discontinued:'2020-09-23', pool:'discontinued' },
+  'Snakebite Case':            { released:'2021-05-03', discontinued:'2022-07-01', pool:'discontinued' },
+  'Horizon Case':              { released:'2018-11-08', discontinued:'2019-03-14', pool:'discontinued' },
+  'Danger Zone Case':          { released:'2018-12-06', discontinued:'2019-03-14', pool:'discontinued' },
+  'Revolver Case':             { released:'2015-12-08', discontinued:'2016-06-15', pool:'discontinued' },
+  'Fracture Case':             { released:'2020-08-06', discontinued:'2021-05-03', pool:'discontinued' },
+  'Falchion Case':             { released:'2015-05-26', discontinued:'2015-09-17', pool:'discontinued' },
+  // Recoil was in the ACTIVE drop pool until the Dead Hand Terminal release —
+  // date corrected from 2023-10-10 (sourced: 12 Mar 2026 patch discontinued it)
+  'Recoil Case':               { released:'2022-07-01', discontinued:'2026-03-12', pool:'discontinued' },
+  // Fever is Armory purchase-only — never in the weekly drop pool, but still
+  // actively SOLD in-game, so supply is still growing
+  'Fever Case':                { released:'2025-01-21', discontinued:null, pool:'armory' },
+  // Anubis package no longer purchasable in-game (per Rudi, June 2026) —
+  // exact removal date unverified, so Disc. Age scores neutral for it
+  'Anubis Collection Package': { released:'2022-11-18', discontinued:null, pool:'discontinued' },
+  'CS:GO Weapon Case':         { released:'2013-08-14', discontinued:'2013-11-27', pool:'discontinued' },
 };
+
+const DROP_POOL_META = {
+  active:       { label:'⚡ ACTIVE DROP',   color:'var(--accent)', border:'var(--accent)', title:'In the current weekly care package pool — new supply entering constantly' },
+  rare:         { label:'RARE DROP',        color:'var(--blue)',   border:'var(--blue)',   title:'Rare drop pool — trickle of new supply (~1% of active rates)' },
+  armory:       { label:'ARMORY · STILL SOLD', color:'var(--orange)', border:'var(--orange)', title:'Purchasable in-game via Armory Stars — supply still growing' },
+  discontinued: { label:'DISCONTINUED',     color:'var(--text3)',  border:'var(--border)', title:'No longer drops or sells in-game — supply permanently capped (Valve removed the entire rare pool 17 Dec 2025)' },
+};
+
+function casePool(meta) {
+  return meta.pool || (meta.discontinued ? 'discontinued' : 'active');
+}
 
 let ciData = null;
 let ciRunning = false;
@@ -3614,7 +3750,8 @@ async function runCaseIntelligence() {
 
     const meta = CASE_INTEL_DATA[c.name] || {};
     const monthsDisc = getMonthsDiscontinued(meta.discontinued);
-    const isActive = !meta.discontinued;
+    const pool = casePool(meta);
+    const isActive = pool === 'active';
     const currentPrice = c.prices?.lowest || c.prices?.lastSold || null;
     const listings = steam?.listings || null;
 
@@ -3658,9 +3795,18 @@ async function runCaseIntelligence() {
     }
 
     // 2. Discontinuation Age Score (30%) — factual, from release/removal dates
+    //    and drop-pool status (v2.8.0)
     let discScore = 0;
-    if (isActive) {
-      discScore = 5; // active cases score low here
+    if (pool === 'active') {
+      discScore = 5; // still dropping weekly — supply growing
+    } else if (pool === 'armory') {
+      discScore = 8; // not in drop pool, but still SOLD in-game — supply growing
+    } else if (pool === 'rare') {
+      discScore = 40; // trickle supply
+    } else if (!meta.discontinued) {
+      // Discontinued but removal date unverified — score neutral, flag it
+      discScore = 50;
+      neutralFlags.push('disc age');
     } else {
       // Sweet spot: 12-48 months discontinued
       if (monthsDisc < 6)        discScore = 30;
@@ -3720,7 +3866,7 @@ async function runCaseIntelligence() {
       supplyTrendScore, discScore, priceScore, momentumScore,
       neutralFlags,
       listings, supplyPrev, supplyDeltaPct, currentPrice, low90, vsLowPct,
-      monthsDisc, isActive,
+      monthsDisc, isActive, pool,
       momentum7d, momentum30d,
       qty: c.qty,
       buyPrice: c.buyPrice,
@@ -3817,9 +3963,12 @@ function renderCaseIntelligence(results) {
           '<div class="ci-case-name">' + r.name + '</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;">' +
             '<div class="ci-grade-badge ' + getGradeClass(r.grade) + '">' + r.grade + '</div>' +
-            (r.isActive
-              ? '<span style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;">⚡ ACTIVE DROP</span>'
-              : '<span style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:2px 6px;">DISCONTINUED ' + r.monthsDisc + 'MO</span>') +
+            (function(){
+              var pm = DROP_POOL_META[r.pool] || DROP_POOL_META.discontinued;
+              var lbl = pm.label;
+              if (r.pool === 'discontinued' && r.monthsDisc > 0) lbl += ' ' + r.monthsDisc + 'MO';
+              return '<span title="' + pm.title + '" style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:' + pm.color + ';border:1px solid ' + pm.border + ';border-radius:4px;padding:2px 6px;">' + lbl + '</span>';
+            })() +
           '</div>' +
         '</div>' +
         '<div class="ci-score-ring">' +
@@ -3902,15 +4051,24 @@ function renderCaseIntelligence(results) {
     }
     const scoreStyle = 'color:' + scoreColor(r.score) + ';font-family:\'Share Tech Mono\',monospace;font-weight:700;';
 
+    var pm = DROP_POOL_META[r.pool] || DROP_POOL_META.discontinued;
+    var poolCell = '<span title="' + pm.title + '" style="font-family:\'Share Tech Mono\',monospace;font-size:9px;letter-spacing:1px;color:' + pm.color + ';border:1px solid ' + pm.border + ';border-radius:4px;padding:2px 6px;white-space:nowrap;">' + pm.label + '</span>';
+    var monthsCell;
+    if (r.pool === 'active') monthsCell = '<span style="color:var(--accent)">Active</span>';
+    else if (r.pool === 'armory') monthsCell = '<span style="color:var(--orange)">Still sold</span>';
+    else if (r.monthsDisc > 0) monthsCell = r.monthsDisc + ' months';
+    else monthsCell = '<span style="color:var(--text3)" title="Discontinued — removal date unverified">unknown</span>';
+
     return '<tr>' +
       '<td><strong>' + r.name + '</strong></td>' +
       '<td><span style="' + scoreStyle + '">' + r.score + '</span></td>' +
       '<td><span class="ci-grade-badge ' + getGradeClass(r.grade) + '">' + r.grade + '</span></td>' +
+      '<td>' + poolCell + '</td>' +
       '<td class="mono">' + listingsStr + '</td>' +
       '<td class="mono">' + supplyTrendCell + '</td>' +
       '<td class="mono">' + momCell(r.momentum7d) + '</td>' +
       '<td class="mono">' + momCell(r.momentum30d) + '</td>' +
-      '<td class="mono">' + (r.isActive ? '<span style="color:var(--accent)">Active</span>' : r.monthsDisc + ' months') + '</td>' +
+      '<td class="mono">' + monthsCell + '</td>' +
       '<td class="mono">' + priceStr + '</td>' +
       '<td class="mono">' + vsLowCell + '</td>' +
       '<td class="mono">' + r.qty.toLocaleString() + '</td>' +
@@ -4334,6 +4492,11 @@ function calculateTrends(items, days) {
 
   return results;
 }
+
+// Trending state (v2.7.2: declarations restored — they were lost in a refactor,
+// causing a ReferenceError in renderTrending that blanked Holdings/Analytics)
+let _trendRange = 30;
+let _trendCategory = 'all';
 
 function setTrendRange(days, btn) {
   _trendRange = days;

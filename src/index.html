@@ -474,8 +474,16 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <button class="btn btn-secondary btn-sm" onclick="toggleHeatmap()" id="heatmapToggleBtn">⊞ Show Heatmap</button>
       <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="priceChangeNote"></span>
     </div>
+    <!-- Bulk action bar (v2.8.0) — appears when rows are selected -->
+    <div id="bulkBar" style="display:none;align-items:center;gap:10px;margin-bottom:8px;padding:8px 12px;background:rgba(34,197,94,0.06);border:1px solid var(--border);border-radius:8px;">
+      <span id="bulkCount" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text2);"></span>
+      <button class="btn btn-secondary btn-sm" onclick="openBulkEditModal()">✎ Bulk Edit</button>
+      <button class="btn btn-danger btn-sm" onclick="bulkDeleteSelected()">✕ Delete Selected</button>
+      <button class="btn btn-secondary btn-sm" onclick="bulkClearSelection()">Clear</button>
+    </div>
     <div class="table-wrap">
       <table id="holdingsTable"><thead><tr>
+        <th style="width:28px;text-align:center;"><input type="checkbox" id="bulkAllCb" onclick="bulkToggleAll(this.checked)" title="Select all visible rows"></th>
         <th onclick="sortTable('name')">Item ↕</th><th onclick="sortTable('type')">Type ↕</th>
         <th onclick="sortTable('qty')">Qty ↕</th><th onclick="sortTable('buyPrice')">Buy Price ↕</th>
         <th onclick="sortTable('buyDate')">Date ↕</th><th onclick="sortTable('totalInvested')">Total Invested ↕</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th>
@@ -729,6 +737,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
             <th>Case</th>
             <th>Score</th>
             <th>Grade</th>
+            <th>Drop Pool</th>
             <th>Steam Listings</th>
             <th>Supply Trend</th>
             <th>7D</th>
@@ -889,6 +898,45 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 </div>
 
 <!-- Watchlist Modal -->
+<div class="modal-overlay" id="bulkEditModal">
+  <div class="modal" style="width:440px;">
+    <div class="modal-header"><div class="modal-title">Bulk <span>Edit</span></div><button class="modal-close" onclick="closeModal('bulkEditModal')">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text3);margin:0 0 14px;" id="bulkEditInfo"></p>
+      <div class="form-row"><label>Type</label>
+        <select id="bulkEditType">
+          <option value="">— leave unchanged —</option>
+          <option value="skin">Skin</option><option value="case">Case</option>
+          <option value="sticker">Sticker</option><option value="knife">Knife/Glove</option>
+          <option value="armory">Armory</option>
+        </select>
+      </div>
+      <div class="form-row"><label>TUF (Trade-up Filler)</label>
+        <select id="bulkEditTuf">
+          <option value="">— leave unchanged —</option>
+          <option value="yes">✓ Mark as TUF</option>
+          <option value="no">✕ Remove TUF flag</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Category</label>
+        <select id="bulkEditCategory">
+          <option value="">— leave unchanged —</option>
+          <option value="__clear__">✕ Clear category</option>
+          <option value="character">Character Craft</option>
+          <option value="elemental">Elemental Craft</option>
+          <option value="austin">Austin Major</option>
+          <option value="graphic">Graphic Design</option>
+          <option value="gallery">Gallery Case</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('bulkEditModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBulkEdit()">Apply to Selected</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="watchModal">
   <div class="modal">
     <div class="modal-header"><div class="modal-title">Add to <span>Watchlist</span></div><button class="modal-close" onclick="closeModal('watchModal')">✕</button></div>
