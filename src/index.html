@@ -392,6 +392,9 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
 
+/* Currency selects (v2.9.0) */
+.ccy-select{width:90px !important;flex:0 0 90px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 8px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;}
+.ccy-select:focus{border-color:var(--accent);}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
@@ -426,11 +429,11 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 </nav>
 <main>
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Total Invested</div><div class="stat-value" id="stat-invested">£0.00</div><div class="stat-sub" id="stat-items">0 items</div></div>
-    <div class="stat-card blue"><div class="stat-label">Current Value</div><div class="stat-value" id="stat-value">£0.00</div><div class="stat-sub" id="stat-after-fee">after 2% fee</div></div>
-    <div class="stat-card" id="stat-pnl-card"><div class="stat-label">Unrealised P&L</div><div class="stat-value" id="stat-pnl">£0.00</div><div class="stat-sub" id="stat-pnl-pct">0.00%</div></div>
-    <div class="stat-card green"><div class="stat-label">Realised Profit</div><div class="stat-value positive" id="stat-realised">£0.00</div><div class="stat-sub" id="stat-trades">0 trades</div></div>
-    <div class="stat-card purple"><div class="stat-label">Total Fees Paid</div><div class="stat-value" id="stat-fees" style="color:var(--purple)">£0.00</div><div class="stat-sub">@ platform fee</div></div>
+    <div class="stat-card"><div class="stat-label">Total Invested</div><div class="stat-value" id="stat-invested">—</div><div class="stat-sub" id="stat-items">0 items</div></div>
+    <div class="stat-card blue"><div class="stat-label">Current Value</div><div class="stat-value" id="stat-value">—</div><div class="stat-sub" id="stat-after-fee">after 2% fee</div></div>
+    <div class="stat-card" id="stat-pnl-card"><div class="stat-label">Unrealised P&L</div><div class="stat-value" id="stat-pnl">—</div><div class="stat-sub" id="stat-pnl-pct">0.00%</div></div>
+    <div class="stat-card green"><div class="stat-label">Realised Profit</div><div class="stat-value positive" id="stat-realised">—</div><div class="stat-sub" id="stat-trades">0 trades</div></div>
+    <div class="stat-card purple"><div class="stat-label">Total Fees Paid</div><div class="stat-value" id="stat-fees" style="color:var(--purple)">—</div><div class="stat-sub">@ platform fee</div></div>
   </div>
 
   <div class="tab-panel active" id="tab-holdings">
@@ -816,6 +819,20 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         </div>
       </div>
 
+      <!-- Display Currency (v2.9.0) -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Display Currency</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Portfolio values, P&amp;L, and analytics are shown in this currency (converted from GBP at the live ECB rate). Buy and sell prices can be entered in any currency — they're converted to GBP at the rate on the transaction date and stored with full FX provenance.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="settingsDisplayCcy" onchange="setDisplayCurrency(this.value)"
+            style="background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;min-width:220px;">
+          </select>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;">
+          ⚠ Tax figures (CGT summary, trade history, report exports) are always shown in £ GBP — the UK tax currency
+        </div>
+      </div>
+
       <!-- Data management -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
         <div class="section-heading">Data Management</div>
@@ -993,8 +1010,8 @@ header button, header input, header a { -webkit-app-region: no-drag; }
           <input type="number" id="topupQty" min="1" value="1" oninput="updateTopupPreview()">
         </div>
         <div class="form-row">
-          <label>Price per Unit (£)</label>
-          <input type="number" id="topupPrice" step="0.001" placeholder="0.000" oninput="updateTopupPreview()">
+          <label>Price per Unit</label>
+          <div style="display:flex;gap:6px;"><input type="number" id="topupPrice" step="0.001" placeholder="0.000" oninput="updateTopupPreview()" style="flex:1;"><select id="topupCcy" class="ccy-select" onchange="onTopupCcyChange()"></select></div>
         </div>
       </div>
       <div class="form-row">
@@ -1040,7 +1057,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div class="form-row"><label>Quantity</label><input type="number" id="itemQty" value="1" min="1"></div>
       </div>
       <div class="form-two">
-        <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="itemBuyPrice" placeholder="0.00" step="0.01"></div>
+        <div class="form-row"><label>Buy Price per unit</label><div style="display:flex;gap:6px;"><input type="number" id="itemBuyPrice" placeholder="0.00" step="0.01" style="flex:1;"><select id="itemBuyCcy" class="ccy-select"></select></div></div>
         <div class="form-row"><label>Date Bought</label><input type="date" id="itemBuyDate"></div>
       </div>
       <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="itemMarketHash" placeholder="e.g. Recoil Case"><div class="fee-note">Type 3+ letters in either field to search Steam &amp; auto-fill</div></div>
@@ -1065,7 +1082,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div class="form-row"><label>Type</label><select id="skinType"><option value="skin">Skin</option><option value="knife">Knife/Glove</option><option value="agent">Agent</option></select></div>
         <div class="form-row"><label>Quantity</label><input type="number" id="skinQty" value="1" min="1"></div>
       </div>
-      <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="skinBuyPrice" placeholder="0.00" step="0.01"></div>
+      <div class="form-row"><label>Buy Price per unit</label><div style="display:flex;gap:6px;"><input type="number" id="skinBuyPrice" placeholder="0.00" step="0.01" style="flex:1;"><select id="skinBuyCcy" class="ccy-select"></select></div></div>
       <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="skinMarketHash" placeholder="e.g. AK-47 | Asiimov (Field-Tested)"><div class="fee-note">Type 3+ letters in either field to search Steam &amp; auto-fill. Agents use Steam only.</div></div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('skinModal')">Cancel</button><button class="btn btn-primary" onclick="saveSkin()">Save</button></div>
@@ -1099,8 +1116,8 @@ header button, header input, header a { -webkit-app-region: no-drag; }
           <button class="btn btn-secondary btn-sm sell-mode-btn" onclick="setSellMode('total')" id="sellModeTotal">Total received after fees</button>
         </div>
       </div>
-      <div id="sellPerunitRow" class="form-row"><label>Sell Price per unit (£)</label><input type="number" id="sellPrice" step="0.01" oninput="updateSellCalc()"></div>
-      <div id="sellTotalRow" class="form-row" style="display:none;"><label>Total received after fees (£)</label><input type="number" id="sellTotalReceived" step="0.01" oninput="updateSellFromTotal()"></div>
+      <div id="sellPerunitRow" class="form-row"><label>Sell Price per unit</label><div style="display:flex;gap:6px;"><input type="number" id="sellPrice" step="0.01" oninput="updateSellCalc()" style="flex:1;"><select id="sellCcy" class="ccy-select" onchange="onSellCcyChange()"></select></div></div>
+      <div id="sellTotalRow" class="form-row" style="display:none;"><label>Total received after fees</label><input type="number" id="sellTotalReceived" step="0.01" oninput="updateSellFromTotal()"></div>
       <div id="sellReverseCalc" style="display:none;font-size:11px;color:var(--text3);font-family:'Share Tech Mono',monospace;padding:6px 0;"></div>
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:4px;">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;">

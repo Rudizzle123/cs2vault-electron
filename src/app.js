@@ -8,8 +8,8 @@ function openTargetModal(id) {
   document.getElementById('targetItemId').value = id;
   document.getElementById('targetItemName').textContent = item.name;
   const best = getBestPrice(item);
-  document.getElementById('targetCurrentPrice').textContent = best ? '£' + best.toFixed(3) : '—';
-  document.getElementById('targetBuyPrice').textContent = '£' + item.buyPrice.toFixed(3);
+  document.getElementById('targetCurrentPrice').textContent = best ? fmtMoney(best, 3) : '—';
+  document.getElementById('targetBuyPrice').textContent = fmtMoney(item.buyPrice, 3);
   document.getElementById('targetPriceInput').value = item.targetPrice ? item.targetPrice.toFixed(3) : '';
   // Preset buttons: 25%, 50%, 100%, 200%
   ['25','50','100','200'].forEach(pct => {
@@ -31,12 +31,12 @@ function updateTargetPreview() {
   const preview = document.getElementById('targetPreview');
   if (!target || isNaN(target)) { preview.textContent = ''; return; }
   const gain = ((target - item.buyPrice) / item.buyPrice * 100).toFixed(1);
-  const totalGain = ((target - item.buyPrice) * item.qty).toFixed(2);
+  const totalGain = (target - item.buyPrice) * item.qty;
   const best = getBestPrice(item);
   const distance = best ? ((target - best) / best * 100).toFixed(1) : null;
   preview.innerHTML = `
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
-      <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;">Gain vs buy price</div><div style="color:var(--green);font-weight:700;">+${gain}% (+£${totalGain})</div></div>
+      <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;">Gain vs buy price</div><div style="color:var(--green);font-weight:700;">+${gain}% (+${fmtMoney(totalGain, 2)})</div></div>
       ${distance !== null ? `<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;">Distance from now</div><div style="color:var(--orange);font-weight:700;">${distance > 0 ? '+' : ''}${distance}%</div></div>` : ''}
     </div>`;
 }
@@ -51,7 +51,7 @@ function saveTarget() {
     toast('Target price cleared', 'info');
   } else {
     item.targetPrice = target;
-    toast(`Target set: £${target.toFixed(3)} for ${item.name}`, 'success');
+    toast(`Target set: ${fmtMoney(target, 3)} for ${item.name}`, 'success');
   }
   saveData(holdings);
   document.getElementById('targetModal').classList.remove('open');
@@ -522,7 +522,7 @@ function renderPriceHistoryChart() {
       position: 'right',
       ticks: {
         font: { family: "'Share Tech Mono', monospace", size: 11 },
-        callback: v => '£' + Number(v).toFixed(2),
+        callback: v => fmtMoney(Number(v), 2),
         color: 'rgba(255,255,255,0.4)',
         maxTicksLimit: 6,
       },
@@ -576,7 +576,7 @@ function renderPriceHistoryChart() {
             title: (items) => items[0]?.label || '',
             label: (ctx) => {
               if (ctx.dataset.label === 'Volume') return `Volume: ${ctx.raw.toLocaleString()}`;
-              if (ctx.raw != null) return `${ctx.dataset.label}: £${Number(ctx.raw).toFixed(3)}`;
+              if (ctx.raw != null) return `${ctx.dataset.label}: ${fmtMoney(Number(ctx.raw), 3)}`;
               return null;
             },
           }
@@ -597,10 +597,10 @@ function renderPriceHistoryChart() {
     const changeColor = change >= 0 ? 'var(--green)' : 'var(--red)';
     const totalVol = volumes.reduce((s, v) => s + v, 0);
     document.getElementById('phSummary').innerHTML = `
-      <div class="ph-stat"><div class="ph-stat-label">Current</div><div class="ph-stat-val">£${current.toFixed(3)}</div></div>
+      <div class="ph-stat"><div class="ph-stat-label">Current</div><div class="ph-stat-val">${fmtMoney(current, 3)}</div></div>
       <div class="ph-stat"><div class="ph-stat-label">Change</div><div class="ph-stat-val" style="color:${changeColor};">${change >= 0 ? '+' : ''}${change.toFixed(1)}%</div></div>
-      <div class="ph-stat"><div class="ph-stat-label">High</div><div class="ph-stat-val" style="color:var(--green);">£${hi.toFixed(3)}</div></div>
-      <div class="ph-stat"><div class="ph-stat-label">Low</div><div class="ph-stat-val" style="color:var(--red);">£${lo.toFixed(3)}</div></div>
+      <div class="ph-stat"><div class="ph-stat-label">High</div><div class="ph-stat-val" style="color:var(--green);">${fmtMoney(hi, 3)}</div></div>
+      <div class="ph-stat"><div class="ph-stat-label">Low</div><div class="ph-stat-val" style="color:var(--red);">${fmtMoney(lo, 3)}</div></div>
       ${totalVol > 0 ? `<div class="ph-stat"><div class="ph-stat-label">Volume</div><div class="ph-stat-val">${totalVol.toLocaleString()}</div></div>` : ''}
     `;
   } else {
@@ -725,19 +725,171 @@ function checkApiStatus() {
 // ========================
 // CSFLOAT PRICING
 // ========================
-// Shared GBP rate cache
+// ========================
+// FX LAYER (v2.9.0 — Phase 1 multi-currency foundation)
+// Base currency is GBP: all stored amounts (buyPrice, sellPrice, gross, fees,
+// price log, snapshots) remain GBP. Records carry provenance fields
+// (origCurrency, origAmount, fxRate = orig→GBP at the TRANSACTION DATE).
+// Display currency converts base→display at the live rate for rendering only.
+// CGT / Trade History / exports are ALWAYS GBP (UK tax currency).
+// ========================
+const FX_CACHE_KEY = 'cs2vault_fx_cache';        // { "YYYY-MM-DD|FROM|TO": rate } — historical rates never change, cached forever
+const DISPLAY_CCY_KEY = 'cs2vault_display_currency';
+const SUPPORTED_CURRENCIES = [
+  { code:'GBP', sym:'£',   label:'GBP — British Pound' },
+  { code:'USD', sym:'$',   label:'USD — US Dollar' },
+  { code:'EUR', sym:'€',   label:'EUR — Euro' },
+  { code:'CAD', sym:'CA$', label:'CAD — Canadian Dollar' },
+  { code:'AUD', sym:'A$',  label:'AUD — Australian Dollar' },
+  { code:'CHF', sym:'CHF ',label:'CHF — Swiss Franc' },
+  { code:'JPY', sym:'¥',   label:'JPY — Japanese Yen' },
+  { code:'PLN', sym:'zł',  label:'PLN — Polish Złoty' },
+  { code:'SEK', sym:'kr',  label:'SEK — Swedish Krona' },
+  { code:'NOK', sym:'kr',  label:'NOK — Norwegian Krone' },
+  { code:'DKK', sym:'kr',  label:'DKK — Danish Krone' },
+  { code:'CNY', sym:'CN¥', label:'CNY — Chinese Yuan' },
+];
+function curSymOf(code) {
+  const c = SUPPORTED_CURRENCIES.find(x => x.code === code);
+  return c ? c.sym : (code + ' ');
+}
+// Fill all currency <select>s (entry selects show codes; settings shows full labels)
+function populateCcySelects() {
+  ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.options.length) return;
+    SUPPORTED_CURRENCIES.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.code; o.textContent = c.code;
+      el.appendChild(o);
+    });
+    el.value = 'GBP';
+  });
+  const s = document.getElementById('settingsDisplayCcy');
+  if (s && !s.options.length) {
+    SUPPORTED_CURRENCIES.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.code; o.textContent = c.label;
+      s.appendChild(o);
+    });
+    s.value = getDisplayCurrency();
+  }
+}
+
+let _displayCcy = 'GBP';   // loaded in initDisplayCurrency()
+let _displayRate = 1;      // GBP -> display, live rate; 1 while GBP or until fetched
+
+const _fxInflight = {};    // in-flight promise memo keyed "date|from|to" ('live' for current)
+
+function loadFxCache() { try { return JSON.parse(window._store[FX_CACHE_KEY]) || {}; } catch { return {}; } }
+function saveFxCacheEntry(key, rate) {
+  try { const c = loadFxCache(); c[key] = rate; window._storeSet(FX_CACHE_KEY, JSON.stringify(c)); } catch(e){}
+}
+
+// getRate(from, to, date?) — date 'YYYY-MM-DD' = historical (frankfurter.app, ECB,
+// cached permanently); no date = live rate (frankfurter latest, er-api fallback).
+async function getRate(from, to, date) {
+  if (from === to) return 1;
+  const isHist = !!(date && date < todayStr());
+  const key = (isHist ? date : 'live') + '|' + from + '|' + to;
+  if (isHist) {
+    const cached = loadFxCache()[key];
+    if (cached) return cached;
+  }
+  if (_fxInflight[key]) return _fxInflight[key];
+  _fxInflight[key] = (async () => {
+    let rate = null;
+    // Primary: frankfurter.app (ECB rates, no key, supports historical)
+    try {
+      const path = isHist ? date : 'latest';
+      const r = await window.cs2vault.fetch('https://api.frankfurter.app/' + path + '?from=' + from + '&to=' + to);
+      if (r.ok) { const d = JSON.parse(r.body); rate = d.rates && d.rates[to] ? d.rates[to] : null; }
+    } catch(e) {}
+    // Fallback: open.er-api.com (live only — cross via its base table)
+    if (!rate) {
+      try {
+        const r = await window.cs2vault.fetch('https://open.er-api.com/v6/latest/' + from);
+        if (r.ok) { const d = JSON.parse(r.body); rate = d.rates && d.rates[to] ? d.rates[to] : null; }
+      } catch(e) {}
+    }
+    if (rate) {
+      if (isHist) saveFxCacheEntry(key, rate);
+      console.log('[FX] ' + from + '->' + to + (isHist ? ' @ ' + date : ' (live)') + ': ' + rate);
+    } else {
+      console.warn('[FX] No rate for ' + from + '->' + to + (isHist ? ' @ ' + date : '') + ' — both sources failed');
+    }
+    delete _fxInflight[key];
+    return rate;
+  })();
+  return _fxInflight[key];
+}
+
+// Display currency
+function getDisplayCurrency() { return window._store[DISPLAY_CCY_KEY] || 'GBP'; }
+async function initDisplayCurrency() {
+  _displayCcy = getDisplayCurrency();
+  if (_displayCcy !== 'GBP') {
+    const r = await getRate('GBP', _displayCcy);
+    _displayRate = r || 1;
+    if (!r) { _displayCcy = 'GBP'; toast('FX rate unavailable — showing GBP', 'info'); }
+  } else {
+    _displayRate = 1;
+  }
+  const sel = document.getElementById('settingsDisplayCcy');
+  if (sel) sel.value = _displayCcy;
+}
+async function setDisplayCurrency(code) {
+  window._storeSet(DISPLAY_CCY_KEY, code);
+  await initDisplayCurrency();
+  // Re-render everything money-bearing on the current tab set
+  try { renderHoldings(); updateStats(); } catch(e){}
+  try { renderSkins(); } catch(e){}
+  try { renderWatchlist(); } catch(e){}
+  try { if (typeof renderAnalytics === 'function') renderAnalytics(); } catch(e){}
+  toast('Display currency: ' + code + (code !== 'GBP' ? ' (tax figures stay GBP)' : ''), 'success');
+}
+
+// Central money formatter — takes a BASE-GBP value, renders in display currency.
+// dp: decimal places (JPY forced to 0). Negative renders as -£3.20.
+function fmtMoney(v, dp) {
+  if (v == null || isNaN(v)) return '—';
+  if (dp == null) dp = 2;
+  const conv = Number(v) * _displayRate;
+  if (_displayCcy === 'JPY') dp = 0;
+  const sym = curSymOf(_displayCcy);
+  return (conv < 0 ? '-' : '') + sym + Math.abs(conv).toFixed(dp);
+}
+// GBP-locked formatter for tax/accounting surfaces (CGT, trade history, exports)
+function fmtGBP(v, dp) {
+  if (v == null || isNaN(v)) return '—';
+  if (dp == null) dp = 2;
+  return (v < 0 ? '-' : '') + '£' + Math.abs(Number(v)).toFixed(dp);
+}
+// Localised variant (thousands separators) for chart axes/tooltips
+function fmtMoneyLoc(v, dp) {
+  if (v == null || isNaN(v)) return '—';
+  if (dp == null) dp = 2;
+  const conv = Number(v) * _displayRate;
+  if (_displayCcy === 'JPY') dp = 0;
+  const sym = curSymOf(_displayCcy);
+  return (conv < 0 ? '-' : '') + sym + Math.abs(conv).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+// Convert an amount entered in `ccy` on `date` to base GBP. Returns { base, fxRate } or null on FX failure.
+async function toBaseGBP(amount, ccy, date) {
+  if (!ccy || ccy === 'GBP') return { base: amount, fxRate: 1 };
+  const r = await getRate(ccy, 'GBP', date || todayStr());
+  if (!r) return null;
+  return { base: amount * r, fxRate: r };
+}
+
+// Legacy wrapper — USD->GBP live rate for the CSFloat lane (prices come back in USD cents)
 let _gbpRate = null;
-let _gbpRatePromise = null; // in-flight memo so parallel CSFloat calls share ONE FX fetch
+let _gbpRatePromise = null; // kept: refresh paths reset these to force a re-fetch per bulk run
 async function getGBPRate() {
   if (_gbpRate) return _gbpRate;
   if (_gbpRatePromise) return _gbpRatePromise;
   _gbpRatePromise = (async () => {
-    try {
-      const fx = await window.cs2vault.fetch('https://open.er-api.com/v6/latest/USD');
-      if (fx.ok) { const d = JSON.parse(fx.body); _gbpRate = d.rates?.GBP || 0.79; }
-      else _gbpRate = 0.79;
-    } catch(e) { _gbpRate = 0.79; }
-    console.log(`[FX] GBP rate: ${_gbpRate}`);
+    _gbpRate = (await getRate('USD', 'GBP')) || 0.79;
     return _gbpRate;
   })();
   return _gbpRatePromise;
@@ -1283,7 +1435,7 @@ const PLAT_ICONS = {
 };
 
 function renderPriceColumns(item, p, ago) {
-  const fmt = v => v != null ? `£${Number(v).toFixed(2)}` : '—';
+  const fmt = v => v != null ? `${fmtMoney(Number(v), 2)}` : '—';
 
   if (p.platforms) {
     const platHtml = (name) => {
@@ -1385,12 +1537,12 @@ function renderHoldings() {
   empty.style.display = filtered.length ? 'none' : 'block';
   tbody.innerHTML = filtered.map(item => {
     const p = item.prices || {};
-    const fmt = v => v != null ? `£${Number(v).toFixed(2)}` : '<span class="price-loading">—</span>';
+    const fmt = v => v != null ? `${fmtMoney(Number(v), 2)}` : '<span class="price-loading">—</span>';
     const best = getBestPrice(item);
     const pnl = best != null ? (best - item.buyPrice) * item.qty : null;
     const pnlPct = best != null ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
     const pnlHtml = pnl != null
-      ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} £${Math.abs(pnl).toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
+      ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(pnl), 2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
       : '<span class="price-loading">No price data</span>';
     const roi = pnlPct != null ? pnlPct / item.qty : null;
     const roiHtml = pnlPct != null ? `<span class="roi-pill">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%</span>` : '<span class="price-loading">—</span>';
@@ -1407,10 +1559,10 @@ function renderHoldings() {
       const hit = currentP >= target;
       const progress = Math.min(100, Math.max(0, (currentP / target) * 100));
       if (hit) {
-        targetHtml = `<div class="target-hit" title="Target £${target.toFixed(2)} REACHED!">🎯 £${target.toFixed(2)} ✓</div>`;
+        targetHtml = `<div class="target-hit" title="Target ${fmtMoney(target, 2)} REACHED!">🎯 ${fmtMoney(target, 2)} ✓</div>`;
       } else {
-        targetHtml = `<div class="target-progress" title="Target: £${target.toFixed(2)}">
-          <span style="font-size:10px;color:var(--text3);">🎯 £${target.toFixed(2)} <span style="color:var(--orange)">${pct.toFixed(1)}%</span></span>
+        targetHtml = `<div class="target-progress" title="Target: ${fmtMoney(target, 2)}">
+          <span style="font-size:10px;color:var(--text3);">🎯 ${fmtMoney(target, 2)} <span style="color:var(--orange)">${pct.toFixed(1)}%</span></span>
           <div style="height:3px;background:var(--border);border-radius:2px;margin-top:2px;">
             <div style="width:${progress}%;height:100%;background:var(--orange);border-radius:2px;transition:width 0.3s;"></div>
           </div>
@@ -1423,9 +1575,9 @@ function renderHoldings() {
       <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
       <td><span class="type-badge ${typeBadge[item.type]}">${typeLabels[item.type]}</span></td>
       <td class="mono">${item.qty}</td>
-      <td class="mono">£${Number(item.buyPrice).toFixed(2)}</td>
+      <td class="mono">${fmtMoney(Number(item.buyPrice), 2)}</td>
       <td class="mono">${item.buyDate || '—'}</td>
-      <td class="mono">£${(item.buyPrice * item.qty).toFixed(2)}</td>
+      <td class="mono">${fmtMoney((item.buyPrice * item.qty), 2)}</td>
       ${renderPriceColumns(item, p, ago)}
       <td>${pnlHtml}</td>
       <td><div class="action-btns row-actions">
@@ -1459,18 +1611,18 @@ function updateStats() {
     fees += fee;
     realised += gross - fee - (t.buyPrice * t.qty);
   });
-  document.getElementById('stat-invested').textContent = `£${invested.toFixed(2)}`;
+  document.getElementById('stat-invested').textContent = `${fmtMoney(invested, 2)}`;
   document.getElementById('stat-items').textContent = `${items} item${items !== 1 ? 's' : ''}`;
-  document.getElementById('stat-value').textContent = `£${afterFee.toFixed(2)}`;
-  document.getElementById('stat-after-fee').textContent = `£${value.toFixed(2)} gross`;
+  document.getElementById('stat-value').textContent = `${fmtMoney(afterFee, 2)}`;
+  document.getElementById('stat-after-fee').textContent = `${fmtMoney(value, 2)} gross`;
   const pnlEl = document.getElementById('stat-pnl');
-  pnlEl.textContent = `${pnl >= 0 ? '+' : ''}£${pnl.toFixed(2)}`;
+  pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 2)}`;
   pnlEl.className = `stat-value ${pnl >= 0 ? 'positive' : 'negative'}`;
   document.getElementById('stat-pnl-card').className = `stat-card ${pnl >= 0 ? 'green' : 'red'}`;
   document.getElementById('stat-pnl-pct').textContent = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
-  document.getElementById('stat-realised').textContent = `${realised >= 0 ? '+' : ''}£${realised.toFixed(2)}`;
+  document.getElementById('stat-realised').textContent = `${realised >= 0 ? '+' : ''}${fmtMoney(realised, 2)}`;
   document.getElementById('stat-trades').textContent = `${tradeHistory.length} trade${tradeHistory.length !== 1 ? 's' : ''}`;
-  document.getElementById('stat-fees').textContent = `£${fees.toFixed(2)}`;
+  document.getElementById('stat-fees').textContent = `${fmtMoney(fees, 2)}`;
   renderAllocBar();
   renderAnalytics();
 }
@@ -1517,7 +1669,7 @@ function renderAllocBar() {
     const pct = (totals[b.key] / total) * 100;
     const dim = curFilter && curFilter !== b.filter;
     return '<div onclick="allocFilterClick(\'' + (b.filter || '') + '\')" ' +
-      'title="' + b.label + ': £' + totals[b.key].toFixed(0) + ' (' + pct.toFixed(1) + '%)" ' +
+      'title="' + b.label + ': ' + fmtMoney(totals[b.key], 0) + ' (' + pct.toFixed(1) + '%)" ' +
       'style="width:' + pct + '%;background:' + b.color + ';cursor:' + (b.filter ? 'pointer' : 'default') + ';' +
       (dim ? 'opacity:.25;' : '') + 'transition:opacity .15s;"></div>';
   }).join('');
@@ -1528,7 +1680,7 @@ function renderAllocBar() {
     return '<span onclick="allocFilterClick(\'' + (b.filter || '') + '\')" ' +
       'style="display:inline-flex;align-items:center;gap:5px;font-family:\'Share Tech Mono\',monospace;font-size:10px;color:var(--text2);cursor:' + (b.filter ? 'pointer' : 'default') + ';' + (dim ? 'opacity:.35;' : '') + '">' +
       '<span style="width:8px;height:8px;border-radius:2px;background:' + b.color + ';display:inline-block;"></span>' +
-      b.label + ' <span style="color:var(--text3)">' + pct.toFixed(1) + '% · £' + totals[b.key].toFixed(0) + '</span></span>';
+      b.label + ' <span style="color:var(--text3)">' + pct.toFixed(1) + '% · ' + fmtMoney(totals[b.key], 0) + '</span></span>';
   }).join('');
 
   document.getElementById('allocFilterHint').textContent = curFilter ? 'filtered — click again to clear' : 'click to filter';
@@ -1637,26 +1789,26 @@ function renderCGTSummary() {
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Realised Gains</div>
-        <div class="cgt-card-val" style="color:var(--green);">+£${cgt.totalGains.toFixed(2)}</div>
+        <div class="cgt-card-val" style="color:var(--green);">+${fmtGBP(cgt.totalGains, 2)}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Realised Losses</div>
-        <div class="cgt-card-val" style="color:var(--red);">-£${cgt.totalLosses.toFixed(2)}</div>
+        <div class="cgt-card-val" style="color:var(--red);">-${fmtGBP(cgt.totalLosses, 2)}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Net Gain</div>
-        <div class="cgt-card-val" style="color:${cgt.netGain >= 0 ? 'var(--green)' : 'var(--red)'};">${cgt.netGain >= 0 ? '+' : ''}£${cgt.netGain.toFixed(2)}</div>
+        <div class="cgt-card-val" style="color:${cgt.netGain >= 0 ? 'var(--green)' : 'var(--red)'};">${cgt.netGain >= 0 ? '+' : ''}${fmtGBP(cgt.netGain, 2)}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Allowance Used</div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <div class="cgt-card-val" style="font-size:14px;">£${cgt.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+          <div class="cgt-card-val" style="font-size:14px;">${fmtGBP(cgt.allowanceUsed, 0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
           <span class="plat-badge plat-badge-cf" style="font-size:8px;">CSFloat only</span>
         </div>
         <div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${cgt.allowancePct}%;background:${barColor};"></div></div>
         ${steamDiffers ? `
         <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
-          <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">£${incl.allowanceUsed.toFixed(0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+          <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">${fmtGBP(incl.allowanceUsed, 0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
           <span class="plat-badge plat-badge-stm" style="font-size:8px;">incl. Steam</span>
         </div>
         <div class="cgt-allowance-bar" style="opacity:.55;"><div class="cgt-allowance-fill" style="width:${incl.allowancePct}%;background:${inclBarColor};"></div></div>
@@ -1665,9 +1817,9 @@ function renderCGTSummary() {
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Est. Tax Owed</div>
-        <div class="cgt-card-val" style="color:${cgt.taxableGain > 0 ? 'var(--red)' : 'var(--green)'};">${cgt.taxableGain > 0 ? '£' + cgt.taxBasic.toFixed(2) + ' – £' + cgt.taxHigher.toFixed(2) : '£0.00'}</div>
+        <div class="cgt-card-val" style="color:${cgt.taxableGain > 0 ? 'var(--red)' : 'var(--green)'};">${cgt.taxableGain > 0 ? fmtGBP(cgt.taxBasic, 2) + ' – £' + cgt.taxHigher.toFixed(2) : '£0.00'}</div>
         <div style="font-size:9px;color:var(--text3);margin-top:2px;">${cgt.taxableGain > 0 ? '18% basic / 24% higher' : 'Within allowance'}</div>
-        ${steamDiffers && incl.taxableGain > 0 ? `<div style="font-size:8px;color:var(--text3);margin-top:4px;">incl. Steam: £${incl.taxBasic.toFixed(2)} – £${incl.taxHigher.toFixed(2)}</div>` : ''}
+        ${steamDiffers && incl.taxableGain > 0 ? `<div style="font-size:8px;color:var(--text3);margin-top:4px;">incl. Steam: ${fmtGBP(incl.taxBasic, 2)} – ${fmtGBP(incl.taxHigher, 2)}</div>` : ''}
       </div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'Share Tech Mono',monospace;text-align:center;">
@@ -1686,15 +1838,15 @@ async function exportCGTReport() {
     [`Generated: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}`],
     [''],
     ['SUMMARY'],
-    [`Total Realised Gains,£${cgt.totalGains.toFixed(2)}`],
-    [`Total Realised Losses,-£${cgt.totalLosses.toFixed(2)}`],
-    [`Total Fees Paid,£${cgt.totalFees.toFixed(2)}`],
-    [`Net Gain/Loss,£${cgt.netGain.toFixed(2)}`],
-    [`Annual CGT Allowance,£${CGT_ALLOWANCE.toFixed(2)}`],
-    [`Allowance Used,£${cgt.allowanceUsed.toFixed(2)}`],
-    [`Taxable Gain,£${cgt.taxableGain.toFixed(2)}`],
-    [`Estimated Tax (Basic 18%),£${cgt.taxBasic.toFixed(2)}`],
-    [`Estimated Tax (Higher 24%),£${cgt.taxHigher.toFixed(2)}`],
+    [`Total Realised Gains,${fmtGBP(cgt.totalGains, 2)}`],
+    [`Total Realised Losses,-${fmtGBP(cgt.totalLosses, 2)}`],
+    [`Total Fees Paid,${fmtGBP(cgt.totalFees, 2)}`],
+    [`Net Gain/Loss,${fmtGBP(cgt.netGain, 2)}`],
+    [`Annual CGT Allowance,${fmtGBP(CGT_ALLOWANCE, 2)}`],
+    [`Allowance Used,${fmtGBP(cgt.allowanceUsed, 2)}`],
+    [`Taxable Gain,${fmtGBP(cgt.taxableGain, 2)}`],
+    [`Estimated Tax (Basic 18%),${fmtGBP(cgt.taxBasic, 2)}`],
+    [`Estimated Tax (Higher 24%),${fmtGBP(cgt.taxHigher, 2)}`],
     [''],
     ['DISPOSALS'],
     ['Date,Item,Type,Qty,Platform,Cost Basis (£),Gross Proceeds (£),Platform Fee %,Fee Amount (£),Net Realised (£),Gain/Loss (£)'],
@@ -1778,39 +1930,39 @@ function updateCashOutCalc() {
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;">
       <div class="co-step">
         <div class="co-step-label">1️⃣ Steam Market sell price</div>
-        <div class="co-step-val">£${steamSell.toFixed(2)}</div>
+        <div class="co-step-val">${fmtGBP(steamSell, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label"><span class="co-step-fee">Steam fee (15%)</span></div>
-        <div class="co-step-fee">-£${steamTax.toFixed(2)}</div>
+        <div class="co-step-fee">-${fmtGBP(steamTax, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label">2️⃣ Steam Wallet balance</div>
-        <div class="co-step-val">£${steamWallet.toFixed(2)}</div>
+        <div class="co-step-val">${fmtGBP(steamWallet, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label">3️⃣ Buy bridge skin on Steam → sell on CSFloat</div>
-        <div class="co-step-val">£${csfloatSellActual.toFixed(2)}</div>
+        <div class="co-step-val">${fmtGBP(csfloatSellActual, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label"><span class="co-step-fee">CSFloat seller fee (${csfloatFee}%)</span></div>
-        <div class="co-step-fee">-£${csfloatFeeAmt.toFixed(2)}</div>
+        <div class="co-step-fee">-${fmtGBP(csfloatFeeAmt, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label">4️⃣ After CSFloat fee</div>
-        <div class="co-step-val">£${afterCsfloatFee.toFixed(2)}</div>
+        <div class="co-step-val">${fmtGBP(afterCsfloatFee, 2)}</div>
       </div>
       <div class="co-step">
         <div class="co-step-label"><span class="co-step-fee">Withdrawal fee (${withdrawFee}%)</span></div>
-        <div class="co-step-fee">-£${withdrawFeeAmt.toFixed(2)}</div>
+        <div class="co-step-fee">-${fmtGBP(withdrawFeeAmt, 2)}</div>
       </div>
     </div>
     <div class="co-final">
       <div>
         <div class="co-final-label">Cash in Hand</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px;">Total fees: £${totalFees.toFixed(2)} (${totalLossPct.toFixed(1)}% loss)</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">Total fees: ${fmtGBP(totalFees, 2)} (${totalLossPct.toFixed(1)}% loss)</div>
       </div>
-      <div class="co-final-val" style="color:var(--green);">£${cashInHand.toFixed(2)}</div>
+      <div class="co-final-val" style="color:var(--green);">${fmtGBP(cashInHand, 2)}</div>
     </div>`;
 
   // CGT estimate
@@ -1829,19 +1981,19 @@ function updateCashOutCalc() {
         <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">CGT Estimate (${cgtRate}% rate)</div>
         <div class="co-step">
           <div class="co-step-label">Current year realised gains</div>
-          <div class="co-step-val">£${cgt.netGain.toFixed(2)}</div>
+          <div class="co-step-val">${fmtGBP(cgt.netGain, 2)}</div>
         </div>
         <div class="co-step">
           <div class="co-step-label">Remaining allowance</div>
-          <div class="co-step-val" style="color:var(--green);">£${remainingAllowance.toFixed(2)}</div>
+          <div class="co-step-val" style="color:var(--green);">${fmtGBP(remainingAllowance, 2)}</div>
         </div>
         <div class="co-step">
           <div class="co-step-label">Taxable amount (if any)</div>
-          <div class="co-step-val" style="color:${totalTaxableAfterThis > 0 ? 'var(--red)' : 'var(--green)'};">£${totalTaxableAfterThis.toFixed(2)}</div>
+          <div class="co-step-val" style="color:${totalTaxableAfterThis > 0 ? 'var(--red)' : 'var(--green)'};">${fmtGBP(totalTaxableAfterThis, 2)}</div>
         </div>
         <div class="co-step">
           <div class="co-step-label">Estimated tax owed</div>
-          <div class="co-step-val" style="color:${estimatedTax > 0 ? 'var(--red)' : 'var(--green)'};">£${estimatedTax.toFixed(2)}</div>
+          <div class="co-step-val" style="color:${estimatedTax > 0 ? 'var(--red)' : 'var(--green)'};">${fmtGBP(estimatedTax, 2)}</div>
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.</div>
       </div>`;
@@ -1870,11 +2022,11 @@ function renderHistory() {
     return '<div class="sold-card">' +
       '<div><strong>' + escHtml(t.name) + '</strong>' +
       '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + ' ' + cgtBadge + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£' + Number(t.buyPrice).toFixed(2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£' + Number(t.sellPrice).toFixed(2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-£' + fee.toFixed(2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Realised</div><div class="sold-col-val">£' + netRealised.toFixed(2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + '£' + net.toFixed(2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">' + fmtGBP(Number(t.buyPrice), 2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">' + fmtGBP(Number(t.sellPrice), 2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-' + fmtGBP(fee, 2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Realised</div><div class="sold-col-val">' + fmtGBP(netRealised, 2) + '</div></div>' +
+      '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + fmtGBP(net, 2) + '</div></div>' +
       '<div class="sold-col sold-col-action">' + (t.id ? '<button class="btn btn-danger btn-sm" title="Delete this trade" onclick="deleteTrade(\'' + t.id + '\')">✕</button>' : '') + '</div>' +
       '</div>';
   }).join('');
@@ -1906,7 +2058,7 @@ function renderAnalytics() {
     const pnl = d.value - d.invested;
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
       <div><span class="type-badge ${typeBadge[type]}">${typeLabels[type]}</span> <span style="font-size:11px;color:var(--text3);margin-left:6px;">${d.count} items</span></div>
-      <div style="text-align:right;"><div class="mono" style="font-size:12px;">£${d.invested.toFixed(2)} in</div><div class="mono ${pnl >= 0 ? 'positive' : 'negative'}" style="font-size:11px;">${pnl >= 0 ? '+' : ''}£${pnl.toFixed(2)}</div></div>
+      <div style="text-align:right;"><div class="mono" style="font-size:12px;">${fmtMoney(d.invested, 2)} in</div><div class="mono ${pnl >= 0 ? 'positive' : 'negative'}" style="font-size:11px;">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 2)}</div></div>
     </div>`;
   }).join('') || '<p style="color:var(--text3);font-size:13px;">No data</p>';
 
@@ -1920,11 +2072,11 @@ function renderAnalytics() {
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="rank-badge ${i < 3 ? rankClasses[i] : 'rank-n'}">${i+1}</span>
         <div><div style="font-size:12px;font-weight:600;">${escHtml(h.name.slice(0,30))}</div>
-        <div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;">£${(h.buyPrice*h.qty).toFixed(0)} invested · qty ${h.qty}</div></div>
+        <div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;">${fmtMoney((h.buyPrice*h.qty), 0)} invested · qty ${h.qty}</div></div>
       </div>
       <div style="text-align:right;">
         <span class="pnl-pill ${pct >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</span>
-        <div style="font-size:10px;font-family:'Share Tech Mono',monospace;margin-top:3px;${abs>=0?'color:var(--green)':'color:var(--red);'}">£${abs >= 0 ? '+' : ''}${abs.toFixed(2)}</div>
+        <div style="font-size:10px;font-family:'Share Tech Mono',monospace;margin-top:3px;${abs>=0?'color:var(--green)':'color:var(--red);'}">${abs >= 0 ? '+' : ''}${fmtMoney(abs, 2)}</div>
       </div>
     </div>`;
   };
@@ -1944,7 +2096,7 @@ function renderAnalytics() {
     `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div style="font-family:'Share Tech Mono',monospace;font-size:13px;">${m}</div>
       <div style="display:flex;gap:20px;align-items:center;"><span style="font-size:12px;color:var(--text3);">${d.trades} trade${d.trades!==1?'s':''}</span>
-      <span class="pnl-pill ${d.profit>=0?'pnl-pos':'pnl-neg'}">${d.profit>=0?'+':''}£${d.profit.toFixed(2)}</span></div>
+      <span class="pnl-pill ${d.profit>=0?'pnl-pos':'pnl-neg'}">${d.profit>=0?'+':''}${fmtMoney(d.profit, 2)}</span></div>
     </div>`
   ).join('') || '<p style="color:var(--text3);font-size:13px;">No completed trades yet</p>';
   renderTrending();
@@ -2019,7 +2171,7 @@ function renderAllocationChart() {
           callbacks: {
             label: (ctx) => {
               const pct = totalInvested > 0 ? (ctx.raw / totalInvested * 100).toFixed(1) : 0;
-              return ` £${ctx.raw.toFixed(2)} (${pct}%)`;
+              return ` ${fmtMoney(ctx.raw, 2)} (${pct}%)`;
             },
           },
         },
@@ -2037,7 +2189,7 @@ function renderAllocationChart() {
           <span style="width:10px;height:10px;border-radius:2px;background:${bgColors[i]};flex-shrink:0;"></span>
           <span>${d.label}</span>
           <span style="color:var(--text3);">${pct}%</span>
-          <span style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'};">${pnl >= 0 ? '+' : ''}£${pnl.toFixed(0)}</span>
+          <span style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'};">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 0)}</span>
         </div>`;
       }).join('')}
     </div>`;
@@ -2056,6 +2208,8 @@ function openAddModal() {
   document.getElementById('itemBuyPrice').value = '';
   document.getElementById('itemBuyDate').value = todayStr();
   document.getElementById('itemIsTuf').checked = false;
+  const ccyEl = document.getElementById('itemBuyCcy');
+  if (ccyEl) ccyEl.value = getDisplayCurrency();
   openModal('itemModal');
 }
 function openEditModal(id) {
@@ -2066,7 +2220,15 @@ function openEditModal(id) {
   document.getElementById('itemName').value = item.name;
   document.getElementById('itemType').value = item.type;
   document.getElementById('itemQty').value = item.qty;
-  document.getElementById('itemBuyPrice').value = item.buyPrice;
+  // Show the originally entered amount + currency when present (non-GBP entry)
+  const ccyEl2 = document.getElementById('itemBuyCcy');
+  if (item.origCurrency && item.origCurrency !== 'GBP' && item.origAmount != null) {
+    document.getElementById('itemBuyPrice').value = item.origAmount;
+    if (ccyEl2) ccyEl2.value = item.origCurrency;
+  } else {
+    document.getElementById('itemBuyPrice').value = item.buyPrice;
+    if (ccyEl2) ccyEl2.value = 'GBP';
+  }
   document.getElementById('itemBuyDate').value = item.buyDate || '';
   document.getElementById('itemMarketHash').value = item.marketHash || '';
   document.getElementById('itemNotes').value = item.notes || '';
@@ -2085,16 +2247,31 @@ function openTopupModal(id) {
 
   // Show current position
   document.getElementById('topupCurrQty').textContent   = item.qty.toLocaleString();
-  document.getElementById('topupCurrAvg').textContent   = `£${item.buyPrice.toFixed(3)}`;
-  document.getElementById('topupCurrTotal').textContent = `£${(item.qty * item.buyPrice).toFixed(2)}`;
+  document.getElementById('topupCurrAvg').textContent   = `${fmtMoney(item.buyPrice, 3)}`;
+  document.getElementById('topupCurrTotal').textContent = `${fmtMoney((item.qty * item.buyPrice), 2)}`;
 
   // Reset inputs
   document.getElementById('topupQty').value   = '';
   document.getElementById('topupPrice').value = '';
   document.getElementById('topupDate').value  = todayStr();
   document.getElementById('topupPreview').style.display = 'none';
+  const tcEl = document.getElementById('topupCcy');
+  if (tcEl) tcEl.value = getDisplayCurrency();
+  _topupCcyRate = null; // resolved lazily by updateTopupPreview / saveTopup
+  onTopupCcyChange();
 
   openModal('topupModal');
+}
+
+// Live ccy→GBP rate for the top-up preview (exact transaction-date rate fetched on save)
+let _topupCcyRate = 1;
+async function onTopupCcyChange() {
+  const ccy = (document.getElementById('topupCcy') || {}).value || 'GBP';
+  if (ccy === 'GBP') { _topupCcyRate = 1; updateTopupPreview(); return; }
+  _topupCcyRate = null;
+  const r = await getRate(ccy, 'GBP');
+  _topupCcyRate = r || null;
+  updateTopupPreview();
 }
 
 function updateTopupPreview() {
@@ -2102,8 +2279,11 @@ function updateTopupPreview() {
   const item  = holdings.find(h => h.id === id);
   if (!item) return;
 
+  const ccy = (document.getElementById('topupCcy') || {}).value || 'GBP';
   const addQty   = parseInt(document.getElementById('topupQty').value)    || 0;
-  const addPrice = parseFloat(document.getElementById('topupPrice').value) || 0;
+  const addPriceEntered = parseFloat(document.getElementById('topupPrice').value) || 0;
+  const rate = ccy === 'GBP' ? 1 : _topupCcyRate;
+  const addPrice = rate ? addPriceEntered * rate : 0; // GBP
 
   if (addQty <= 0 || addPrice <= 0) {
     document.getElementById('topupPreview').style.display = 'none';
@@ -2118,30 +2298,36 @@ function updateTopupPreview() {
   const diffPct   = (priceDiff / item.buyPrice * 100);
 
   document.getElementById('topupNewQty').textContent   = newQty.toLocaleString();
-  document.getElementById('topupNewAvg').textContent   = `£${newAvg.toFixed(3)}`;
-  document.getElementById('topupNewTotal').textContent = `£${newTotal.toFixed(2)}`;
+  document.getElementById('topupNewAvg').textContent   = `${fmtMoney(newAvg, 3)}`;
+  document.getElementById('topupNewTotal').textContent = `${fmtMoney(newTotal, 2)}`;
 
   const direction = priceDiff > 0 ? 'above' : priceDiff < 0 ? 'below' : 'at';
   const diffColor = priceDiff < 0 ? 'var(--green)' : priceDiff > 0 ? 'var(--red)' : 'var(--text3)';
   document.getElementById('topupAvgNote').innerHTML =
-    `Buying <strong>${addQty.toLocaleString()}</strong> units at £${addPrice.toFixed(3)} — ` +
+    `Buying <strong>${addQty.toLocaleString()}</strong> units at ${fmtMoney(addPrice, 3)} — ` +
     `<span style="color:${diffColor};">${Math.abs(diffPct).toFixed(1)}% ${direction} your current avg</span>. ` +
-    `Avg cost basis moves from £${item.buyPrice.toFixed(3)} → £${newAvg.toFixed(3)}.`;
+    `Avg cost basis moves from ${fmtMoney(item.buyPrice, 3)} → ${fmtMoney(newAvg, 3)}.`;
 
   document.getElementById('topupPreview').style.display = 'block';
 }
 
-function saveTopup() {
+async function saveTopup() {
   const id       = document.getElementById('topupId').value;
   const item     = holdings.find(h => h.id === id);
   if (!item) return;
 
   const addQty   = parseInt(document.getElementById('topupQty').value);
-  const addPrice = parseFloat(document.getElementById('topupPrice').value);
+  const addPriceEntered = parseFloat(document.getElementById('topupPrice').value);
   const date     = document.getElementById('topupDate').value;
+  const ccy      = (document.getElementById('topupCcy') || {}).value || 'GBP';
 
   if (!addQty || addQty <= 0)                { toast('Enter a valid quantity', 'error'); return; }
-  if (!addPrice || addPrice <= 0)             { toast('Enter a valid price', 'error');    return; }
+  if (!addPriceEntered || addPriceEntered <= 0) { toast('Enter a valid price', 'error');    return; }
+
+  // Exact rate at the purchase date
+  const fx = await toBaseGBP(addPriceEntered, ccy, date);
+  if (!fx) { toast('FX rate unavailable for ' + ccy + ' — top-up not saved', 'error'); return; }
+  const addPrice = fx.base; // GBP
 
   const oldTotal = item.qty * item.buyPrice;
   const newQty   = item.qty + addQty;
@@ -2152,25 +2338,32 @@ function saveTopup() {
   item.buyPrice = +newAvg.toFixed(4);
   // Update date to most recent purchase if newer
   if (date && (!item.buyDate || date > item.buyDate)) item.buyDate = date;
-  // Append note about the top-up
-  const topupNote = `+${addQty.toLocaleString()} @ £${addPrice.toFixed(3)} on ${date}`;
+  // Append note about the top-up (records original-currency entry when non-GBP)
+  const ccyNote = ccy !== 'GBP' ? ` (${curSymOf(ccy)}${addPriceEntered.toFixed(3)} ${ccy} @ ${fx.fxRate.toFixed(4)})` : '';
+  const topupNote = `+${addQty.toLocaleString()} @ ${fmtMoney(addPrice, 3)}${ccyNote} on ${date}`;
   item.notes = item.notes ? item.notes + ' | ' + topupNote : topupNote;
 
   saveData(holdings);
   renderHoldings();
   updateStats();
   closeModal('topupModal');
-  toast(`Added ${addQty.toLocaleString()} × ${item.name} @ £${addPrice.toFixed(3)} — new avg £${newAvg.toFixed(3)}`, 'success');
+  toast(`Added ${addQty.toLocaleString()} × ${item.name} @ ${fmtMoney(addPrice, 3)} — new avg ${fmtMoney(newAvg, 3)}`, 'success');
 }
 
-function saveItem() {
+async function saveItem() {
   const name = document.getElementById('itemName').value.trim();
-  const buyPrice = parseFloat(document.getElementById('itemBuyPrice').value);
-  if (!name || isNaN(buyPrice) || buyPrice <= 0) { toast('Fill in Name and Buy Price', 'error'); return; }
+  const buyPriceEntered = parseFloat(document.getElementById('itemBuyPrice').value);
+  if (!name || isNaN(buyPriceEntered) || buyPriceEntered <= 0) { toast('Fill in Name and Buy Price', 'error'); return; }
+  const ccy = (document.getElementById('itemBuyCcy') || {}).value || 'GBP';
+  const buyDate = document.getElementById('itemBuyDate').value;
+  // Convert entered amount to base GBP at the TRANSACTION date (Phase 1 FX provenance)
+  const fx = await toBaseGBP(buyPriceEntered, ccy, buyDate);
+  if (!fx) { toast('FX rate unavailable for ' + ccy + ' — item not saved', 'error'); return; }
   const obj = {
     name, type: document.getElementById('itemType').value,
     qty: parseInt(document.getElementById('itemQty').value) || 1,
-    buyPrice, buyDate: document.getElementById('itemBuyDate').value,
+    buyPrice: +fx.base.toFixed(6), buyDate,
+    origCurrency: ccy, origAmount: buyPriceEntered, fxRate: fx.fxRate,
     marketHash: document.getElementById('itemMarketHash').value.trim(),
     notes: document.getElementById('itemNotes').value.trim(),
     isTuf: document.getElementById('itemIsTuf').checked
@@ -2234,7 +2427,7 @@ function updateBulkBar() {
     const invested = sel.reduce((a, h) => a + h.buyPrice * h.qty, 0);
     const units = sel.reduce((a, h) => a + h.qty, 0);
     document.getElementById('bulkCount').textContent =
-      n + ' selected · ' + units.toLocaleString() + ' units · £' + invested.toFixed(2) + ' invested';
+      n + ' selected · ' + units.toLocaleString() + ' units · ' + fmtMoney(invested, 2) + ' invested';
   }
 }
 
@@ -2244,7 +2437,7 @@ function bulkDeleteSelected() {
   const sel = holdings.filter(h => _bulkSel.has(h.id));
   const invested = sel.reduce((a, h) => a + h.buyPrice * h.qty, 0);
   const preview = sel.slice(0, 5).map(h => '• ' + h.name).join('\n') + (n > 5 ? '\n…and ' + (n - 5) + ' more' : '');
-  if (!confirm('Delete ' + n + ' holding' + (n !== 1 ? 's' : '') + ' (£' + invested.toFixed(2) + ' invested)?\n\n' + preview + '\n\nThis does NOT record any sales — records are simply removed.')) return;
+  if (!confirm('Delete ' + n + ' holding' + (n !== 1 ? 's' : '') + ' (' + fmtMoney(invested, 2) + ' invested)?\n\n' + preview + '\n\nThis does NOT record any sales — records are simply removed.')) return;
   // Atomic: re-read storage, filter, write back
   const fresh = loadData();
   holdings = fresh.filter(h => !_bulkSel.has(h.id));
@@ -2292,7 +2485,7 @@ function openSellModal(id) {
   document.getElementById('sellItemName').value = item.name;
   document.getElementById('sellQty').value = item.qty;
   document.getElementById('sellQty').max = item.qty;
-  document.getElementById('sellPrice').value = getBestPrice(item) ? getBestPrice(item).toFixed(2) : '';
+  document.getElementById('sellPrice').value = getBestPrice(item) ? (getBestPrice(item) * _displayRate).toFixed(2) : '';
   document.getElementById('sellDate').value = todayStr();
   document.getElementById('sellFee').value = '2';
   // Reset to defaults
@@ -2300,8 +2493,31 @@ function openSellModal(id) {
   setSellMode('perunit');
   document.getElementById('sellTotalReceived').value = '';
   document.getElementById('sellReverseCalc').style.display = 'none';
-  updateSellCalc();
+  const scEl = document.getElementById('sellCcy');
+  if (scEl) scEl.value = getDisplayCurrency();
+  onSellCcyChange();
   openModal('sellModal');
+}
+
+// Live ccy→GBP rate for sell previews (exact transaction-date rate fetched on confirm)
+let _sellCcyRate = 1;
+function getSellCcy() { return (document.getElementById('sellCcy') || {}).value || 'GBP'; }
+async function onSellCcyChange() {
+  const ccy = getSellCcy();
+  if (ccy === 'GBP') { _sellCcyRate = 1; }
+  else {
+    _sellCcyRate = null;
+    _sellCcyRate = (await getRate(ccy, 'GBP')) || null;
+  }
+  if (_sellMode === 'total') updateSellFromTotal(); else updateSellCalc();
+}
+// Resolve the exact ccy→GBP rate at the sale date. Returns { ccy, fxRate } or null (toasts on failure).
+async function resolveSellFx(sellDate) {
+  const ccy = getSellCcy();
+  if (ccy === 'GBP') return { ccy, fxRate: 1 };
+  const r = await getRate(ccy, 'GBP', sellDate || todayStr());
+  if (!r) { toast('FX rate unavailable for ' + ccy + ' — sale not recorded', 'error'); return null; }
+  return { ccy, fxRate: r };
 }
 
 let _sellFeePercent = 2;
@@ -2354,34 +2570,38 @@ function updateSellFromTotal() {
   const totalReceived = parseFloat(document.getElementById('sellTotalReceived').value) || 0;
   const fee = _sellFeePercent;
   const reverseEl = document.getElementById('sellReverseCalc');
+  const ccy = getSellCcy();
+  const sym = curSymOf(ccy);
+  const rate = ccy === 'GBP' ? 1 : _sellCcyRate;
 
   if (totalReceived <= 0 || qty <= 0) {
     reverseEl.style.display = 'none';
-    document.getElementById('calcGross').textContent = '£0.00';
-    document.getElementById('calcFee').textContent = '-£0.00';
+    document.getElementById('calcGross').textContent = sym + '0.00';
+    document.getElementById('calcFee').textContent = '-' + sym + '0.00';
     const pe = document.getElementById('calcProfit');
     pe.textContent = '£0.00'; pe.className = 'sold-col-val';
     return;
   }
 
   // Reverse calculate: totalReceived = gross * (1 - fee/100)
-  // So gross = totalReceived / (1 - fee/100)
+  // So gross = totalReceived / (1 - fee/100)   (all in entry currency)
   const gross = totalReceived / (1 - fee / 100);
   const feeAmt = gross - totalReceived;
   const perUnit = gross / qty;
-  const profit = totalReceived - (item.buyPrice * qty);
+  // Profit is accounting-real: convert proceeds to GBP vs GBP cost basis
+  const profit = rate != null ? (totalReceived * rate) - (item.buyPrice * qty) : null;
 
-  // Set the hidden per-unit price so confirmSell works
+  // Set the hidden per-unit price so confirmSell works (entry currency — converted on confirm)
   document.getElementById('sellPrice').value = perUnit.toFixed(4);
 
   reverseEl.style.display = '';
-  reverseEl.innerHTML = `You received <strong>£${totalReceived.toFixed(2)}</strong> after ${fee}% fee → Gross: £${gross.toFixed(2)} → Per unit: <strong>£${perUnit.toFixed(3)}</strong>`;
+  reverseEl.innerHTML = `You received <strong>${sym}${totalReceived.toFixed(2)}</strong> after ${fee}% fee → Gross: ${sym}${gross.toFixed(2)} → Per unit: <strong>${sym}${perUnit.toFixed(3)}</strong>`;
 
-  document.getElementById('calcGross').textContent = `£${gross.toFixed(2)}`;
-  document.getElementById('calcFee').textContent = `-£${feeAmt.toFixed(2)}`;
+  document.getElementById('calcGross').textContent = `${sym}${gross.toFixed(2)}`;
+  document.getElementById('calcFee').textContent = `-${sym}${feeAmt.toFixed(2)}`;
   const pe = document.getElementById('calcProfit');
-  pe.textContent = `${profit >= 0 ? '+' : ''}£${profit.toFixed(2)}`;
-  pe.className = `sold-col-val ${profit >= 0 ? 'positive' : 'negative'}`;
+  pe.textContent = profit == null ? '…' : `${profit >= 0 ? '+' : ''}${fmtGBP(profit)}`;
+  pe.className = `sold-col-val ${(profit || 0) >= 0 ? 'positive' : 'negative'}`;
 }
 
 function updateSellCalc() {
@@ -2391,32 +2611,40 @@ function updateSellCalc() {
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
   const sp = parseFloat(document.getElementById('sellPrice').value) || 0;
   const fee = _sellFeePercent;
-  const gross = sp * qty, feeAmt = gross * (fee/100), profit = gross - feeAmt - (item.buyPrice * qty);
-  document.getElementById('calcGross').textContent = `£${gross.toFixed(2)}`;
-  document.getElementById('calcFee').textContent = `-£${feeAmt.toFixed(2)}`;
+  const ccy = getSellCcy();
+  const sym = curSymOf(ccy);
+  const rate = ccy === 'GBP' ? 1 : _sellCcyRate;
+  const gross = sp * qty, feeAmt = gross * (fee/100);
+  const profit = rate != null ? (gross - feeAmt) * rate - (item.buyPrice * qty) : null;
+  document.getElementById('calcGross').textContent = `${sym}${gross.toFixed(2)}`;
+  document.getElementById('calcFee').textContent = `-${sym}${feeAmt.toFixed(2)}`;
   const pe = document.getElementById('calcProfit');
-  pe.textContent = `${profit >= 0 ? '+' : ''}£${profit.toFixed(2)}`;
-  pe.className = `sold-col-val ${profit >= 0 ? 'positive' : 'negative'}`;
+  pe.textContent = profit == null ? '…' : `${profit >= 0 ? '+' : ''}${fmtGBP(profit)}`;
+  pe.className = `sold-col-val ${(profit || 0) >= 0 ? 'positive' : 'negative'}`;
 }
-function confirmSell() {
+async function confirmSell() {
   const id = document.getElementById('sellItemId').value;
   const item = holdings.find(h => h.id === id);
   if (!item) return;
   const qty = parseInt(document.getElementById('sellQty').value) || 1;
-  const sellPrice = parseFloat(document.getElementById('sellPrice').value);
+  const sellPriceEntered = parseFloat(document.getElementById('sellPrice').value);
   const feePercent = _sellFeePercent;
-  if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
+  if (!sellPriceEntered || sellPriceEntered <= 0) { toast('Enter a sell price or total received', 'error'); return; }
   if (qty > item.qty) { toast(`Only ${item.qty} in stock`, 'error'); return; }
+  const sellDate = document.getElementById('sellDate').value;
+  const fx = await resolveSellFx(sellDate);
+  if (!fx) return;
+  const sellPrice = +(sellPriceEntered * fx.fxRate).toFixed(6); // base GBP
   const _gross = sellPrice * qty;
   const _feeAmount = _gross * (feePercent / 100);
   const _netRealised = _gross - _feeAmount;
-  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
+  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate });
   saveHistory(tradeHistory);
   if (qty >= item.qty) holdings = holdings.filter(h => h.id !== id);
   else item.qty -= qty;
   saveData(holdings); renderHoldings(); renderHistory(); updateStats(); closeModal('sellModal');
-  const net = (sellPrice * qty) * (1 - feePercent/100) - (item.buyPrice * qty);
-  toast(`Sold! Net: ${net >= 0 ? '+' : ''}£${net.toFixed(2)}`, net >= 0 ? 'success' : 'info');
+  const net = _netRealised - (item.buyPrice * qty);
+  toast(`Sold! Net: ${net >= 0 ? '+' : ''}${fmtGBP(net)}`, net >= 0 ? 'success' : 'info');
 }
 function openPriceModal(id) {
   const item = holdings.find(h => h.id === id);
@@ -2794,7 +3022,7 @@ function renderPortfolio() {
       },
       y: {
         position: 'right',
-        ticks: { color: 'rgba(255,255,255,0.4)', callback: v => `£${Number(v).toLocaleString('en-GB')}`, font: { family: "'Share Tech Mono', monospace", size: 11 }, maxTicksLimit: 6 },
+        ticks: { color: 'rgba(255,255,255,0.4)', callback: v => fmtMoneyLoc(Number(v), 0), font: { family: "'Share Tech Mono', monospace", size: 11 }, maxTicksLimit: 6 },
         grid: { color: 'rgba(30,61,45,0.25)', drawBorder: false },
         border: { display: false },
       },
@@ -2868,7 +3096,7 @@ function renderPortfolio() {
             label: ctx => {
               const v = Number(ctx.raw);
               if (hasBench) return `${ctx.dataset.label}: ${v.toFixed(1)} (${v >= 100 ? '+' : ''}${(v - 100).toFixed(1)}%)`;
-              return `${ctx.dataset.label}: £${v.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+              return `${ctx.dataset.label}: ${fmtMoneyLoc(v, 2)}`;
             },
           },
         },
@@ -2944,9 +3172,9 @@ function renderPortfolio() {
       ? `<button class="btn btn-danger btn-sm" onclick="deleteSnapshot('${s.date}')">✕</button>` : '—';
     return `<tr>
       <td style="padding:8px;border-bottom:1px solid var(--border);">${s.date} <span style="font-size:9px;opacity:0.5">${tag}</span></td>
-      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">£${inv.toLocaleString('en-GB',{minimumFractionDigits:2})}</td>
-      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">£${val.toLocaleString('en-GB',{minimumFractionDigits:2})}</td>
-      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;${pnlClass}">${p>=0?'▲':'▼'} £${Math.abs(p).toLocaleString('en-GB',{minimumFractionDigits:2})}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">${fmtMoneyLoc(inv, 2)}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">${fmtMoneyLoc(val, 2)}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;${pnlClass}">${p>=0?'▲':'▼'} ${fmtMoneyLoc(Math.abs(p), 2)}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;${pnlClass}">${roi}%</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;">${delBtn}</td>
     </tr>`;
@@ -2981,21 +3209,21 @@ let skins = [];
 function renderSkins() {
   const tbody = document.getElementById('skinsBody');
   if (!tbody) return;
-  const fmt = v => v != null ? `£${Number(v).toFixed(2)}` : '<span class="price-loading">—</span>';
+  const fmt = v => v != null ? `${fmtMoney(Number(v), 2)}` : '<span class="price-loading">—</span>';
   tbody.innerHTML = skins.map(item => {
     const p = item.prices || {};
     const best = getBestPrice(item);
     const pnl = best != null ? (best - item.buyPrice) * item.qty : null;
     const pnlPct = best != null ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
     const pnlHtml = pnl != null
-      ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} £${Math.abs(pnl).toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
+      ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(pnl), 2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
       : '<span class="price-loading">—</span>';
     const ago = p.fetchedAt ? timeAgo(p.fetchedAt) : 'Never';
     return `<tr data-id="${item.id}">
       <td><div class="item-name">${escHtml(item.name)}<small>${item.marketHash}</small></div></td>
       <td class="mono">${item.qty}</td>
-      <td class="mono">£${Number(item.buyPrice).toFixed(2)}</td>
-      <td class="mono">£${(item.buyPrice * item.qty).toFixed(2)}</td>
+      <td class="mono">${fmtMoney(Number(item.buyPrice), 2)}</td>
+      <td class="mono">${fmtMoney((item.buyPrice * item.qty), 2)}</td>
       ${renderPriceColumns(item, p, ago)}
       <td>${pnlHtml}</td>
       <td><div class="action-btns row-actions">
@@ -3095,6 +3323,8 @@ function openAddSkinModal() {
   document.getElementById('skinType').value = 'skin';
   document.getElementById('skinQty').value = '1';
   document.getElementById('skinBuyPrice').value = '';
+  const scc = document.getElementById('skinBuyCcy');
+  if (scc) scc.value = getDisplayCurrency();
   openModal('skinModal');
 }
 
@@ -3106,20 +3336,31 @@ function openEditSkinModal(id) {
   document.getElementById('skinName').value = skin.name;
   document.getElementById('skinType').value = skin.type || 'skin';
   document.getElementById('skinQty').value = skin.qty;
-  document.getElementById('skinBuyPrice').value = skin.buyPrice;
+  const scc2 = document.getElementById('skinBuyCcy');
+  if (skin.origCurrency && skin.origCurrency !== 'GBP' && skin.origAmount != null) {
+    document.getElementById('skinBuyPrice').value = skin.origAmount;
+    if (scc2) scc2.value = skin.origCurrency;
+  } else {
+    document.getElementById('skinBuyPrice').value = skin.buyPrice;
+    if (scc2) scc2.value = 'GBP';
+  }
   document.getElementById('skinMarketHash').value = skin.marketHash || '';
   openModal('skinModal');
 }
 
-function saveSkin() {
+async function saveSkin() {
   const name = document.getElementById('skinName').value.trim();
-  const buyPrice = parseFloat(document.getElementById('skinBuyPrice').value);
+  const buyPriceEntered = parseFloat(document.getElementById('skinBuyPrice').value);
   const marketHash = document.getElementById('skinMarketHash').value.trim();
-  if (!name || isNaN(buyPrice) || buyPrice <= 0) { toast('Fill in Name and Buy Price', 'error'); return; }
+  if (!name || isNaN(buyPriceEntered) || buyPriceEntered <= 0) { toast('Fill in Name and Buy Price', 'error'); return; }
+  const ccy = (document.getElementById('skinBuyCcy') || {}).value || 'GBP';
+  const fx = await toBaseGBP(buyPriceEntered, ccy, todayStr());
+  if (!fx) { toast('FX rate unavailable for ' + ccy + ' — skin not saved', 'error'); return; }
   const obj = {
     name, type: document.getElementById('skinType').value,
     qty: parseInt(document.getElementById('skinQty').value) || 1,
-    buyPrice, marketHash
+    buyPrice: +fx.base.toFixed(6), origCurrency: ccy, origAmount: buyPriceEntered, fxRate: fx.fxRate,
+    marketHash
   };
   const editId = document.getElementById('skinEditId').value;
   // Re-read storage to stay safe against a concurrent price refresh.
@@ -3151,34 +3392,40 @@ function openSellSkinModal(id) {
   document.getElementById('sellItemName').value = skin.name + ' (Play Skin)';
   document.getElementById('sellQty').value = skin.qty;
   document.getElementById('sellQty').max = skin.qty;
-  document.getElementById('sellPrice').value = getBestPrice(skin) ? getBestPrice(skin).toFixed(2) : '';
+  document.getElementById('sellPrice').value = getBestPrice(skin) ? (getBestPrice(skin) * _displayRate).toFixed(2) : '';
   document.getElementById('sellDate').value = todayStr();
   document.getElementById('sellTotalReceived').value = '';
   document.getElementById('sellReverseCalc').style.display = 'none';
+  const scEl2 = document.getElementById('sellCcy');
+  if (scEl2) scEl2.value = getDisplayCurrency();
   setSellPlatform('csfloat');
   setSellMode('perunit');
-  updateSellCalc();
+  onSellCcyChange();
   openModal('sellModal');
 }
 
 // Override confirmSell to handle both holdings and skins
 const _originalConfirmSell = confirmSell;
-confirmSell = function() {
+confirmSell = async function() {
   const rawId = document.getElementById('sellItemId').value;
   if (rawId.startsWith('skin:')) {
     const skinId = rawId.replace('skin:', '');
     const skin = skins.find(s => s.id === skinId);
     if (!skin) return;
     const qty = parseInt(document.getElementById('sellQty').value) || 1;
-    const sellPrice = parseFloat(document.getElementById('sellPrice').value);
+    const sellPriceEntered = parseFloat(document.getElementById('sellPrice').value);
     const feePercent = _sellFeePercent;
-    if (!sellPrice || sellPrice <= 0) { toast('Enter a sell price or total received', 'error'); return; }
+    if (!sellPriceEntered || sellPriceEntered <= 0) { toast('Enter a sell price or total received', 'error'); return; }
     if (qty > skin.qty) { toast(`Only ${skin.qty} in stock`, 'error'); return; }
+    const sellDate = document.getElementById('sellDate').value;
+    const fx = await resolveSellFx(sellDate);
+    if (!fx) return;
+    const sellPrice = +(sellPriceEntered * fx.fxRate).toFixed(6); // base GBP
     const _buyPrice = skin.buyPrice;
     const _gross = sellPrice * qty;
     const _feeAmount = _gross * (feePercent / 100);
     const _netRealised = _gross - _feeAmount;
-    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: _buyPrice, sellPrice, sellDate: document.getElementById('sellDate').value, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised });
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: _buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate });
     saveHistory(tradeHistory);
     // Atomic update: re-read the canonical array from storage, mutate, write back.
     // Prevents a concurrent price-refresh loop from re-persisting a stale array
@@ -3193,7 +3440,7 @@ confirmSell = function() {
     skins = _next;
     saveSkins(skins); renderSkins(); renderHistory(); updateStats(); closeModal('sellModal');
     const net = (sellPrice * qty) * (1 - feePercent/100) - (_buyPrice * qty);
-    toast(`Sold! Net: ${net >= 0 ? '+' : ''}£${net.toFixed(2)}`, net >= 0 ? 'success' : 'info');
+    toast(`Sold! Net: ${net >= 0 ? '+' : ''}${fmtGBP(net, 2)}`, net >= 0 ? 'success' : 'info');
   } else {
     _originalConfirmSell();
   }
@@ -3228,7 +3475,7 @@ function renderHeatmap() {
     return `<div class="heat-card ${cls}" title="${escHtml(h.name)}">
       <div class="heat-name">${escHtml(h.name.slice(0,22))}</div>
       <div class="heat-pct" style="color:${col}">${pct>=0?'+':''}${pct.toFixed(1)}% ${deltaHtml}</div>
-      <div class="heat-sub">£${getBestPrice(h).toFixed(2)} · qty ${h.qty}</div>
+      <div class="heat-sub">${fmtMoney(getBestPrice(h), 2)} · qty ${h.qty}</div>
     </div>`;
   }).join('');
 }
@@ -3290,8 +3537,8 @@ function renderWatchlist() {
     const p = item.prices || {};
     const price = p.lowest || p.lastSold || p.avg7d || null;
     const isAlert = item.targetPrice && price != null && price <= item.targetPrice;
-    const priceHtml = price ? `£${price.toFixed(2)}` : '<span style="color:var(--text3);">No price</span>';
-    const targetHtml = item.targetPrice ? `<span style="font-size:11px;color:var(--text3);">Target: £${item.targetPrice.toFixed(2)}</span>` : '';
+    const priceHtml = price ? `${fmtMoney(price, 2)}` : '<span style="color:var(--text3);">No price</span>';
+    const targetHtml = item.targetPrice ? `<span style="font-size:11px;color:var(--text3);">Target: ${fmtMoney(item.targetPrice, 2)}</span>` : '';
     const alertHtml = isAlert ? `<span style="color:var(--green);font-size:11px;font-weight:700;"> ✓ BELOW TARGET!</span>` : '';
     const ago = p.fetchedAt ? timeAgo(p.fetchedAt) : 'Never fetched';
     return `<div class="watchlist-card" style="${isAlert ? 'border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.04);' : ''}">
@@ -3358,14 +3605,14 @@ function calcBulkSell() {
     if (cb.checked && sellP > 0) {
       const g = sellP * qty, f = g * (feeP/100), n = g - f - (buy * qty);
       gross += g; fees += f; net += n;
-      netCell.textContent = (n >= 0 ? '+' : '') + '£' + n.toFixed(2);
+      netCell.textContent = (n >= 0 ? '+' : '') + fmtGBP(n, 2);
       netCell.style.color = n >= 0 ? 'var(--green)' : 'var(--red)';
     } else { netCell.textContent = '—'; netCell.style.color = ''; }
   });
-  document.getElementById('bulkGross').textContent = '£' + gross.toFixed(2);
-  document.getElementById('bulkFees').textContent = '-£' + fees.toFixed(2);
+  document.getElementById('bulkGross').textContent = fmtGBP(gross, 2);
+  document.getElementById('bulkFees').textContent = '-' + fmtGBP(fees, 2);
   const netEl = document.getElementById('bulkNet');
-  netEl.textContent = (net >= 0 ? '+' : '') + '£' + net.toFixed(2);
+  netEl.textContent = (net >= 0 ? '+' : '') + fmtGBP(net, 2);
   netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
 }
 
@@ -3402,14 +3649,14 @@ function exportMonthlyPDF() {
   let totalProfit = 0, totalTrades = 0;
   Object.values(monthly).forEach(d => { totalProfit += d.profit; totalTrades += d.trades; });
   const rows = Object.entries(monthly).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,d]) =>
-    `<tr><td>${m}</td><td>${d.trades}</td><td>£${d.revenue.toFixed(2)}</td><td>£${d.fees.toFixed(2)}</td><td style="color:${d.profit>=0?'#22c55e':'#ef4444'};font-weight:700;">${d.profit>=0?'+':''}£${d.profit.toFixed(2)}</td></tr>`
+    `<tr><td>${m}</td><td>${d.trades}</td><td>${fmtGBP(d.revenue, 2)}</td><td>${fmtGBP(d.fees, 2)}</td><td style="color:${d.profit>=0?'#22c55e':'#ef4444'};font-weight:700;">${d.profit>=0?'+':''}${fmtGBP(d.profit, 2)}</td></tr>`
   ).join('');
   const html = `<!DOCTYPE html><html><head><style>body{font-family:Arial,sans-serif;padding:30px;color:#1a202c;}h1{color:#f97316;margin-bottom:4px;}h2{color:#64748b;font-size:14px;font-weight:normal;margin-bottom:24px;}table{width:100%;border-collapse:collapse;}th{background:#f1f5f9;padding:10px 14px;text-align:left;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#64748b;}td{padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;}.total{font-weight:700;background:#f8fafc;}.summary{display:flex;gap:24px;margin-bottom:28px;}.sum-card{background:#f8fafc;border-radius:8px;padding:14px 20px;flex:1;}.sum-label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}.sum-val{font-size:22px;font-weight:700;color:#1a202c;}</style></head><body>
   <h1>CS2 VAULT — Monthly P&L Report</h1>
   <h2>Generated: ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</h2>
   <div class="summary">
     <div class="sum-card"><div class="sum-label">Total Trades</div><div class="sum-val">${totalTrades}</div></div>
-    <div class="sum-card"><div class="sum-label">Total Realised Profit</div><div class="sum-val" style="color:${totalProfit>=0?'#22c55e':'#ef4444'}">${totalProfit>=0?'+':''}£${totalProfit.toFixed(2)}</div></div>
+    <div class="sum-card"><div class="sum-label">Total Realised Profit</div><div class="sum-val" style="color:${totalProfit>=0?'#22c55e':'#ef4444'}">${totalProfit>=0?'+':''}${fmtGBP(totalProfit, 2)}</div></div>
   </div>
   <table><thead><tr><th>Month</th><th>Trades</th><th>Gross Revenue</th><th>Fees</th><th>Net Profit</th></tr></thead><tbody>${rows}</tbody></table>
   </body></html>`;
@@ -4005,7 +4252,7 @@ function renderCaseIntelligence(results) {
           '</div>' +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">' +
-          '<div class="ci-holdings-chip">◆ ' + r.qty.toLocaleString() + ' held · £' + holdingsVal.toFixed(0) + '</div>' +
+          '<div class="ci-holdings-chip">◆ ' + r.qty.toLocaleString() + ' held · ' + fmtMoney(holdingsVal, 0) + '</div>' +
           (r.listings === null
             ? '<div class="ci-error-chip">⚠ No Steam data</div>'
             : (r.neutralFlags.length
@@ -4043,11 +4290,11 @@ function renderCaseIntelligence(results) {
       return '<span style="color:' + col + ';">' + sign + pct.toFixed(1) + '%</span>';
     }
 
-    const priceStr = r.currentPrice ? '£' + r.currentPrice.toFixed(2) : '—';
+    const priceStr = r.currentPrice ? fmtMoney(r.currentPrice, 2) : '—';
     let vsLowCell = '<span style="color:var(--text3);font-size:10px;" title="Needs 3+ price points over 14+ days">building</span>';
     if (r.vsLowPct !== null) {
       const col = r.vsLowPct <= 15 ? 'var(--green)' : r.vsLowPct <= 50 ? 'var(--text2)' : 'var(--red)';
-      vsLowCell = '<span style="color:' + col + ';" title="90d low: £' + r.low90.toFixed(2) + '">+' + r.vsLowPct.toFixed(1) + '%</span>';
+      vsLowCell = '<span style="color:' + col + ';" title="90d low: ' + fmtMoney(r.low90, 2) + '">+' + r.vsLowPct.toFixed(1) + '%</span>';
     }
     const scoreStyle = 'color:' + scoreColor(r.score) + ';font-family:\'Share Tech Mono\',monospace;font-weight:700;';
 
@@ -4238,7 +4485,7 @@ function renderAlerts() {
     banner.style.display = triggered.length ? 'flex' : 'none';
     const txt = document.getElementById('alertsBannerText');
     if (txt) txt.textContent = triggered.map(a =>
-      `${a.name} ${a.direction==='below'?'dropped below':'rose above'} £${a.targetPrice.toFixed(3)}`).join(' · ');
+      `${a.name} ${a.direction==='below'?'dropped below':'rose above'} ${fmtMoney(a.targetPrice, 3)}`).join(' · ');
   }
   if (summary) summary.innerHTML =
     `<div class="alert-chip"><span style="color:var(--text)">${alerts.length}</span>&nbsp;Total</div>
@@ -4248,7 +4495,7 @@ function renderAlerts() {
      <div class="alert-chip"><span style="color:var(--blue)">${alerts.filter(a=>!a.triggered).length}</span>&nbsp;Watching</div>`;
   const sorted = [...alerts].sort((a,b)=>(b.triggered?1:0)-(a.triggered?1:0)||a.name.localeCompare(b.name));
   const rows = sorted.map(a => {
-    const pStr = a.currentPrice != null ? `£${a.currentPrice.toFixed(3)}` : '<span style="color:var(--text3)">—</span>';
+    const pStr = a.currentPrice != null ? `${fmtMoney(a.currentPrice, 3)}` : '<span style="color:var(--text3)">—</span>';
     const dist = a.currentPrice != null ? (a.currentPrice - a.targetPrice) / a.targetPrice * 100 : null;
     const dStr = dist != null
       ? `<span style="color:${Math.abs(dist)<3?'var(--gold)':dist>0?'var(--red)':'var(--green)'};">${dist>0?'+':''}${dist.toFixed(1)}%</span>`
@@ -4259,7 +4506,7 @@ function renderAlerts() {
       <div><div style="font-weight:600;">${escHtml(a.name)} ${tBdg}</div>
            <div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;margin-top:3px;">${a.note||'—'} · checked ${chk}</div></div>
       <div><span class="dir-badge ${a.direction==='below'?'dir-below':'dir-above'}">${a.direction==='below'?'▼ DROP':'▲ RISE'}</span></div>
-      <div class="mono">£${a.targetPrice.toFixed(3)}</div>
+      <div class="mono">${fmtMoney(a.targetPrice, 3)}</div>
       <div class="mono">${pStr}</div>
       <div class="mono">${dStr}</div>
       <div><button class="btn btn-danger btn-sm" onclick="deleteAlert('${a.id}')">✕</button></div>
@@ -4385,6 +4632,8 @@ async function exportAllData() {
     skins:     window._store['cs2vault_skins']     || null,
     watchlist: window._store['cs2vault_watchlist'] || null,
     alerts:    window._store['cs2vault_alerts']    || null,
+    fxCache:   window._store['cs2vault_fx_cache']  || null,
+    displayCurrency: window._store['cs2vault_display_currency'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -4395,7 +4644,7 @@ async function exportAllData() {
 function clearAllData() {
   if (!confirm('⚠ This will delete ALL your holdings, history, snapshots and settings.\n\nAre you absolutely sure?')) return;
   if (!confirm('Last chance — delete everything?')) return;
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -4564,9 +4813,9 @@ function renderTrending() {
         <div class="trend-name">${escHtml(t.item.name)}</div>
         <div class="trend-sub">${typeLabels[t.item.type] || t.item.type} · qty ${t.item.qty.toLocaleString()}</div>
       </div>
-      <div class="trend-price">£${t.currentPrice.toFixed(2)}</div>
+      <div class="trend-price">${fmtMoney(t.currentPrice, 2)}</div>
       <div class="trend-change" style="color:${color};">${arrow} ${Math.abs(t.change).toFixed(2)}%</div>
-      <div class="trend-value">£${t.totalValue.toFixed(2)}</div>
+      <div class="trend-value">${fmtMoney(t.totalValue, 2)}</div>
     </div>`;
   };
 
@@ -4670,14 +4919,14 @@ function renderHealthReport() {
   // Big winners — consider profit taking
   topPerformers.forEach(p => {
     if (p.pnlPct > 40 && p.invested > 100) {
-      signals.push({ icon: '🟢', title: `${p.name} is up ${p.pnlPct.toFixed(1)}% — consider taking profit`, desc: `£${p.invested.toFixed(0)} invested, now worth £${p.value.toFixed(0)}. Selling a portion locks in gains.`, type: 'success' });
+      signals.push({ icon: '🟢', title: `${p.name} is up ${p.pnlPct.toFixed(1)}% — consider taking profit`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Selling a portion locks in gains.`, type: 'success' });
     }
   });
 
   // Big losers
   worstPerformers.forEach(p => {
     if (p.pnlPct < -30 && p.invested > 50) {
-      signals.push({ icon: '🔴', title: `${p.name} is down ${Math.abs(p.pnlPct).toFixed(1)}%`, desc: `£${p.invested.toFixed(0)} invested, now worth £${p.value.toFixed(0)}. Review whether the thesis still holds.`, type: 'danger' });
+      signals.push({ icon: '🔴', title: `${p.name} is down ${Math.abs(p.pnlPct).toFixed(1)}%`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Review whether the thesis still holds.`, type: 'danger' });
     }
   });
 
@@ -4744,7 +4993,7 @@ function renderHealthReport() {
       <div class="health-panel-body">
         ${sorted.slice(0, 10).map(i => `
           <div class="health-bar-row">
-            <div class="health-bar-name">${escHtml(i.name)}<div style="font-size:10px;color:var(--text3);">${typeLabels[i.type] || i.type} · £${i.invested.toFixed(0)} invested</div></div>
+            <div class="health-bar-name">${escHtml(i.name)}<div style="font-size:10px;color:var(--text3);">${typeLabels[i.type] || i.type} · ${fmtMoney(i.invested, 0)} invested</div></div>
             <div class="health-bar-track"><div class="health-bar-fill" style="width:${Math.min(100, i.pct)}%;background:${concBarColor(i.pct)};"></div></div>
             <div class="health-bar-pct" style="color:${concBarColor(i.pct)};">${i.pct.toFixed(1)}%</div>
           </div>
@@ -4765,7 +5014,7 @@ function renderHealthReport() {
           const pct = totalInvested > 0 ? (data.invested / totalInvested * 100) : 0;
           const pnl = data.value - data.invested;
           return `<div class="health-bar-row">
-            <div class="health-bar-name"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColors[type] || 'var(--text3)'};margin-right:6px;"></span>${typeLabels[type] || type}<div style="font-size:10px;color:var(--text3);">${data.count} items · ${pnl >= 0 ? '+' : ''}£${pnl.toFixed(0)}</div></div>
+            <div class="health-bar-name"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColors[type] || 'var(--text3)'};margin-right:6px;"></span>${typeLabels[type] || type}<div style="font-size:10px;color:var(--text3);">${data.count} items · ${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 0)}</div></div>
             <div class="health-bar-track"><div class="health-bar-fill" style="width:${pct}%;background:${typeColors[type] || 'var(--text3)'};"></div></div>
             <div class="health-bar-pct">${pct.toFixed(1)}%</div>
           </div>`;
@@ -4812,7 +5061,7 @@ function renderHealthReport() {
   // ─── Render Outliers ───
   const outlierHtml = (list, label, color) => list.length > 0 ? list.map(p => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(30,61,45,.2);">
-      <div><span style="font-weight:600;">${escHtml(p.name)}</span><span style="font-size:11px;color:var(--text3);margin-left:8px;">£${p.invested.toFixed(0)} in · qty ${p.qty}</span></div>
+      <div><span style="font-weight:600;">${escHtml(p.name)}</span><span style="font-size:11px;color:var(--text3);margin-left:8px;">${fmtMoney(p.invested, 0)} in · qty ${p.qty}</span></div>
       <span style="color:${color};font-family:'Share Tech Mono',monospace;font-weight:700;">${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct.toFixed(1)}%</span>
     </div>
   `).join('') : `<div style="color:var(--text3);font-size:12px;padding:8px 0;">None</div>`;
@@ -4862,10 +5111,10 @@ function filterHistory(q) {
   c.innerHTML = filtered.sort((a,b)=>new Date(b.sellDate)-new Date(a.sellDate)).map(t => {
     const gross=t.sellPrice*t.qty,fee=gross*(t.feePercent/100),net=gross-fee-(t.buyPrice*t.qty);
     return `<div class="sold-card"><div><strong>${escHtml(t.name)}</strong><div class="sold-date">${t.sellDate}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">£${Number(t.buyPrice).toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">£${Number(t.sellPrice).toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Fee</div><div class="sold-col-val negative">-£${fee.toFixed(2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Net</div><div class="sold-col-val ${net>=0?'positive':'negative'}">${net>=0?'+':''}£${net.toFixed(2)}</div></div></div>`;
+      <div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">${fmtGBP(Number(t.buyPrice), 2)}</div></div>
+      <div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">${fmtGBP(Number(t.sellPrice), 2)}</div></div>
+      <div class="sold-col"><div class="sold-col-label">Fee</div><div class="sold-col-val negative">-${fmtGBP(fee, 2)}</div></div>
+      <div class="sold-col"><div class="sold-col-label">Net</div><div class="sold-col-val ${net>=0?'positive':'negative'}">${net>=0?'+':''}${fmtGBP(net, 2)}</div></div></div>`;
   }).join('');
 }
 function sortTable(key) { if (sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=1;} renderHoldings(); }
@@ -5146,6 +5395,38 @@ function seedNewItems() {
     window._storeSet('cs2vault_history', JSON.stringify(existingT));
     tradeHistory = existingT;
   }
+
+  // Migration (v2.9.0): backfill FX provenance on all stored records.
+  // Everything stored to date is GBP-native, so this is lossless:
+  // origCurrency 'GBP', fxRate 1, origAmount = the stored GBP figure.
+  try {
+    let fxChanged = false;
+    const backfill = (rec, amountField) => {
+      if (rec && rec.origCurrency == null && rec[amountField] != null) {
+        rec.origCurrency = 'GBP'; rec.fxRate = 1; rec.origAmount = rec[amountField];
+        return true;
+      }
+      return false;
+    };
+    const hArr = JSON.parse(window._store['cs2vault_holdings'] || '[]');
+    let hChanged = false;
+    hArr.forEach(h => { if (backfill(h, 'buyPrice')) hChanged = true; });
+    if (hChanged) { window._storeSet('cs2vault_holdings', JSON.stringify(hArr)); holdings = hArr; fxChanged = true; }
+
+    const sArr = JSON.parse(window._store['cs2vault_skins'] || 'null');
+    if (Array.isArray(sArr)) {
+      let sChanged = false;
+      sArr.forEach(s => { if (backfill(s, 'buyPrice')) sChanged = true; });
+      if (sChanged) { window._storeSet('cs2vault_skins', JSON.stringify(sArr)); skins = sArr; fxChanged = true; }
+    }
+
+    const tArr = JSON.parse(window._store['cs2vault_history'] || '[]');
+    let tFxChanged = false;
+    tArr.forEach(t => { if (backfill(t, 'sellPrice')) tFxChanged = true; });
+    if (tFxChanged) { window._storeSet('cs2vault_history', JSON.stringify(tArr)); tradeHistory = tArr; fxChanged = true; }
+
+    if (fxChanged) console.log('[Migration] v2.9.0 FX provenance backfilled (GBP, rate 1)');
+  } catch(e) { console.warn('[Migration] FX backfill failed:', e); }
 }
 function initApp() {
   try { seedHistoricalSnapshots(); } catch(e) { console.warn('[initApp] seedHistoricalSnapshots:', e); }
@@ -5168,6 +5449,9 @@ function initApp() {
     if (skinsPatched) saveSkins(skins);
   } catch(e) { console.warn('[initApp] loadSkins:', e); skins = DEFAULT_SKINS; }
   try { seedNewItems(); }                 catch(e) { console.warn('[initApp] seedNewItems:', e); }
+  try { populateCcySelects(); }           catch(e) { console.warn('[initApp] populateCcySelects:', e); }
+  // Display currency: async — re-renders money-bearing views once the rate lands (GBP = instant)
+  try { initDisplayCurrency().then(() => { if (_displayCcy !== 'GBP') { try { renderHoldings(); updateStats(); renderSkins(); } catch(e){} } }); } catch(e) { console.warn('[initApp] initDisplayCurrency:', e); }
   try { renderHoldings(); }               catch(e) { console.warn('[initApp] renderHoldings:', e); }
   try { updateStats(); }                  catch(e) { console.warn('[initApp] updateStats:', e); }
   try { checkApiStatus(); }               catch(e) { console.warn('[initApp] checkApiStatus:', e); }
