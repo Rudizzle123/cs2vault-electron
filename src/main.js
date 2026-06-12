@@ -171,7 +171,7 @@ ipcMain.handle('store:delete', (_e, key) => {
 // ─── IPC: HTTP fetch (replaces renderer fetch for external APIs) ──────────────
 const zlib = require('zlib');
 
-function doFetch(url, options = {}) {
+function doFetch(url, options = {}, _redirects = 0, _cookies = '') {
   return new Promise((resolve, reject) => {
     const parsed   = new URL(url);
     const isHttps  = parsed.protocol === 'https:';
@@ -182,7 +182,7 @@ function doFetch(url, options = {}) {
       port:     parsed.port || (isHttps ? 443 : 80),
       path:     parsed.pathname + parsed.search,
       method:   options.method || 'GET',
-      headers:  options.headers || {},
+      headers:  Object.assign({}, options.headers || {}),
       timeout:  12000,
     };
 
@@ -191,7 +191,35 @@ function doFetch(url, options = {}) {
       reqOpts.headers['Accept-Encoding'] = 'br, gzip, deflate';
     }
 
+    // Carry cookies accumulated across redirect hops (Steam 302s to set a
+    // country/session cookie, then expects it on the follow-up request)
+    if (_cookies && !reqOpts.headers['Cookie'] && !reqOpts.headers['cookie']) {
+      reqOpts.headers['Cookie'] = _cookies;
+    }
+
     const req = lib.request(reqOpts, (res) => {
+      // Follow redirects (up to 5 hops). Steam Market listing pages respond
+      // 302 + Set-Cookie to anonymous requests; without following, callers
+      // only ever see the redirect and no page body.
+      const loc = res.headers['location'];
+      if (loc && [301, 302, 303, 307, 308].includes(res.statusCode)) {
+        res.resume(); // discard body
+        if (_redirects >= 5) {
+          resolve({ status: res.statusCode, body: '', headers: res.headers });
+          return;
+        }
+        let cookies = _cookies;
+        const setC = res.headers['set-cookie'];
+        if (setC && setC.length) {
+          const pairs = setC.map(c => c.split(';')[0]).join('; ');
+          cookies = cookies ? cookies + '; ' + pairs : pairs;
+        }
+        const nextUrl = new URL(loc, url).toString();
+        console.log(`[Fetch] ${res.statusCode} redirect -> ${nextUrl} (hop ${_redirects + 1})`);
+        resolve(doFetch(nextUrl, options, _redirects + 1, cookies));
+        return;
+      }
+
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {

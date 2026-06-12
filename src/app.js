@@ -4354,6 +4354,7 @@ function renderTrending() {
   const losersEl = document.getElementById('trendLosers');
   const emptyEl = document.getElementById('trendEmpty');
   const tabsEl = document.getElementById('trendingCategoryTabs');
+  if (!gainersEl || !losersEl || !emptyEl || !tabsEl) return;
 
   // Build category tabs
   const categories = { all: 'All Items' };
@@ -4669,17 +4670,26 @@ function renderHealthReport() {
 function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  if (tab === 'holdings') updateStats();
-  if (tab === 'skins') renderSkins();
-  if (tab === 'intelligence' && !ciData) { /* show empty */ }
-  if (tab === 'analytics') { renderPortfolio(); renderHealthReport(); }
-  if (tab === 'settings') { if (typeof window.cs2vault !== 'undefined') updateSettingsInfo(); else populateSettingsFallback(); }
-  if (tab === 'watchlist') { renderWatchlist(); renderAlerts(); }
-  el.classList.add('active');
+  // Activate the panel BEFORE rendering — a render error must never leave the
+  // whole tab blank (pre-v2.7.1 a throw in updateStats() did exactly that)
+  if (el) el.classList.add('active');
   const tabEl = document.getElementById(`tab-${tab}`);
   if (tabEl) tabEl.classList.add('active');
   else console.error('[switchTab] panel not found: tab-' + tab);
-  if (tab === 'history') { updateStats(); renderHistory(); }
+  const safe = (label, fn) => {
+    try { fn(); }
+    catch(e) {
+      console.error(`[switchTab] ${label} render failed:`, e);
+      try { toast(`Render error (${label}): ${e.message}`, 'error'); } catch(_) {}
+    }
+  };
+  if (tab === 'holdings') safe('holdings', updateStats);
+  if (tab === 'skins') safe('skins', renderSkins);
+  if (tab === 'intelligence' && !ciData) { /* show empty */ }
+  if (tab === 'analytics') { safe('analytics', renderPortfolio); safe('health', renderHealthReport); }
+  if (tab === 'settings') safe('settings', () => { if (typeof window.cs2vault !== 'undefined') updateSettingsInfo(); else populateSettingsFallback(); });
+  if (tab === 'watchlist') { safe('watchlist', renderWatchlist); safe('alerts', renderAlerts); }
+  if (tab === 'history') { safe('stats', updateStats); safe('history', renderHistory); }
 }
 function filterTable(q) { currentFilter = q; renderHoldings(); }
 function filterHistory(q) {
@@ -4814,6 +4824,20 @@ async function importCSV() {
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function toast(msg,type='info'){const c=document.getElementById('toastContainer');const t=document.createElement('div');t.className=`toast ${type}`;t.innerHTML=`<span>${{success:'✓',error:'✕',info:'ℹ'}[type]}</span><span>${msg}</span>`;c.appendChild(t);setTimeout(()=>t.remove(),4000);}
+
+// Global error surfacing (v2.7.1) — uncaught errors used to die silently in the
+// console; now they toast on screen (throttled so an error loop can't spam)
+let _lastErrToast = { msg: '', ts: 0 };
+function surfaceError(prefix, e) {
+  const msg = (e && (e.message || e.reason && e.reason.message)) || String(e);
+  console.error(`[${prefix}]`, e);
+  const now = Date.now();
+  if (_lastErrToast.msg === msg && now - _lastErrToast.ts < 10000) return;
+  _lastErrToast = { msg, ts: now };
+  try { toast(`${prefix}: ${msg}`, 'error'); } catch(_) {}
+}
+window.addEventListener('error', ev => surfaceError('Error', ev.error || ev));
+window.addEventListener('unhandledrejection', ev => surfaceError('Async error', ev.reason || ev));
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2);}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function todayStr(){return new Date().toISOString().split('T')[0];}
