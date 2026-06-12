@@ -1,6 +1,6 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v2.6.0
+Last updated: June 2026 | Current version: v2.7.0
 
 ---
 
@@ -118,6 +118,23 @@ Last updated: June 2026 | Current version: v2.6.0
 - **Caveat noted to Rudi**: the silent behaviour fully applies from the *next* update onward. The installed v2.4.5 was built with the old assisted config, so its uninstaller (invoked during the v2.4.5 → v2.4.6 upgrade) may still flash one dialog this one time; v2.4.6+ updates are fully silent
 - **Restart is unavoidable** — Windows locks the running .exe, so every Electron auto-updater must quit → swap files → relaunch. One-click reduces this to a brief flicker with zero user interaction (matches VS Code / Slack / Discord behaviour). There is no in-place hot-swap for a packaged Electron app
 
+### v2.7.0 — Fast Refresh Engine + Background Auto-Refresh ✅
+- **Two-lane refresh engine** (`runTwoLaneRefresh`) — bulk refreshes now run CSFloat and Steam as independent lanes instead of one sequential chain:
+  - **CSFloat lane**: parallel pool of 6 concurrent requests (API-keyed, tolerant) via new `runPool()` helper
+  - **Steam lane**: sequential with adaptive delay — 1.5s base (down from 3s), doubles up to 6s on a failed lookup (likely rate limit), resets on success
+  - An item finalises (price merged + persisted + row rendered) the moment BOTH lanes have processed it — progressive table fill, roughly halves a full-refresh wall time
+  - `fetchAllPlatformPrices()` split into `fetchCSFloatLane()` / `fetchSteamLane()` (logic byte-identical); single-item ↻ refreshes still use the sequential combined path unchanged. New shared `combinePlatformPrices()` replaces the lowest/lastSold/avg math previously duplicated in the skin refresh loops
+  - `getGBPRate()` now memoises the in-flight promise so 6 parallel CSFloat calls share ONE FX fetch instead of racing 6
+  - No API key → CSFloat lane skipped silently with a single "Steam prices only" toast (no per-item error spam)
+- **Staleness skip** — manual refreshes (holdings + play skins) skip items whose prices are <30 min old (`FRESH_TTL_MS`), with a "N skipped (<30m fresh)" note in the toast/status. If *everything* is fresh, the click forces a full refresh instead (intuitive: clicking when fresh means "refresh anyway")
+- **Background auto-refresh** — new scheduler silently refreshes stale holdings + play skins:
+  - Settings → "Background Auto-Refresh" dropdown: Off / 1h / 3h (default) / 6h, stored in `cs2vault_autorefresh`
+  - Runs once ~15s after launch, then on the interval — open the app and prices are already warm
+  - Only touches stale items (>30 min), refresh button shows "Auto N/M" progress, single toast on completion
+  - `_refreshBusy` flag guards manual vs auto collisions in both directions (manual click during auto → "already running" toast; auto skips if manual in flight)
+- **Alert checks parallelised** — "Check Prices Now" on the Watchlist tab now pools 6 concurrent CSFloat requests instead of sequential + 3s sleeps
+- **Skin refresh merge-back extracted** to `mergeSkinPrices()` (same v2.4.3 atomic re-read/merge pattern) — shared by manual + auto skin refreshes
+
 ### v2.6.0 — Steam Market Autocomplete in Add/Edit Modals ✅
 - **Search-as-you-type item lookup** — typing 3+ characters in *either* the Item Name or Market Hash field (Add/Edit Investment modal + Add/Edit Play Skin modal) queries Steam's `search/render` endpoint (same one Case Intel uses, `count=10`) and shows a dropdown of real market items with thumbnail, exact name, and current lowest price
 - **Selecting a result auto-fills everything**: Item Name + exact `market_hash_name` + inferred Type. Type inference (`inferTypeFromSteamResult`) maps Steam's `asset_description.type` / hash text → knife (Knife/Gloves/★), agent (play-skin mode), sticker (Sticker/Capsule), case (Container/" case"/Package), armory (Charm/Patch/Collectible), else skin. Ends the "ask an AI for the market hash" workflow
@@ -223,13 +240,18 @@ Last updated: June 2026 | Current version: v2.6.0
 ### Ideas (not yet scoped)
 - Case Intel squeeze score — composite chip combining the now-real supply trend + momentum + discontinued status (post-v2.5.0 the inputs all exist)
 - Case Intel drop pool status badge (Active / Rare / Discontinued) — hardcoded, no API needed
-- Auto-refresh on a schedule (Steam can run silently every X hours)
 - Seed initial price history from current prices on first install
 - Dark/light theme toggle
 
 ---
 
 ## Technical Notes
+
+### Bulk Refresh Engine (v2.7.0)
+- `runTwoLaneRefresh(items, opts)` — CSFloat lane: parallel pool of `CSFLOAT_CONCURRENCY` (6); Steam lane: sequential, `STEAM_BASE_DELAY_MS` (1500ms) with ×2 backoff to 6s on failure. Item finalises when both lanes done → `onItemDone(item, prices|null)`
+- `FRESH_TTL_MS` = 30 min — `isPriceFresh(item)` gates both manual and auto refreshes; all-fresh manual click forces full refresh
+- Auto-refresh: `cs2vault_autorefresh` storage key (hours, 0 = off, default 3), `initAutoRefresh()` in initApp (15s launch delay + interval), `runAutoRefresh()` covers stale holdings + play skins. `_refreshBusy` prevents overlap with manual refreshes
+- Single-item refreshes (↻ buttons) intentionally bypass the engine and staleness skip — explicit per-item clicks always fetch
 
 ### Price Priority Logic (`getBestPrice`)
 - **Cases:** Steam → CSFloat fallback

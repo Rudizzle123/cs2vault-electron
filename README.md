@@ -49,7 +49,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v2.6.0)
+## Features (current as of v2.7.0)
 
 ### Holdings Tab
 - **Allocation strip (v2.5.0)** — stacked bar + legend under the stat cards showing portfolio value split across Cases / Stickers / TUF / Skins / Knives / Armory / Other; click a segment to filter the table, click again to clear
@@ -65,6 +65,12 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - Heatmap view for visual price changes
 - CSV export (with per-platform prices, TUF flag) and CSV import
 - Bulk sell modal
+
+### Price Refreshing (v2.7.0)
+- **Two-lane engine** — bulk refreshes run CSFloat (6 parallel requests) and Steam (sequential, adaptive 1.5–6s delay) as independent lanes; each row updates the moment both lanes finish for that item. Roughly halves full-refresh time vs the old single sequential chain
+- **Staleness skip** — items refreshed within the last 30 minutes are skipped (toast shows the count); if everything is fresh, clicking refresh forces a full pass
+- **Background auto-refresh** — Settings → Background Auto-Refresh (Off / 1h / 3h default / 6h). Silently refreshes stale holdings + play skin prices on the interval and once ~15s after launch, so prices are already warm when you open the app
+- Single-item ↻ buttons always fetch immediately (no staleness skip)
 
 ### Sell Modal
 - Platform quick-select buttons: CSFloat (2%), Steam (15%), Custom
@@ -128,6 +134,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 ### Settings Tab
 - CSFloat API key management with test connection
 - Pricempire API key management with test connection
+- Background Auto-Refresh schedule (Off / 1h / 3h / 6h)
 - Data management (backup/restore/clear)
 
 ### Infrastructure

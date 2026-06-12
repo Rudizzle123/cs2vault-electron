@@ -789,6 +789,24 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div id="pricempireTestResult" style="font-size:11px;margin-top:8px;font-family:'Share Tech Mono',monospace;"></div>
       </div>
 
+      <!-- Auto-Refresh -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Background Auto-Refresh</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Silently refreshes stale prices (holdings + play skins) in the background on a schedule, plus once ~15 seconds after launch — so prices are already warm when you open the app. Prices fetched within the last 30 minutes are always skipped to avoid wasted API calls.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="settingsAutoRefresh" onchange="saveAutoRefreshSetting()"
+            style="background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;min-width:220px;">
+            <option value="0">Off</option>
+            <option value="1">Every hour</option>
+            <option value="3">Every 3 hours (recommended)</option>
+            <option value="6">Every 6 hours</option>
+          </select>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;">
+          Manual refreshes also skip prices fresher than 30 min — click again when everything is fresh to force a full refresh
+        </div>
+      </div>
+
       <!-- Data management -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
         <div class="section-heading">Data Management</div>

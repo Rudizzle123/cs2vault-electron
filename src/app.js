@@ -713,15 +713,20 @@ function checkApiStatus() {
 // ========================
 // Shared GBP rate cache
 let _gbpRate = null;
+let _gbpRatePromise = null; // in-flight memo so parallel CSFloat calls share ONE FX fetch
 async function getGBPRate() {
   if (_gbpRate) return _gbpRate;
-  try {
-    const fx = await window.cs2vault.fetch('https://open.er-api.com/v6/latest/USD');
-    if (fx.ok) { const d = JSON.parse(fx.body); _gbpRate = d.rates?.GBP || 0.79; }
-    else _gbpRate = 0.79;
-  } catch(e) { _gbpRate = 0.79; }
-  console.log(`[FX] GBP rate: ${_gbpRate}`);
-  return _gbpRate;
+  if (_gbpRatePromise) return _gbpRatePromise;
+  _gbpRatePromise = (async () => {
+    try {
+      const fx = await window.cs2vault.fetch('https://open.er-api.com/v6/latest/USD');
+      if (fx.ok) { const d = JSON.parse(fx.body); _gbpRate = d.rates?.GBP || 0.79; }
+      else _gbpRate = 0.79;
+    } catch(e) { _gbpRate = 0.79; }
+    console.log(`[FX] GBP rate: ${_gbpRate}`);
+    return _gbpRate;
+  })();
+  return _gbpRatePromise;
 }
 
 // Sticker index overrides for items CSFloat can't find by name
@@ -910,21 +915,19 @@ async function fetchSteamPrices(marketHashName) {
 
 const CHARM_NAMES = Object.keys(CHARM_PATTERNS);
 
-async function fetchAllPlatformPrices(item) {
-  const results = {};
+// CSFloat lane — skip for agents (not tradeable on CSFloat). Returns prices object or null.
+async function fetchCSFloatLane(item) {
+  if (item.type === 'agent') return null;
+  try {
+    return await fetchCSFloatPrices(item.marketHash, item.name);
+  } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); return null; }
+}
 
-  // CSFloat — skip for agents (not tradeable on CSFloat)
-  if (item.type !== 'agent') {
-    try {
-      const cf = await fetchCSFloatPrices(item.marketHash, item.name);
-      if (cf) results.csfloat = cf;
-    } catch(e) { console.warn('[MultiPrice] CSFloat failed:', e.message); }
-  }
-
-  // Steam — always try (free, no auth)
-  // Stickers have marketHash like "Sticker | Blinky (Holo)" for CSFloat sticker_index lookups,
-  // but Steam may list them without the variant suffix e.g. just "Sticker | Blinky".
-  // Strategy: try exact hash first, then retry with variant suffix stripped if nothing returned.
+// Steam lane — always tried (free, no auth). Returns prices object or null.
+// Stickers have marketHash like "Sticker | Blinky (Holo)" for CSFloat sticker_index lookups,
+// but Steam may list them without the variant suffix e.g. just "Sticker | Blinky".
+// Strategy: try exact hash first, then retry with variant suffix stripped if nothing returned.
+async function fetchSteamLane(item) {
   try {
     let steamHash = item.marketHash;
     // If bare name (no "Sticker | " prefix), add it for Steam — but NOT for capsules/packs,
@@ -944,9 +947,31 @@ async function fetchAllPlatformPrices(item) {
         stm = await fetchSteamPrices(stripped);
       }
     }
-    if (stm) results.steam = stm;
-  } catch(e) { console.warn('[MultiPrice] Steam failed:', e.message); }
+    return stm || null;
+  } catch(e) { console.warn('[MultiPrice] Steam failed:', e.message); return null; }
+}
 
+// Combine per-platform results into the stored prices shape (shared by fetchPrices + refresh engine)
+function combinePlatformPrices(multi) {
+  const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest].filter(v => v != null && v > 0);
+  const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold].filter(v => v != null && v > 0);
+  const allAvg = [multi.csfloat?.avg7d].filter(v => v != null && v > 0);
+  return {
+    lowest: allLowest.length ? Math.min(...allLowest) : null,
+    lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
+    avg7d: allAvg.length ? allAvg[0] : null,
+    source: 'multi',
+    platforms: multi,
+  };
+}
+
+// Single-item fetch (↻ buttons, autocomplete etc.) — sequential, unchanged behaviour
+async function fetchAllPlatformPrices(item) {
+  const results = {};
+  const cf = await fetchCSFloatLane(item);
+  if (cf) results.csfloat = cf;
+  const stm = await fetchSteamLane(item);
+  if (stm) results.steam = stm;
   if (Object.keys(results).length === 0) return null;
   return results;
 }
@@ -992,35 +1017,223 @@ function updateRefreshScopeLabel() {
   el.textContent = `↻ will refresh ${scoped.length} of ${total} items (${label})`;
 }
 
+// ========================
+// TWO-LANE BULK REFRESH ENGINE (v2.7.0)
+// CSFloat lane runs in a parallel pool (API-keyed, tolerant); Steam lane stays
+// sequential with an adaptive delay (rate-limit sensitive). An item completes
+// when BOTH lanes have processed it. Roughly halves a full-refresh wall time.
+// ========================
+const FRESH_TTL_MS = 30 * 60 * 1000;   // prices younger than this are skipped on refresh
+const CSFLOAT_CONCURRENCY = 6;          // parallel CSFloat requests
+const STEAM_BASE_DELAY_MS = 1500;       // between Steam items; doubles on failure up to 6s
+let _refreshBusy = false;               // guards manual vs auto refresh collisions
+
+function isPriceFresh(item) {
+  return !!(item && item.prices && item.prices.fetchedAt && (Date.now() - item.prices.fetchedAt) < FRESH_TTL_MS);
+}
+
+// Generic small worker pool (used by alert checks too)
+async function runPool(items, concurrency, fn) {
+  let idx = 0;
+  const n = Math.min(concurrency, items.length);
+  const workers = [];
+  for (let w = 0; w < n; w++) {
+    workers.push((async () => {
+      while (idx < items.length) { const i = idx++; await fn(items[i], i); }
+    })());
+  }
+  await Promise.all(workers);
+}
+
+async function runTwoLaneRefresh(items, opts = {}) {
+  const onProgress = opts.onProgress || (() => {});
+  const onItemDone = opts.onItemDone || (() => {});
+  const hasKey = !!getApiKey();
+  const work = items.filter(it => it.marketHash);
+  const noHash = items.length - work.length;
+  let done = 0, updated = 0, failed = 0;
+
+  // Per-item lane state: an item finalises only when both lanes are done
+  const state = new Map();
+  for (const it of work) state.set(it.id, { item: it, csfloat: null, steam: null, cfDone: false, stDone: false });
+
+  const finalize = (st) => {
+    if (!st.cfDone || !st.stDone) return;
+    done++;
+    const multi = {};
+    if (st.csfloat) multi.csfloat = st.csfloat;
+    if (st.steam) multi.steam = st.steam;
+    if (Object.keys(multi).length) {
+      updated++;
+      onItemDone(st.item, { ...combinePlatformPrices(multi), fetchedAt: Date.now() });
+    } else {
+      failed++;
+      onItemDone(st.item, null);
+    }
+    onProgress(done, work.length);
+  };
+
+  // CSFloat lane — parallel pool (skipped for agents, or entirely if no API key)
+  const cfQueue = hasKey ? work.filter(it => it.type !== 'agent') : [];
+  for (const it of work) {
+    if (!cfQueue.includes(it)) { const st = state.get(it.id); st.cfDone = true; finalize(st); }
+  }
+  const cfLane = runPool(cfQueue, CSFLOAT_CONCURRENCY, async (it) => {
+    const st = state.get(it.id);
+    try { st.csfloat = await fetchCSFloatLane(it); } catch(e) { /* lane already logs */ }
+    st.cfDone = true;
+    finalize(st);
+  });
+
+  // Steam lane — sequential, adaptive delay (back off on failure = likely rate limit)
+  const stLane = (async () => {
+    let delay = opts.steamDelayMs || STEAM_BASE_DELAY_MS;
+    for (let i = 0; i < work.length; i++) {
+      const it = work[i];
+      const st = state.get(it.id);
+      try { st.steam = await fetchSteamLane(it); } catch(e) { /* lane already logs */ }
+      st.stDone = true;
+      finalize(st);
+      delay = st.steam ? (opts.steamDelayMs || STEAM_BASE_DELAY_MS) : Math.min(delay * 2, 6000);
+      if (i < work.length - 1) await sleep(delay);
+    }
+  })();
+
+  await Promise.all([cfLane, stLane]);
+  return { updated, failed, noHash, total: work.length };
+}
+
+// ========================
+// SCHEDULED BACKGROUND AUTO-REFRESH (v2.7.0)
+// Silently refreshes STALE prices (>30 min old) for holdings + play skins on a
+// timer, plus once shortly after launch. Manual refreshes still work as normal
+// and are guarded against overlapping with an auto run.
+// ========================
+const AUTO_REFRESH_KEY = 'cs2vault_autorefresh';
+let _autoRefreshTimer = null;
+
+function getAutoRefreshHours() {
+  const v = parseFloat(window._store[AUTO_REFRESH_KEY]);
+  return isNaN(v) ? 3 : v; // default: every 3 hours
+}
+
+function saveAutoRefreshSetting() {
+  const sel = document.getElementById('settingsAutoRefresh');
+  if (!sel) return;
+  window._storeSet(AUTO_REFRESH_KEY, sel.value);
+  initAutoRefreshTimer();
+  const hrs = parseFloat(sel.value);
+  toast(hrs ? `Auto-refresh: every ${hrs} hour${hrs > 1 ? 's' : ''}` : 'Auto-refresh: off', 'success');
+}
+
+function initAutoRefreshTimer() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+  const hrs = getAutoRefreshHours();
+  if (!hrs || hrs <= 0) return;
+  _autoRefreshTimer = setInterval(() => { runAutoRefresh().catch(e => console.warn('[AutoRefresh]', e)); }, hrs * 60 * 60 * 1000);
+}
+
+async function runAutoRefresh() {
+  if (_refreshBusy) { console.log('[AutoRefresh] Skipped — a refresh is already running'); return; }
+  const staleHoldings = holdings.filter(h => h.marketHash && !isPriceFresh(h));
+  const staleSkins = skins.filter(s => s.marketHash && !isPriceFresh(s));
+  if (!staleHoldings.length && !staleSkins.length) { console.log('[AutoRefresh] Nothing stale — skipped'); return; }
+  console.log(`[AutoRefresh] Refreshing ${staleHoldings.length} holding(s) + ${staleSkins.length} play skin(s)`);
+
+  _gbpRate = null; _gbpRatePromise = null;
+  _refreshBusy = true;
+  const btn = document.getElementById('refreshBtn');
+  const origDisabled = btn ? btn.disabled : false;
+  let updated = 0;
+  try {
+    if (staleHoldings.length) {
+      const r = await runTwoLaneRefresh(staleHoldings, {
+        onProgress: (done, total) => { if (btn) { btn.innerHTML = `<span class="loading-spinner"></span> Auto ${done}/${total}`; btn.disabled = true; } },
+        onItemDone: (item, prices) => {
+          if (prices) { item.prices = prices; recordPrice(item.id, prices); }
+          saveData(holdings);
+          renderHoldings();
+        },
+      });
+      updated += r.updated;
+    }
+    if (staleSkins.length) {
+      const r = await runTwoLaneRefresh(staleSkins, {
+        onItemDone: (skin, prices) => mergeSkinPrices(skin, prices),
+      });
+      updated += r.updated;
+    }
+  } finally {
+    _refreshBusy = false;
+    if (btn) { btn.innerHTML = '\u21bb Refresh Prices'; btn.disabled = origDisabled; }
+  }
+  if (updated > 0) {
+    updateStats();
+    captureHeatmapSnapshot();
+    if (heatmapVisible) renderHeatmap();
+    checkAlertsAgainstHoldings();
+    toast(`Auto-refresh: ${updated} price(s) updated`, 'success');
+  }
+}
+
+function initAutoRefresh() {
+  initAutoRefreshTimer();
+  // One pass shortly after launch so prices are already warm when you start looking
+  if (getAutoRefreshHours() > 0) {
+    setTimeout(() => { runAutoRefresh().catch(e => console.warn('[AutoRefresh]', e)); }, 15000);
+  }
+}
+
 async function refreshAllPrices() {
-  _gbpRate = null;
+  if (_refreshBusy) { toast('A refresh is already running', 'info'); return; }
+  _gbpRate = null; _gbpRatePromise = null;
   const btn = document.getElementById('refreshBtn');
   const scoped = getScopedHoldings();
   const isFiltered = scoped.length < holdings.length;
   const filterEl = document.getElementById('filterType');
   const scopeLabel = isFiltered ? filterEl.options[filterEl.selectedIndex].text.replace('↳ ','') : 'All';
+
+  // Staleness skip: items fetched <30 min ago are skipped.
+  // If EVERYTHING is fresh, the click clearly means "refresh anyway" — so do all of them.
+  let work = scoped.filter(it => !isPriceFresh(it));
+  let skippedFresh = scoped.length - work.length;
+  if (work.length === 0 && scoped.length > 0) { work = scoped; skippedFresh = 0; }
+
+  if (!getApiKey() && work.some(it => it.type !== 'agent')) {
+    toast('No CSFloat API key — refreshing Steam prices only', 'info');
+  }
+
+  _refreshBusy = true;
   btn.innerHTML = `<span class="loading-spinner"></span> Fetching ${scopeLabel}...`;
   btn.disabled = true;
+  work.forEach(it => { if (it.marketHash) updateRowPriceLoading(it.id); });
 
-  let updated = 0, failed = 0;
-  for (let i = 0; i < scoped.length; i++) {
-    const item = scoped[i];
-    if (!item.marketHash) { failed++; continue; }
-    updateRowPriceLoading(item.id);
-    btn.innerHTML = `<span class="loading-spinner"></span> ${i+1}/${scoped.length} ${scopeLabel}`;
-    const prices = await fetchPrices(item);
-    if (prices) { item.prices = { ...prices, fetchedAt: Date.now() }; recordPrice(item.id, prices); updated++; }
-    else failed++;
-    saveData(holdings);
-    renderHoldings();
-    await sleep(3000);
+  let res = { updated: 0, failed: 0, noHash: 0 };
+  try {
+    res = await runTwoLaneRefresh(work, {
+      onProgress: (done, total) => { btn.innerHTML = `<span class="loading-spinner"></span> ${done}/${total} ${scopeLabel}`; },
+      onItemDone: (item, prices) => {
+        if (prices) { item.prices = prices; recordPrice(item.id, prices); }
+        saveData(holdings);
+        renderHoldings();
+      },
+    });
+  } finally {
+    _refreshBusy = false;
+    btn.innerHTML = '↻ Refresh Prices';
+    btn.disabled = false;
   }
-  btn.innerHTML = '↻ Refresh Prices';
-  btn.disabled = false;
   captureHeatmapSnapshot();
   if (heatmapVisible) renderHeatmap();
   updateStats();
-  if (updated > 0) toast(`Updated ${updated} ${isFiltered ? scopeLabel : ''} item(s) — CSFloat + Steam`, 'success'); checkAlertsAgainstHoldings();
+  const failed = res.failed + res.noHash;
+  if (res.updated > 0) {
+    const skipNote = skippedFresh > 0 ? ` (${skippedFresh} skipped, <30m fresh)` : '';
+    toast(`Updated ${res.updated} ${isFiltered ? scopeLabel + ' ' : ''}item(s)${skipNote} — CSFloat + Steam`, 'success');
+  } else if (skippedFresh > 0 && res.updated === 0 && work.length === 0) {
+    toast('All prices already fresh (<30m)', 'info');
+  }
+  checkAlertsAgainstHoldings();
   if (failed > 0) toast(`${failed} item(s) failed — check API key`, 'info');
 }
 
@@ -2681,48 +2894,52 @@ function renderSkins() {
   }).join('');
 }
 
+// Atomic merge-back shared by manual + auto skin refreshes:
+// re-sync against storage in case a sale removed an item mid-refresh,
+// then merge this item's fresh prices back in without resurrecting sold items.
+function mergeSkinPrices(skin, prices) {
+  if (prices) {
+    skin.prices = prices;
+    recordPrice(skin.id, skin.prices);
+  }
+  const _live = loadSkins() || skins;
+  if (_live.some(s => s.id === skin.id)) {
+    skins = _live.map(s => s.id === skin.id ? { ...s, prices: skin.prices } : s);
+    saveSkins(skins);
+  } else {
+    skins = _live;
+  }
+  renderSkins();
+}
+
 async function refreshSkinPrices() {
+  if (_refreshBusy) { toast('A refresh is already running', 'info'); return; }
   const btn = document.getElementById('refreshSkinsBtn');
   const status = document.getElementById('skinsStatus');
+
+  // Staleness skip — same rule as holdings: <30 min old is skipped, unless everything is fresh
+  let work = skins.filter(s => !isPriceFresh(s));
+  let skippedFresh = skins.length - work.length;
+  if (work.length === 0 && skins.length > 0) { work = skins.slice(); skippedFresh = 0; }
+
+  _refreshBusy = true;
   btn.innerHTML = '<span class="loading-spinner"></span> Fetching...';
   btn.disabled = true;
 
-  let updated = 0, failed = 0;
-  for (let i = 0; i < skins.length; i++) {
-    const skin = skins[i];
-    status.textContent = `Fetching ${i+1}/${skins.length}: ${skin.name}...`;
-    const multi = await fetchAllPlatformPrices(skin);
-    if (multi) {
-      const allLowest = [multi.csfloat?.lowest, multi.steam?.lowest].filter(v => v != null && v > 0);
-      const allLastSold = [multi.csfloat?.lastSold, multi.steam?.lastSold].filter(v => v != null && v > 0);
-      const allAvg = [multi.csfloat?.avg7d].filter(v => v != null && v > 0);
-      skin.prices = {
-        lowest: allLowest.length ? Math.min(...allLowest) : null,
-        lastSold: allLastSold.length ? Math.min(...allLastSold) : null,
-        avg7d: allAvg.length ? allAvg[0] : null,
-        source: 'multi',
-        platforms: multi,
-        fetchedAt: Date.now()
-      };
-      updated++;
-    } else failed++;
-    recordPrice(skin.id, skin.prices);
-    // Re-sync against storage in case a sale removed an item mid-refresh,
-    // then merge this item's fresh prices back in without resurrecting sold items.
-    const _live = loadSkins() || skins;
-    if (_live.some(s => s.id === skin.id)) {
-      skins = _live.map(s => s.id === skin.id ? { ...s, prices: skin.prices } : s);
-      saveSkins(skins);
-    } else {
-      skins = _live;
-    }
-    renderSkins();
-    await sleep(3000);
+  let res = { updated: 0, failed: 0, noHash: 0 };
+  try {
+    res = await runTwoLaneRefresh(work, {
+      onProgress: (done, total) => { status.textContent = `Fetching ${done}/${total}...`; },
+      onItemDone: (skin, prices) => mergeSkinPrices(skin, prices),
+    });
+  } finally {
+    _refreshBusy = false;
+    btn.innerHTML = '↻ Refresh Skin Prices';
+    btn.disabled = false;
   }
-  btn.innerHTML = '↻ Refresh Skin Prices';
-  btn.disabled = false;
-  status.textContent = `Last updated: just now — ${updated} updated, ${failed} failed`;
-  if (updated > 0) toast(`Skins updated: ${updated}`, 'success');
+  const skipNote = skippedFresh > 0 ? `, ${skippedFresh} skipped (<30m fresh)` : '';
+  status.textContent = `Last updated: just now — ${res.updated} updated, ${res.failed + res.noHash} failed${skipNote}`;
+  if (res.updated > 0) toast(`Skins updated: ${res.updated}`, 'success');
 }
 
 async function refreshSingleSkin(id) {
@@ -3822,20 +4039,19 @@ async function refreshAlertPrices() {
   const btn = document.getElementById('alertRefreshBtn');
   const status = document.getElementById('alertsCheckedAt');
   if (btn) btn.disabled = true;
-  let hits = 0;
-  for (let i = 0; i < alerts.length; i++) {
-    const a = alerts[i];
-    if (!a.marketHash) continue;
-    if (status) status.textContent = `Checking ${i+1}/${alerts.length}: ${a.name}…`;
+  let hits = 0, checked = 0;
+  const work = alerts.filter(a => a.marketHash);
+  await runPool(work, CSFLOAT_CONCURRENCY, async (a) => {
     const prices = await fetchCSFloatPrices(a.marketHash, a.name);
-    await sleep(3000);
-    if (!prices) continue;
+    checked++;
+    if (status) status.textContent = `Checking ${checked}/${work.length}…`;
+    if (!prices) return;
     const price = prices.lowest || prices.lastSold || prices.avg7d;
     a.currentPrice = price; a.lastChecked = new Date().toISOString();
     const was = a.triggered;
     a.triggered = price != null && ((a.direction==='below'&&price<=a.targetPrice)||(a.direction==='above'&&price>=a.targetPrice));
     if (a.triggered && !was) { a.triggeredAt = new Date().toISOString(); hits++; }
-  }
+  });
   saveAlerts(alerts);
   if (btn) btn.disabled = false;
   if (status) status.textContent = `Last checked: ${new Date().toLocaleTimeString('en-GB')}`;
@@ -4773,6 +4989,11 @@ function initApp() {
   try { prunePriceLog(); }                catch(e) { console.warn('[initApp] prunePriceLog:', e); }
   try { pruneCaseSupply(); }              catch(e) { console.warn('[initApp] pruneCaseSupply:', e); }
   try { initSteamAutocomplete(); }        catch(e) { console.warn('[initApp] initSteamAutocomplete:', e); }
+  try { initAutoRefresh(); }              catch(e) { console.warn('[initApp] initAutoRefresh:', e); }
+  try {
+    const arEl = document.getElementById('settingsAutoRefresh');
+    if (arEl) arEl.value = String(getAutoRefreshHours());
+  } catch(e) { console.warn('[initApp] autoRefresh dropdown:', e); }
   try {
     const apiEl = document.getElementById('apiKeyInput');
     if (apiEl) apiEl.value = getApiKey() || '';
