@@ -3209,6 +3209,170 @@ async function fetchSteamListings(marketHashName) {
   }
 }
 
+// ============ STEAM MARKET AUTOCOMPLETE (v2.6.0) ============
+// Search-as-you-type on the Item Name / Market Hash fields in the add/edit
+// modals. Hits Steam's search/render endpoint (same one Case Intel uses),
+// shows a dropdown of real market items, and auto-fills the exact
+// market_hash_name + name + inferred type on selection.
+
+const steamAcCache = {};   // lowercased query -> results array (session cache)
+let steamAcSeq = 0;        // request token to discard stale responses
+
+async function steamMarketSearch(query) {
+  const key = query.toLowerCase();
+  if (steamAcCache[key]) return steamAcCache[key];
+  const url = 'https://steamcommunity.com/market/search/render/?query=' +
+    encodeURIComponent(query) + '&appid=730&norender=1&count=10';
+  let res;
+  try { res = await window.cs2vault.fetch(url); } catch(e) { return null; }
+  if (!res || res.status < 200 || res.status >= 300) return null;
+  let data;
+  try { data = JSON.parse(res.body); } catch(e) { return null; }
+  if (!data || !Array.isArray(data.results)) return null;
+  const items = data.results.map(function(r) {
+    const ad = r.asset_description || {};
+    return {
+      hash: r.hash_name || r.name || '',
+      price: r.sell_price_text || '',
+      listings: r.sell_listings || 0,
+      icon: ad.icon_url ? ('https://community.fastly.steamstatic.com/economy/image/' + ad.icon_url + '/64fx48f') : null,
+      steamType: ad.type || ''
+    };
+  }).filter(function(it) { return it.hash; });
+  steamAcCache[key] = items;
+  return items;
+}
+
+// Map a Steam result to the modal's type dropdown.
+// mode 'holding' -> skin|case|sticker|armory|knife ; mode 'playskin' -> skin|knife|agent
+function inferTypeFromSteamResult(item, mode) {
+  const t = (item.steamType || '').toLowerCase();
+  const h = (item.hash || '').toLowerCase();
+  if (t.indexOf('knife') !== -1 || t.indexOf('gloves') !== -1 || h.indexOf('\u2605') !== -1) return 'knife';
+  if (t.indexOf('agent') !== -1) return mode === 'playskin' ? 'agent' : 'skin';
+  if (mode === 'playskin') return 'skin';
+  if (t.indexOf('sticker') !== -1 || h.indexOf('sticker') !== -1 || h.indexOf('capsule') !== -1) return 'sticker';
+  if (t.indexOf('container') !== -1 || h.indexOf(' case') !== -1 || h.indexOf('package') !== -1) return 'case';
+  if (t.indexOf('charm') !== -1 || t.indexOf('patch') !== -1 || t.indexOf('collectible') !== -1) return 'armory';
+  return 'skin';
+}
+
+// Attach autocomplete behaviour to one text input.
+// opts: { nameInputId, hashInputId, typeSelectId, mode }
+function attachSteamAutocomplete(inputId, opts) {
+  const input = document.getElementById(inputId);
+  if (!input || input._steamAc) return;
+  input._steamAc = true;
+  input.setAttribute('autocomplete', 'off');
+
+  const row = input.parentNode;          // .form-row
+  row.style.position = 'relative';
+  const dd = document.createElement('div');
+  dd.className = 'steam-ac-dd';
+  row.appendChild(dd);
+
+  let results = [];
+  let activeIdx = -1;
+  let debounceTimer = null;
+
+  function hide() { dd.classList.remove('open'); dd.innerHTML = ''; activeIdx = -1; }
+
+  function applySelection(item) {
+    const nameEl = document.getElementById(opts.nameInputId);
+    const hashEl = document.getElementById(opts.hashInputId);
+    const typeEl = document.getElementById(opts.typeSelectId);
+    if (hashEl) hashEl.value = item.hash;
+    if (nameEl) nameEl.value = item.hash;
+    if (typeEl) {
+      const inferred = inferTypeFromSteamResult(item, opts.mode);
+      for (let i = 0; i < typeEl.options.length; i++) {
+        if (typeEl.options[i].value === inferred) { typeEl.value = inferred; break; }
+      }
+    }
+    hide();
+  }
+
+  function render() {
+    dd.innerHTML = '';
+    if (!results.length) {
+      const empty = document.createElement('div');
+      empty.className = 'steam-ac-empty';
+      empty.textContent = 'No Steam market matches';
+      dd.appendChild(empty);
+      dd.classList.add('open');
+      return;
+    }
+    results.forEach(function(item, idx) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'steam-ac-item' + (idx === activeIdx ? ' active' : '');
+      if (item.icon) {
+        const img = document.createElement('img');
+        img.src = item.icon;
+        img.loading = 'lazy';
+        rowEl.appendChild(img);
+      }
+      const nm = document.createElement('div');
+      nm.className = 'steam-ac-name';
+      nm.textContent = item.hash;
+      nm.title = item.hash;
+      rowEl.appendChild(nm);
+      const meta = document.createElement('div');
+      meta.className = 'steam-ac-meta';
+      meta.textContent = item.price ? item.price : '';
+      rowEl.appendChild(meta);
+      // mousedown (not click) so it fires before the input's blur hides the dropdown
+      rowEl.addEventListener('mousedown', function(e) { e.preventDefault(); applySelection(item); });
+      dd.appendChild(rowEl);
+    });
+    dd.classList.add('open');
+  }
+
+  input.addEventListener('input', function() {
+    const q = input.value.trim();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (q.length < 3) { hide(); return; }
+    debounceTimer = setTimeout(async function() {
+      const mySeq = ++steamAcSeq;
+      const found = await steamMarketSearch(q);
+      if (mySeq !== steamAcSeq) return;                 // stale response
+      if (document.activeElement !== input) return;     // user moved on
+      if (found === null) { hide(); return; }           // network/rate-limit — fail quiet
+      results = found;
+      activeIdx = -1;
+      render();
+    }, 450);
+  });
+
+  input.addEventListener('keydown', function(e) {
+    if (!dd.classList.contains('open')) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIdx = Math.min(activeIdx + 1, results.length - 1);
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIdx = Math.max(activeIdx - 1, 0);
+      render();
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && results[activeIdx]) { e.preventDefault(); applySelection(results[activeIdx]); }
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      hide();
+    }
+  });
+
+  input.addEventListener('blur', function() { setTimeout(hide, 150); });
+}
+
+function initSteamAutocomplete() {
+  // Holdings add/edit modal — both the name and hash fields search
+  attachSteamAutocomplete('itemName',       { nameInputId: 'itemName', hashInputId: 'itemMarketHash', typeSelectId: 'itemType', mode: 'holding' });
+  attachSteamAutocomplete('itemMarketHash', { nameInputId: 'itemName', hashInputId: 'itemMarketHash', typeSelectId: 'itemType', mode: 'holding' });
+  // Play skin modal
+  attachSteamAutocomplete('skinName',       { nameInputId: 'skinName', hashInputId: 'skinMarketHash', typeSelectId: 'skinType', mode: 'playskin' });
+  attachSteamAutocomplete('skinMarketHash', { nameInputId: 'skinName', hashInputId: 'skinMarketHash', typeSelectId: 'skinType', mode: 'playskin' });
+}
+
 async function runCaseIntelligence() {
   if (ciRunning) return;
   ciRunning = true;
@@ -4607,6 +4771,7 @@ function initApp() {
   try { checkAutoSnapshot(); }            catch(e) { console.warn('[initApp] checkAutoSnapshot:', e); }
   try { prunePriceLog(); }                catch(e) { console.warn('[initApp] prunePriceLog:', e); }
   try { pruneCaseSupply(); }              catch(e) { console.warn('[initApp] pruneCaseSupply:', e); }
+  try { initSteamAutocomplete(); }        catch(e) { console.warn('[initApp] initSteamAutocomplete:', e); }
   try {
     const apiEl = document.getElementById('apiKeyInput');
     if (apiEl) apiEl.value = getApiKey() || '';

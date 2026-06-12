@@ -125,6 +125,16 @@ tr:hover .row-actions{opacity:1;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .tab-panel{display:none;}.tab-panel.active{display:block;}
 .fee-note{font-size:11px;color:var(--text3);margin-top:4px;font-family:'Share Tech Mono',monospace;}
+/* Steam market autocomplete (v2.6.0) */
+.steam-ac-dd{position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:400;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;max-height:240px;overflow-y:auto;display:none;box-shadow:0 10px 28px rgba(0,0,0,.55);}
+.steam-ac-dd.open{display:block;}
+.steam-ac-item{display:flex;align-items:center;gap:10px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);}
+.steam-ac-item:last-child{border-bottom:none;}
+.steam-ac-item:hover,.steam-ac-item.active{background:var(--surface3);}
+.steam-ac-item img{width:38px;height:28px;object-fit:contain;flex-shrink:0;}
+.steam-ac-name{font-size:13px;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.steam-ac-meta{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--green);flex-shrink:0;}
+.steam-ac-empty{padding:10px;font-size:12px;color:var(--text3);text-align:center;font-family:'Share Tech Mono',monospace;}
 .heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:24px;}
 .heat-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:default;transition:transform .15s;}
 .heat-card:hover{transform:translateY(-2px);}
@@ -967,7 +977,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="itemBuyPrice" placeholder="0.00" step="0.01"></div>
         <div class="form-row"><label>Date Bought</label><input type="date" id="itemBuyDate"></div>
       </div>
-      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="itemMarketHash" placeholder="e.g. Recoil Case"><div class="fee-note">Exact Steam market name for auto price fetching</div></div>
+      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="itemMarketHash" placeholder="e.g. Recoil Case"><div class="fee-note">Type 3+ letters in either field to search Steam &amp; auto-fill</div></div>
       <div class="form-row"><label>Notes</label><textarea id="itemNotes" rows="2" style="resize:vertical"></textarea></div>
       <div class="form-row" style="flex-direction:row;align-items:center;gap:10px;">
         <input type="checkbox" id="itemIsTuf" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;">
@@ -990,7 +1000,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div class="form-row"><label>Quantity</label><input type="number" id="skinQty" value="1" min="1"></div>
       </div>
       <div class="form-row"><label>Buy Price per unit (£)</label><input type="number" id="skinBuyPrice" placeholder="0.00" step="0.01"></div>
-      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="skinMarketHash" placeholder="e.g. AK-47 | Asiimov (Field-Tested)"><div class="fee-note">Exact Steam market name for auto price fetching. Agents use Steam only.</div></div>
+      <div class="form-row"><label>CSFloat Market Hash Name</label><input type="text" id="skinMarketHash" placeholder="e.g. AK-47 | Asiimov (Field-Tested)"><div class="fee-note">Type 3+ letters in either field to search Steam &amp; auto-fill. Agents use Steam only.</div></div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('skinModal')">Cancel</button><button class="btn btn-primary" onclick="saveSkin()">Save</button></div>
   </div>

@@ -1,6 +1,6 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v2.5.0
+Last updated: June 2026 | Current version: v2.6.0
 
 ---
 
@@ -117,6 +117,29 @@ Last updated: June 2026 | Current version: v2.5.0
 - **No code change** — `main.js` updater logic was already correct
 - **Caveat noted to Rudi**: the silent behaviour fully applies from the *next* update onward. The installed v2.4.5 was built with the old assisted config, so its uninstaller (invoked during the v2.4.5 → v2.4.6 upgrade) may still flash one dialog this one time; v2.4.6+ updates are fully silent
 - **Restart is unavoidable** — Windows locks the running .exe, so every Electron auto-updater must quit → swap files → relaunch. One-click reduces this to a brief flicker with zero user interaction (matches VS Code / Slack / Discord behaviour). There is no in-place hot-swap for a packaged Electron app
+
+### v2.6.0 — Steam Market Autocomplete in Add/Edit Modals ✅
+- **Search-as-you-type item lookup** — typing 3+ characters in *either* the Item Name or Market Hash field (Add/Edit Investment modal + Add/Edit Play Skin modal) queries Steam's `search/render` endpoint (same one Case Intel uses, `count=10`) and shows a dropdown of real market items with thumbnail, exact name, and current lowest price
+- **Selecting a result auto-fills everything**: Item Name + exact `market_hash_name` + inferred Type. Type inference (`inferTypeFromSteamResult`) maps Steam's `asset_description.type` / hash text → knife (Knife/Gloves/★), agent (play-skin mode), sticker (Sticker/Capsule), case (Container/" case"/Package), armory (Charm/Patch/Collectible), else skin. Ends the "ask an AI for the market hash" workflow
+- **Implementation** (`attachSteamAutocomplete` in app.js, wired in `initApp` via `initSteamAutocomplete()`):
+  - 450ms debounce, min 3 chars, per-session query cache (`steamAcCache`) so repeat keystrokes/backspacing never re-hit Steam
+  - Stale-response guard via request token (`steamAcSeq`) — out-of-order responses are discarded
+  - Keyboard nav: ↑/↓ to highlight, Enter to select, Escape to dismiss; selection uses `mousedown` (not `click`) so it beats the input's blur
+  - Network/rate-limit failures fail silent (dropdown just hides) — never blocks manual typing, manual entry still works exactly as before
+  - DOM built with `createElement`/`textContent` (no innerHTML) so hash names with quotes/apostrophes are safe
+- **Icons** load from `community.fastly.steamstatic.com` via plain `<img>` — allowed by the existing CSP (`img-src https:`)
+- New CSS: `.steam-ac-dd`, `.steam-ac-item`, `.steam-ac-name`, `.steam-ac-meta`, `.steam-ac-empty` in index.html; form-row gets `position:relative` at attach time
+- Modal hint text updated to "Type 3+ letters in either field to search Steam & auto-fill"
+- Note: dropdown prices show in the currency Steam geolocates the user's IP to — informational only, never stored
+
+
+### v2.5.1 — Steam Sticker Price Fixes (Elemental Craft Hashes + Capsule Prefix) ✅
+- **Bug**: Bolt Charge, Boom Trail, High Heat, Bolt Strike showed no Steam price (— in the Steam column). Root cause: stored market hashes had a `(Holo)` suffix, but the Elemental Craft pack has **no Holo variants** for these stickers (verified June 2026 — pack variants are paper / Glitter on the Boom series / Foil on the Bolt series; only Rainbow Route is Holo). The strip-suffix retry sometimes rescued the lookup but doubled the Steam request count and got rate-limited on the rest, so results were inconsistent
+- **Hash corrections** — both seed arrays (the dead early `seedNewItems` copy and the live one) updated: `Sticker | Bolt Strike (Holo)` → `Sticker | Bolt Strike`, same for Bolt Charge, Boom Trail, High Heat. `Boom Trail (Glitter)` was already correct and untouched
+- **One-time migration** — `seedNewItems()` gained a `HASH_FIXES` map that rewrites the four wrong hashes on any stored holding at launch and re-persists `cs2vault_holdings` (same pattern as the v2.4.5 platform backfill), so existing data is fixed permanently
+- **`STICKER_INDEXES` updated** — correct suffix-less keys added for the four stickers (same CSFloat IDs); old `(Holo)` keys kept as legacy aliases so any un-migrated data still resolves on CSFloat
+- **Austin Legends Capsule fix** — the Steam lookup was prepending `Sticker | ` to every sticker-type item, turning `Austin 2025 Legends Sticker Capsule` into a nonexistent hash. The prefix-prepend in `fetchAllPlatformPrices()` now skips any hash containing "Capsule" or "Pack" (case-insensitive) — capsules are listed on Steam under their plain name
+- Net effect: all affected items hit Steam first try (no retry round-trip), reducing rate-limit exposure across a full refresh
 
 ### v2.5.0 — Tab Consolidation + Holdings Allocation Strip + Case Intel Rebuild ✅
 - **Tabs trimmed 11 → 7**: Holdings, Trade History, Analytics, Play Skins, Watchlist, Case Intel, Settings
@@ -237,10 +260,11 @@ Last updated: June 2026 | Current version: v2.5.0
 - Returns `null` if fewer than 2 data points exist
 
 ### Steam Sticker Lookup Logic
-1. Auto-prepend `Sticker | ` if missing
+1. Auto-prepend `Sticker | ` if missing — **skipped for hashes containing "Capsule" or "Pack"** (capsules are listed on Steam under their plain name, e.g. `Austin 2025 Legends Sticker Capsule`)
 2. Apply capitalisation fixes (e.g. `From the Deep` → `From The Deep`, `| Axia` → `| AXIA`)
 3. Try exact hash against Steam first
 4. If no result, strip variant suffix `(Holo)`/`(Glitter)`/`(Foil)`/`(Lenticular)` and retry
+- ⚠ Variant suffixes must match Steam's real naming — Elemental Craft papers (Bolt Strike/Charge, Boom Trail, High Heat) have NO Holo variant; wrongly-stored `(Holo)` hashes were corrected by a one-time `HASH_FIXES` migration in `seedNewItems()` (v2.5.1). Relying on the strip-retry doubles request volume and risks rate limits — store the correct hash
 
 ### Agent Market Hash Convention
 Agents stored with full Steam name e.g. `Number K | The Professionals`. CSFloat skipped entirely.

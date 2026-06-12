@@ -49,11 +49,12 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v2.5.0)
+## Features (current as of v2.6.0)
 
 ### Holdings Tab
 - **Allocation strip (v2.5.0)** — stacked bar + legend under the stat cards showing portfolio value split across Cases / Stickers / TUF / Skins / Knives / Armory / Other; click a segment to filter the table, click again to clear
 - Add/edit/delete holdings with name, type, qty, buy price, date, market hash, notes
+- **Steam Market autocomplete (v2.6.0)** — type 3+ letters in the Item Name or Market Hash field of any add/edit modal (holdings + play skins) and a dropdown of real Steam market items appears (thumbnail + price); selecting one auto-fills the name, exact market hash, and inferred type. Debounced + session-cached; manual entry still works as before
 - **TUF (Trade-up Filler) tagging** — checkbox in edit modal, green TUF badge on row, filterable via dropdown
 - Dual-platform price display: CSFloat and Steam side by side (no toggle needed)
 - P&L calculation uses correct platform per item type (see pricing logic above)
