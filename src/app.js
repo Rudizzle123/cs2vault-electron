@@ -1730,9 +1730,391 @@ function tradePlatform(t) {
   return 'csfloat';
 }
 
+// ========================
+// COST BASIS ENGINE (v2.10.0 — Vault Pro Phase 2)
+// ========================
+// Lots are the source of truth for tax. Each holding carries a `lots[]` array;
+// `buyPrice`/`qty` on the holding are a derived weighted-average MIRROR so the
+// 100+ existing read sites keep working untouched.
+//
+// A disposal consumes lots per the active cost-basis method:
+//   - pooling  : UK Section 104 average cost (+ same-day & 30-day B&B matching)
+//   - fifo     : oldest lots first (US default, Germany)
+//   - specific : consume the item's own lots in stored order (current behaviour)
+// The method is a per-jurisdiction setting; UK = pooling, locked for now.
+
+const COST_BASIS_KEY = 'cs2vault_cost_basis_method';
+const TAX_JURISDICTION_KEY = 'cs2vault_tax_jurisdiction';
+
+// Jurisdiction → cost-basis method. UK is locked to pooling for now; the others
+// are declared so the engine + future tax profiles can plug straight in.
+const JURISDICTION_METHODS = {
+  UK: 'pooling',
+  US: 'fifo',
+  DE: 'fifo',
+  CA: 'pooling',
+};
+
+function getTaxJurisdiction() {
+  const j = window._store[TAX_JURISDICTION_KEY];
+  return (j && JURISDICTION_METHODS[j]) ? j : 'UK';
+}
+
+// The effective method. For UK it is force-locked to pooling regardless of any
+// stored override (pooling is mandatory under HMRC S.104). Other jurisdictions
+// fall back to their default but may be overridden by the stored method.
+function getCostBasisMethod() {
+  const j = getTaxJurisdiction();
+  if (j === 'UK') return 'pooling';
+  const stored = window._store[COST_BASIS_KEY];
+  if (stored === 'pooling' || stored === 'fifo' || stored === 'specific') return stored;
+  return JURISDICTION_METHODS[j] || 'pooling';
+}
+
+function costBasisMethodLabel(m) {
+  return m === 'pooling' ? 'Average cost (Section 104 pool)'
+       : m === 'fifo'    ? 'FIFO (first-in, first-out)'
+       : m === 'specific'? 'Specific identification'
+       : m;
+}
+
+// Has any disposal already happened in the current tax year? (used to warn on
+// a mid-year method change, which would re-base already-reported gains).
+function _hasDisposalsThisTaxYear() {
+  try {
+    const start = getTaxYearStart();
+    return (Array.isArray(tradeHistory) ? tradeHistory : []).some(t => t.sellDate && t.sellDate >= start);
+  } catch (e) { return false; }
+}
+
+function setTaxJurisdiction(j) {
+  if (!JURISDICTION_METHODS[j]) j = 'UK';
+  if (_hasDisposalsThisTaxYear()) {
+    if (!confirm('You already have disposals recorded in the current tax year. Changing jurisdiction changes how their cost basis is matched, which will alter your reported gains for this year. Continue?')) {
+      // revert the dropdown to the stored value
+      const sel = document.getElementById('settingsJurisdiction');
+      if (sel) sel.value = getTaxJurisdiction();
+      return;
+    }
+  }
+  window._storeSet(TAX_JURISDICTION_KEY, j);
+  // UK forces pooling; otherwise default the method to the jurisdiction default.
+  if (j === 'UK') window._storeSet(COST_BASIS_KEY, 'pooling');
+  else window._storeSet(COST_BASIS_KEY, JURISDICTION_METHODS[j]);
+  syncCostBasisSettingsUI();
+  try { renderHistory(); } catch (e) {}
+  toast('Tax jurisdiction set to ' + j, 'success');
+}
+
+function setCostBasisMethod(m) {
+  const j = getTaxJurisdiction();
+  if (j === 'UK') {
+    // Locked — pooling is mandatory under HMRC S.104.
+    toast('UK is locked to Section 104 pooling', 'info');
+    syncCostBasisSettingsUI();
+    return;
+  }
+  if (m !== 'pooling' && m !== 'fifo' && m !== 'specific') return;
+  if (_hasDisposalsThisTaxYear()) {
+    if (!confirm('Changing the cost-basis method mid-year re-bases gains for disposals already recorded in this tax year. Continue?')) {
+      syncCostBasisSettingsUI();
+      return;
+    }
+  }
+  window._storeSet(COST_BASIS_KEY, m);
+  syncCostBasisSettingsUI();
+  try { renderHistory(); } catch (e) {}
+  toast('Cost basis method: ' + costBasisMethodLabel(m), 'success');
+}
+
+// Reflect stored jurisdiction/method into the Settings dropdowns + lock state.
+function syncCostBasisSettingsUI() {
+  const j = getTaxJurisdiction();
+  const m = getCostBasisMethod();
+  const jSel = document.getElementById('settingsJurisdiction');
+  const mSel = document.getElementById('settingsCostBasis');
+  const note = document.getElementById('costBasisNote');
+  if (jSel) jSel.value = j;
+  if (mSel) {
+    mSel.value = m;
+    mSel.disabled = (j === 'UK'); // UK locked to pooling
+    mSel.style.opacity = (j === 'UK') ? '0.55' : '1';
+  }
+  if (note) {
+    note.textContent = (j === 'UK')
+      ? 'UK is locked to Section 104 pooling (average cost) with same-day + 30-day rules.'
+      : 'Active method: ' + costBasisMethodLabel(m) + '. Changing it mid-year re-bases recorded gains.';
+  }
+}
+
+// Build a single lot from a holding-like buy. unitCost is GBP (the internal base).
+function makeLot(qty, unitCost, date, origCurrency, fxRate, origAmount, lotId) {
+  return {
+    id: lotId || uid(),
+    qty: qty,
+    unitCost: +(+unitCost).toFixed(6),
+    date: date || '',
+    origCurrency: origCurrency || 'GBP',
+    fxRate: (fxRate != null) ? fxRate : 1,
+    origAmount: (origAmount != null) ? origAmount : +(+unitCost).toFixed(6),
+  };
+}
+
+// Ensure a holding has a lots[] array. Lossless: a holding with no lots becomes
+// a single lot from its existing buyPrice/qty/buyDate + FX provenance.
+function ensureLots(h) {
+  if (Array.isArray(h.lots) && h.lots.length) return h.lots;
+  h.lots = [ makeLot(h.qty, h.buyPrice, h.buyDate, h.origCurrency, h.fxRate, h.origAmount) ];
+  return h.lots;
+}
+
+// Reduce a holding's lots in place by `qty`, per the chosen method, so the
+// stored lot structure reflects what's actually been sold. For pooling the
+// drain is proportional across lots (the pool has one average anyway); for
+// FIFO/specific the oldest/stored-order lots go first.
+function consumeLotsInPlace(h, qty, method) {
+  if (!Array.isArray(h.lots) || !h.lots.length) return;
+  let remaining = qty;
+  if (method === 'fifo') {
+    h.lots = [...h.lots].sort((a, b) => (a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0);
+  }
+  for (const l of h.lots) {
+    if (remaining <= 0) break;
+    const d = Math.min(l.qty, remaining);
+    l.qty -= d; remaining -= d;
+  }
+  h.lots = h.lots.filter(l => l.qty > 1e-9);
+  recalcHoldingFromLots(h);
+}
+
+// Recompute a holding's derived qty + weighted-average buyPrice from its lots.
+// Called after any lot mutation (add / top-up). Keeps every legacy read correct.
+function recalcHoldingFromLots(h) {
+  if (!Array.isArray(h.lots) || !h.lots.length) return h;
+  let q = 0, cost = 0;
+  h.lots.forEach(l => { q += l.qty; cost += l.qty * l.unitCost; });
+  h.qty = q;
+  h.buyPrice = q > 0 ? +(cost / q).toFixed(6) : 0;
+  // Surface the most recent lot date as the holding buyDate (display only)
+  const dated = h.lots.map(l => l.date).filter(Boolean).sort();
+  if (dated.length) h.buyDate = dated[dated.length - 1];
+  return h;
+}
+
+// Group buys (lots) and sells (trades) by a stable item key. Trades reference the
+// item by name+type (that's all the history stores), so we key on the same.
+function _itemKey(name, type) {
+  return (name || '').trim().toLowerCase() + '|' + (type || '').trim().toLowerCase();
+}
+
+// Core matcher: given a chronological list of timeline events for ONE item, run
+// the chosen method and annotate each disposal with { costBasis, gain, lotMatches }.
+// events: [{ kind:'buy', date, lots:[...] } | { kind:'sell', date, trade }]  (already sorted)
+function _matchItemTimeline(events, method, opts) {
+  opts = opts || {};
+  const ukRules = !!opts.ukRules; // same-day + 30-day B&B (pooling only, UK)
+  // Working pool of lots (clones, so we never mutate stored data)
+  let pool = [];
+  // Index buys by date for same-day / B&B matching
+  const results = []; // disposal results in event order
+
+  // Pre-extract buys with their dates for forward-looking B&B matching
+  const buyEvents = events.filter(e => e.kind === 'buy');
+
+  const consumeFromPool = (qtyNeeded) => {
+    // Consume by method from the current pool. Returns total cost consumed.
+    let cost = 0, remaining = qtyNeeded;
+    if (method === 'pooling') {
+      // Section 104: single average price across the whole pool
+      const poolQty = pool.reduce((a, l) => a + l.qty, 0);
+      const poolCost = pool.reduce((a, l) => a + l.qty * l.unitCost, 0);
+      const avg = poolQty > 0 ? poolCost / poolQty : 0;
+      const take = Math.min(remaining, poolQty);
+      cost = take * avg;
+      // Drain the pool proportionally
+      let drain = take;
+      for (const l of pool) {
+        if (drain <= 0) break;
+        const d = Math.min(l.qty, drain);
+        l.qty -= d; drain -= d;
+      }
+      pool = pool.filter(l => l.qty > 1e-9);
+      remaining -= take;
+    } else if (method === 'fifo') {
+      for (const l of pool) {
+        if (remaining <= 0) break;
+        const d = Math.min(l.qty, remaining);
+        cost += d * l.unitCost; l.qty -= d; remaining -= d;
+      }
+      pool = pool.filter(l => l.qty > 1e-9);
+    } else { // specific — consume in stored lot order (mirrors current row behaviour)
+      for (const l of pool) {
+        if (remaining <= 0) break;
+        const d = Math.min(l.qty, remaining);
+        cost += d * l.unitCost; l.qty -= d; remaining -= d;
+      }
+      pool = pool.filter(l => l.qty > 1e-9);
+    }
+    return { cost, shortfall: remaining };
+  };
+
+  for (const ev of events) {
+    if (ev.kind === 'buy') {
+      // Clone lots into the pool, tagging each with its acquisition date so the
+      // UK same-day / bed-and-breakfast rules can pull specific dated lots out
+      // ahead of the Section 104 pool.
+      ev.lots.forEach(l => pool.push({ qty: l.qty, unitCost: l.unitCost, date: l.date || '' }));
+      continue;
+    }
+    // sell
+    const t = ev.trade;
+    const sellDate = t.sellDate || ev.date || '';
+    const qty = t.qty;
+    let matchedCost = 0, matchedQty = 0;
+    const lotMatches = [];
+
+    if (method === 'pooling' && ukRules) {
+      let need = qty;
+      // (1) SAME-DAY: lots in the pool acquired on the exact disposal date.
+      const takeFromPoolDated = (predicate, ruleLabel, sortFn) => {
+        let candidates = pool.filter(predicate);
+        if (sortFn) candidates = candidates.sort(sortFn);
+        for (const l of candidates) {
+          if (need <= 0) break;
+          const take = Math.min(l.qty, need);
+          if (take > 0) {
+            matchedCost += take * l.unitCost; matchedQty += take; need -= take;
+            l.qty -= take;
+            lotMatches.push({ qty: take, unitCost: +l.unitCost.toFixed(6), rule: ruleLabel, date: l.date });
+          }
+        }
+        pool = pool.filter(l => l.qty > 1e-9);
+      };
+
+      if (sellDate) {
+        // (1) same-day acquisitions
+        takeFromPoolDated(l => l.date === sellDate, 'same-day', null);
+        // (2) 30-day bed & breakfast — acquisitions AFTER the disposal, within 30 days, earliest first
+        if (need > 0) {
+          const dSell = new Date(sellDate);
+          takeFromPoolDated(
+            l => l.date && new Date(l.date) > dSell && (new Date(l.date) - dSell) <= 30 * 86400000,
+            'bed-and-breakfast',
+            (a, b) => new Date(a.date) - new Date(b.date)
+          );
+        }
+      }
+      // (3) remainder from the Section 104 pool (everything still in the pool)
+      if (need > 0) {
+        const r = consumeFromPool(need);
+        const got = need - r.shortfall;
+        matchedCost += r.cost; matchedQty += got;
+        if (got > 0) lotMatches.push({ qty: got, unitCost: +(r.cost / got).toFixed(6), rule: 'section-104' });
+        need = r.shortfall;
+      }
+    } else {
+      const r = consumeFromPool(qty);
+      matchedCost = r.cost;
+      matchedQty = qty - r.shortfall;
+      if (matchedQty > 0) lotMatches.push({ qty: matchedQty, unitCost: +(matchedCost / matchedQty).toFixed(6), rule: method });
+    }
+
+    // Fallback: if we couldn't match all qty from lots (e.g. legacy data with
+    // sells but no recorded buys), back-fill the shortfall at the trade's stored
+    // buyPrice so the gain still reconciles instead of overstating.
+    if (matchedQty < qty) {
+      const short = qty - matchedQty;
+      const fallbackUnit = (t.buyPrice != null) ? t.buyPrice : 0;
+      matchedCost += short * fallbackUnit;
+      matchedQty += short;
+      lotMatches.push({ qty: short, unitCost: +(+fallbackUnit).toFixed(6), rule: 'legacy-fallback' });
+    }
+
+    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
+    const gain = gross - fee - matchedCost;
+    results.push({ id: t.id, costBasis: +matchedCost.toFixed(6), gain: +gain.toFixed(6), lotMatches: lotMatches });
+  }
+  return results;
+}
+
+// Recompute cost basis + gain for every disposal in history, using the active
+// method. Returns a map { tradeId -> { costBasis, gain, method, lotMatches } }.
+// Trades whose item has no buy lots at all (pure legacy) are left for the caller
+// to grandfather via stored figures (they won't appear in the returned map).
+function recomputeCGTGains(method) {
+  method = method || getCostBasisMethod();
+  const jurisdiction = getTaxJurisdiction();
+  const ukRules = (jurisdiction === 'UK' && method === 'pooling');
+  const out = {};
+
+  // Build per-item timelines. The pool of buys must represent everything ever
+  // ACQUIRED for the item, because a historical disposal consumed lots that may
+  // since have been (partly) sold off. We therefore seed the pool from:
+  //   (a) the lots still open on the current holding (remaining qty), AND
+  //   (b) an "add-back" of quantities already disposed in history, valued at the
+  //       trade's stored buyPrice (grandfathered cost), dated at the sell date.
+  // Sells then replay chronologically against that reconstructed pool.
+  const buysByKey = {};   // key -> [{qty, unitCost, date}]
+  const sellsByKey = {};  // key -> [trade]
+
+  (Array.isArray(holdings) ? holdings : []).forEach(h => {
+    const lots = ensureLots(h);
+    const key = _itemKey(h.name, h.type);
+    (buysByKey[key] = buysByKey[key] || []);
+    lots.forEach(l => buysByKey[key].push({ qty: l.qty, unitCost: l.unitCost, date: l.date || '' }));
+  });
+
+  (Array.isArray(tradeHistory) ? tradeHistory : []).forEach(t => {
+    const key = _itemKey(t.name, t.type);
+    (sellsByKey[key] = sellsByKey[key] || []).push(t);
+    // Add back the disposed qty as an acquisition lot at the trade's stored cost,
+    // dated just BEFORE the sell so it's available when the sell replays.
+    (buysByKey[key] = buysByKey[key] || []).push({
+      qty: t.qty,
+      unitCost: (t.buyPrice != null ? t.buyPrice : 0),
+      date: t.sellDate || '',
+      _addBack: true,
+    });
+  });
+
+  const allKeys = new Set([...Object.keys(buysByKey), ...Object.keys(sellsByKey)]);
+  allKeys.forEach(key => {
+    const buys = (buysByKey[key] || []);
+    const sells = (sellsByKey[key] || []);
+    if (!sells.length) return; // nothing to recompute for this item
+
+    // Compose timeline events: buys first (so a same-dated buy precedes its sell),
+    // then sells. Add-back buys are dated at the sell date and must land before
+    // the matching sell — the stable sort (buy before sell on equal date) handles it.
+    const events = [];
+    buys.forEach(b => events.push({ kind: 'buy', date: b.date || '', lots: [{ qty: b.qty, unitCost: b.unitCost, date: b.date || '' }] }));
+    sells.forEach(t => events.push({ kind: 'sell', date: t.sellDate || '', trade: t }));
+    events.sort((a, b) => {
+      const da = a.date || '', db = b.date || '';
+      if (da < db) return -1;
+      if (da > db) return 1;
+      const rank = e => (e.kind === 'buy' ? 0 : 1);
+      return rank(a) - rank(b);
+    });
+
+    const res = _matchItemTimeline(events, method, { ukRules });
+    res.forEach(r => { if (r.id) out[r.id] = { costBasis: r.costBasis, gain: r.gain, method, lotMatches: r.lotMatches }; });
+  });
+
+  return out;
+}
+
 function calculateCGT() {
   const taxYearStart = getTaxYearStart();
   const taxYear = getCurrentTaxYear();
+  const method = getCostBasisMethod();
+
+  // Recompute per-disposal cost basis from lots using the active method.
+  // Trades present in the map use the recomputed cost basis; any not present
+  // (pure legacy / unreconcilable) fall back to their stored buyPrice × qty.
+  let gainMap = {};
+  try { gainMap = recomputeCGTGains(method); } catch (e) { console.warn('[CGT] recompute failed, using stored cost basis:', e); gainMap = {}; }
 
   // Helper: roll up gains/losses for a given set of trades
   const rollup = (trades) => {
@@ -1740,8 +2122,9 @@ function calculateCGT() {
     trades.forEach(t => {
       const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
       const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
-      const costBasis = t.buyPrice * t.qty;
-      const gain = gross - fee - costBasis;
+      const rc = (t.id && gainMap[t.id]) ? gainMap[t.id] : null;
+      const costBasis = rc ? rc.costBasis : t.buyPrice * t.qty;
+      const gain = rc ? rc.gain : (gross - fee - costBasis);
       totalFees += fee;
       if (gain > 0) totalGains += gain;
       else totalLosses += Math.abs(gain);
@@ -1766,7 +2149,7 @@ function calculateCGT() {
   // HYPOTHETICAL position: include ALL sales (treats Steam-to-Steam as a disposal too).
   const inclSteam = rollup(inYear);
 
-  return Object.assign({ taxYear, taxYearStart, yearTrades, inYear, inclSteam }, exclSteam);
+  return Object.assign({ taxYear, taxYearStart, yearTrades, inYear, inclSteam, method, gainMap }, exclSteam);
 }
 
 function renderCGTSummary() {
@@ -1823,6 +2206,7 @@ function renderCGTSummary() {
       </div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'Share Tech Mono',monospace;text-align:center;">
+      Cost basis: ${costBasisMethodLabel(cgt.method)}${cgt.method === 'pooling' ? ' · same-day + 30-day rules applied' : ''}<br>
       ⚠ Estimated only. The app's position: Steam Wallet sales aren't taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts — an unsettled area. Consult a tax professional.
     </div>`;
 }
@@ -1835,6 +2219,7 @@ async function exportCGTReport() {
   const rows = [
     ['CS2 Vault — Capital Gains Tax Report'],
     [`Tax Year: ${cgt.taxYear}`],
+    [`Cost Basis Method: ${costBasisMethodLabel(cgt.method)}`],
     [`Generated: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}`],
     [''],
     ['SUMMARY'],
@@ -1856,8 +2241,9 @@ async function exportCGTReport() {
     const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
     const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
     const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
-    const costBasis = t.buyPrice * t.qty;
-    const gain = gross - fee - costBasis;
+    const rc = (t.id && cgt.gainMap && cgt.gainMap[t.id]) ? cgt.gainMap[t.id] : null;
+    const costBasis = rc ? rc.costBasis : t.buyPrice * t.qty;
+    const gain = rc ? rc.gain : (gross - fee - costBasis);
     rows.push([
       t.sellDate, `"${t.name}"`, t.type, t.qty, tradePlatform(t),
       costBasis.toFixed(2), gross.toFixed(2), t.feePercent,
@@ -2329,25 +2715,30 @@ async function saveTopup() {
   if (!fx) { toast('FX rate unavailable for ' + ccy + ' — top-up not saved', 'error'); return; }
   const addPrice = fx.base; // GBP
 
-  const oldTotal = item.qty * item.buyPrice;
-  const newQty   = item.qty + addQty;
-  const newAvg   = (oldTotal + addQty * addPrice) / newQty;
+  // Atomic: re-read storage, find the target, mutate a fresh copy (v2.4.3 pattern)
+  const fresh = loadData();
+  const target = fresh.find(h => h.id === id);
+  if (!target) { toast('Holding not found', 'error'); return; }
 
-  // Update the holding — weighted average buy price, combined qty
-  item.qty      = newQty;
-  item.buyPrice = +newAvg.toFixed(4);
-  // Update date to most recent purchase if newer
-  if (date && (!item.buyDate || date > item.buyDate)) item.buyDate = date;
+  // Phase 2: a top-up appends a NEW lot rather than blending away the history.
+  // The derived buyPrice/qty are recomputed from all lots so the UI is identical,
+  // but the lot history is preserved for accurate Section 104 pooling.
+  ensureLots(target);
+  target.lots.push(makeLot(addQty, addPrice, date, ccy, fx.fxRate, addPriceEntered));
+  recalcHoldingFromLots(target);
+  const newAvg = target.buyPrice;
+
   // Append note about the top-up (records original-currency entry when non-GBP)
   const ccyNote = ccy !== 'GBP' ? ` (${curSymOf(ccy)}${addPriceEntered.toFixed(3)} ${ccy} @ ${fx.fxRate.toFixed(4)})` : '';
   const topupNote = `+${addQty.toLocaleString()} @ ${fmtMoney(addPrice, 3)}${ccyNote} on ${date}`;
-  item.notes = item.notes ? item.notes + ' | ' + topupNote : topupNote;
+  target.notes = target.notes ? target.notes + ' | ' + topupNote : topupNote;
 
+  holdings = fresh;
   saveData(holdings);
   renderHoldings();
   updateStats();
   closeModal('topupModal');
-  toast(`Added ${addQty.toLocaleString()} × ${item.name} @ ${fmtMoney(addPrice, 3)} — new avg ${fmtMoney(newAvg, 3)}`, 'success');
+  toast(`Added ${addQty.toLocaleString()} × ${target.name} @ ${fmtMoney(addPrice, 3)} — new avg ${fmtMoney(newAvg, 3)}`, 'success');
 }
 
 async function saveItem() {
@@ -2369,8 +2760,19 @@ async function saveItem() {
     isTuf: document.getElementById('itemIsTuf').checked
   };
   const editId = document.getElementById('editId').value;
-  if (editId) { const item = holdings.find(h => h.id === editId); if (item) Object.assign(item, obj); }
-  else holdings.push({ id: uid(), ...obj, prices: null });
+  if (editId) {
+    const item = holdings.find(h => h.id === editId);
+    if (item) {
+      Object.assign(item, obj);
+      // Editing a holding rewrites it to a single lot at the entered cost
+      // (an explicit manual correction collapses prior lot structure).
+      item.lots = [ makeLot(obj.qty, obj.buyPrice, buyDate, ccy, fx.fxRate, buyPriceEntered) ];
+    }
+  } else {
+    const newItem = { id: uid(), ...obj, prices: null };
+    newItem.lots = [ makeLot(obj.qty, obj.buyPrice, buyDate, ccy, fx.fxRate, buyPriceEntered) ];
+    holdings.push(newItem);
+  }
   saveData(holdings); renderHoldings(); updateStats(); closeModal('itemModal');
   toast(editId ? 'Item updated' : 'Item added!', 'success');
 }
@@ -2641,7 +3043,14 @@ async function confirmSell() {
   tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate });
   saveHistory(tradeHistory);
   if (qty >= item.qty) holdings = holdings.filter(h => h.id !== id);
-  else item.qty -= qty;
+  else {
+    // Partial sell: reduce qty AND consume lots per the active method so the
+    // remaining lot structure stays correct for future pooling/FIFO matching.
+    item.qty -= qty;
+    if (Array.isArray(item.lots) && item.lots.length) {
+      consumeLotsInPlace(item, qty, getCostBasisMethod());
+    }
+  }
   saveData(holdings); renderHoldings(); renderHistory(); updateStats(); closeModal('sellModal');
   const net = _netRealised - (item.buyPrice * qty);
   toast(`Sold! Net: ${net >= 0 ? '+' : ''}${fmtGBP(net)}`, net >= 0 ? 'success' : 'info');
@@ -4634,6 +5043,8 @@ async function exportAllData() {
     alerts:    window._store['cs2vault_alerts']    || null,
     fxCache:   window._store['cs2vault_fx_cache']  || null,
     displayCurrency: window._store['cs2vault_display_currency'] || null,
+    taxJurisdiction: window._store['cs2vault_tax_jurisdiction'] || null,
+    costBasisMethod: window._store['cs2vault_cost_basis_method'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -4644,7 +5055,7 @@ async function exportAllData() {
 function clearAllData() {
   if (!confirm('⚠ This will delete ALL your holdings, history, snapshots and settings.\n\nAre you absolutely sure?')) return;
   if (!confirm('Last chance — delete everything?')) return;
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -5427,6 +5838,26 @@ function seedNewItems() {
 
     if (fxChanged) console.log('[Migration] v2.9.0 FX provenance backfilled (GBP, rate 1)');
   } catch(e) { console.warn('[Migration] FX backfill failed:', e); }
+
+  // Migration (v2.10.0): give every holding a lots[] array (Phase 2 cost basis).
+  // Lossless — a holding without lots becomes a single lot from its existing
+  // buyPrice/qty/buyDate + FX provenance. Lots become the source of truth for
+  // tax; buyPrice/qty remain as the derived weighted-average mirror.
+  try {
+    const hArr = JSON.parse(window._store['cs2vault_holdings'] || '[]');
+    let lotsChanged = false;
+    hArr.forEach(h => {
+      if (!Array.isArray(h.lots) || !h.lots.length) {
+        h.lots = [ makeLot(h.qty, h.buyPrice, h.buyDate, h.origCurrency, h.fxRate, h.origAmount) ];
+        lotsChanged = true;
+      }
+    });
+    if (lotsChanged) {
+      window._storeSet('cs2vault_holdings', JSON.stringify(hArr));
+      holdings = hArr;
+      console.log('[Migration] v2.10.0 lots backfilled on ' + hArr.length + ' holdings');
+    }
+  } catch(e) { console.warn('[Migration] lots backfill failed:', e); }
 }
 function initApp() {
   try { seedHistoricalSnapshots(); } catch(e) { console.warn('[initApp] seedHistoricalSnapshots:', e); }
@@ -5465,6 +5896,7 @@ function initApp() {
     const arEl = document.getElementById('settingsAutoRefresh');
     if (arEl) arEl.value = String(getAutoRefreshHours());
   } catch(e) { console.warn('[initApp] autoRefresh dropdown:', e); }
+  try { syncCostBasisSettingsUI(); } catch(e) { console.warn('[initApp] costBasis UI:', e); }
   try {
     const apiEl = document.getElementById('apiKeyInput');
     if (apiEl) apiEl.value = getApiKey() || '';

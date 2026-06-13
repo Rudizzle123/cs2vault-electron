@@ -833,6 +833,30 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         </div>
       </div>
 
+      <!-- Tax & Cost Basis (v2.10.0 — Vault Pro Phase 2) -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">Tax &amp; Cost Basis</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Your tax jurisdiction sets how disposal cost basis is matched against your buy lots. The UK uses HMRC Section 104 pooling (average cost) with the same-day and 30-day &ldquo;bed &amp; breakfast&rdquo; rules — this is mandatory and locked.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="settingsJurisdiction" onchange="setTaxJurisdiction(this.value)"
+            style="background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;min-width:220px;">
+            <option value="UK">United Kingdom (Section 104 pooling)</option>
+            <option value="US">United States (FIFO)</option>
+            <option value="DE">Germany (FIFO)</option>
+            <option value="CA">Canada (ACB / pooling)</option>
+          </select>
+          <select id="settingsCostBasis" onchange="setCostBasisMethod(this.value)"
+            style="background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;min-width:220px;">
+            <option value="pooling">Average cost (Section 104 pool)</option>
+            <option value="fifo">FIFO (first-in, first-out)</option>
+            <option value="specific">Specific identification</option>
+          </select>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;" id="costBasisNote">
+          UK is locked to Section 104 pooling. Other jurisdictions are early-access.
+        </div>
+      </div>
+
       <!-- Data management -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
         <div class="section-heading">Data Management</div>
