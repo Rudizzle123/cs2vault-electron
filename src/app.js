@@ -696,6 +696,285 @@ function seedNewItems() {
 let sortKey = 'name', sortDir = 1, currentFilter = '';
 
 // ========================
+// VAULT PRO — FEATURE GATING (Phase 4a)
+// ========================
+// Single source of truth for free vs Pro. Every gated feature routes through
+// isPro() — NOTHING reads the override key directly. In Phase 4b, isPro()'s body
+// swaps from "read local override" to "read validated Paddle licence token"
+// (Paddle-native validation, webhook on Cloudflare Workers) with zero changes to
+// any gated feature. The override flag stays respected for dev/preview use.
+const PRO_OVERRIDE_KEY = 'cs2vault_pro_override';
+
+// FEATURES map — the canonical list of every gateable capability and its tier.
+// tier: 'free' (never gated) | 'pro' (gated behind isPro()).
+const FEATURES = {
+  // --- FREE: the core tracker ---
+  holdings:        { tier: 'free', label: 'Holdings tracker' },
+  playSkins:       { tier: 'free', label: 'Play Skins' },
+  tradeHistory:    { tier: 'free', label: 'Trade History' },
+  pricing:         { tier: 'free', label: 'Live pricing & refresh' },
+  watchlist:       { tier: 'free', label: 'Watchlist & alerts' },
+  caseIntel:       { tier: 'free', label: 'Case Intel' },
+  analytics:       { tier: 'free', label: 'Analytics' },
+  healthReport:    { tier: 'free', label: 'Portfolio health' },
+  csvImport:       { tier: 'free', label: 'CSV import' },
+  ukTaxSummary:    { tier: 'free', label: 'UK CGT summary (on-screen)' },
+  // --- PRO: the accounting & tax engine (the paywall) ---
+  cashOut:         { tier: 'pro', label: 'Cash Out Calculator',
+                     blurb: 'Model a full cashout — Steam sell → bridge skin → CSFloat sell → withdraw → cash — with the fee chain and a CGT estimate on the realised proceeds.' },
+  csvExport:       { tier: 'pro', label: 'CSV export',
+                     blurb: 'Export your holdings and trade history to CSV. Importing is always free — exporting your data out is a Vault Pro feature.' },
+  multiJurisdiction: { tier: 'pro', label: 'Multi-jurisdiction tax engine (US / DE / CA)',
+                       blurb: 'Unlock US (short/long-term), Germany (1-year exemption) and Canada (ACB, 50% inclusion) tax profiles, with holding-period classification and tax-currency reporting.' },
+  taxReportExport:   { tier: 'pro', label: 'Tax report export',
+                       blurb: 'Export the full per-jurisdiction CGT report — disposal schedule, holding-period columns, allowance/exemption lines — the document you hand your accountant.' },
+  costBasisMethod:   { tier: 'pro', label: 'Cost-basis methods',
+                       blurb: 'Choose your accounting methodology — FIFO or specific identification — instead of the default pooling.' },
+  multiCurrencyDisplay: { tier: 'pro', label: 'Multi-currency display',
+                          blurb: 'View your whole portfolio, P&L and analytics in any of 12 currencies, converted at live ECB rates. The app is fully usable in GBP on the free tier.' },
+  multiCurrencyEntry:   { tier: 'pro', label: 'Multi-currency entry',
+                          blurb: 'Record buys, sells and top-ups in any currency, converted to your base at the transaction-date FX rate with full provenance.' },
+};
+
+// isPro() — the ONE check. Reads the local override for now (Phase 4a).
+// Phase 4b replaces the body with a Paddle licence check; callers never change.
+function isPro() {
+  try { return window._store[PRO_OVERRIDE_KEY] === 'true'; }
+  catch (e) { return false; }
+}
+
+// True if a given feature key is currently usable by this user.
+function featureUnlocked(key) {
+  const f = FEATURES[key];
+  if (!f) return true;            // unknown key → fail open (never gate by accident)
+  if (f.tier === 'free') return true;
+  return isPro();
+}
+
+// Dev/preview toggle (Settings) — flips the whole app between locked/unlocked
+// so both states are visible without any payment system. Phase 4b keeps this as
+// a dev override layered on top of the real licence check.
+function setProOverride(on) {
+  window._storeSet(PRO_OVERRIDE_KEY, on ? 'true' : 'false');
+  // Re-sync every surface that changes between tiers.
+  try { syncProUI(); } catch (e) {}
+  try { syncCostBasisSettingsUI(); } catch (e) {}
+  try { populateCcySelects(); } catch (e) {}
+  try { syncDisplayCcyLock(); } catch (e) {}
+  try { syncJurisdictionLock(); } catch (e) {}
+  // If a free user had somehow landed on a Pro jurisdiction/currency, the
+  // getters below clamp them back — re-render anything tax/money bearing.
+  try { renderHistory(); } catch (e) {}
+  try { renderHoldings(); updateStats(); } catch (e) {}
+  try { renderSkins(); } catch (e) {}
+  toast(on ? 'Pro features unlocked (preview override ON)' : 'Pro override OFF — free tier', on ? 'success' : 'info');
+}
+
+// Reflect the override switch state in Settings (called from updateSettingsInfo).
+function syncProUI() {
+  const t = document.getElementById('proOverrideToggle');
+  if (t) t.checked = isPro();
+  const badge = document.getElementById('proTierBadge');
+  if (badge) {
+    badge.textContent = isPro() ? 'PRO' : 'FREE';
+    badge.className = 'pro-tier-badge ' + (isPro() ? 'is-pro' : 'is-free');
+  }
+  try { syncProButtons(); } catch (e) {}
+}
+
+// Show/hide the inline PRO badge on each gated toolbar button by tier.
+function syncProButtons() {
+  const map = {
+    proBadgeExportCSV:  'csvExport',
+    proBadgeExportHist: 'csvExport',
+    proBadgeCashOut:    'cashOut',
+    proBadgeCGTReport:  'taxReportExport',
+  };
+  Object.keys(map).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = featureUnlocked(map[id]) ? 'none' : 'inline-block';
+  });
+}
+
+// Standard lock-panel HTML for a gated feature (badge + explanation, no popups).
+// Used inline where a Pro feature would otherwise render.
+function proLockPanel(featureKey) {
+  const f = FEATURES[featureKey] || {};
+  const blurb = f.blurb || 'This is a Vault Pro feature.';
+  return '<div class="pro-lock">'
+    + '<div class="pro-lock-badge">◆ PRO</div>'
+    + '<div class="pro-lock-body">'
+    +   '<div class="pro-lock-title">' + escHtml(f.label || 'Vault Pro') + '</div>'
+    +   '<div class="pro-lock-blurb">' + escHtml(blurb) + '</div>'
+    +   '<div class="pro-lock-hint">Available in Vault Pro. Settings → enable the preview override to explore it now.</div>'
+    + '</div></div>';
+}
+
+// Small inline "PRO" badge for labels/option text.
+function proBadge() { return '<span class="pro-inline-badge">PRO</span>'; }
+
+// One-line non-naggy toast pointing at the locked feature (used when a free user
+// interacts with a gated control). Not a popup — uses the existing toast system.
+function showProToast(featureKey) {
+  const f = FEATURES[featureKey] || {};
+  toast((f.label || 'This') + ' is a Vault Pro feature — enable the preview override in Settings to explore it', 'info');
+}
+
+// Disable/enable the Settings display-currency dropdown by tier, clamping to GBP
+// when locked. Lock visual handled by a small PRO badge in the heading (HTML).
+function syncDisplayCcyLock() {
+  const sel = document.getElementById('settingsDisplayCcy');
+  const lock = document.getElementById('displayCcyProBadge');
+  const unlocked = featureUnlocked('multiCurrencyDisplay');
+  if (sel) {
+    if (!unlocked) sel.value = 'GBP';
+    sel.disabled = !unlocked;
+    sel.style.opacity = unlocked ? '1' : '0.55';
+  }
+  if (lock) lock.style.display = unlocked ? 'none' : 'inline-block';
+}
+
+// Disable/enable the Settings jurisdiction dropdown's non-UK options by tier.
+function syncJurisdictionLock() {
+  const sel = document.getElementById('settingsJurisdiction');
+  const lock = document.getElementById('jurisdictionProBadge');
+  const unlocked = featureUnlocked('multiJurisdiction');
+  if (sel) {
+    Array.from(sel.options).forEach(o => {
+      if (o.value !== 'UK') { o.disabled = !unlocked; }
+    });
+    if (!unlocked) sel.value = 'UK';
+  }
+  if (lock) lock.style.display = unlocked ? 'none' : 'inline-block';
+}
+
+// ========================
+// FIRST-RUN ONBOARDING WIZARD (Phase 4a)
+// ========================
+// Runs ONCE on a genuinely fresh install. Skippable, never blocks the app, never
+// shows again once completed or skipped (cs2vault_onboarded flag). Reuses the
+// existing settings storage keys/setters — no duplicated logic. Display currency
+// and tax jurisdiction are written as the user's stored PREFERENCE even on the
+// free tier (the getters clamp them to GBP/UK at render time), so the choice is
+// honoured automatically if the user later upgrades to Pro.
+
+let _obStep = 1;
+const _OB_LAST_STEP = 4;
+
+function maybeStartOnboarding() {
+  if (!isFreshInstall()) return;
+  if (hasOnboarded()) return;
+  startOnboarding();
+}
+
+function startOnboarding() {
+  _obStep = 1;
+  // Populate the wizard currency dropdown from the canonical list.
+  const ccy = document.getElementById('obDisplayCcy');
+  if (ccy && !ccy.options.length && Array.isArray(SUPPORTED_CURRENCIES)) {
+    SUPPORTED_CURRENCIES.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.code; o.textContent = c.label || c.code;
+      ccy.appendChild(o);
+    });
+    ccy.value = 'GBP';
+  }
+  // Reflect any already-stored values (defensive — usually none on fresh install).
+  const jur = document.getElementById('obJurisdiction');
+  if (jur) jur.value = window._store[TAX_JURISDICTION_KEY] || 'UK';
+  const ak = document.getElementById('obApiKey');
+  if (ak) ak.value = window._store['cs2vault_apikey'] || '';
+  const pk = document.getElementById('obPricempireKey');
+  if (pk) pk.value = window._store[PRICEMPIRE_KEY_STORE] || '';
+  _obShowStep(1);
+  const ov = document.getElementById('onboardModal');
+  if (ov) ov.classList.add('open');
+}
+
+function _obShowStep(n) {
+  _obStep = n;
+  for (let i = 1; i <= _OB_LAST_STEP; i++) {
+    const s = document.getElementById('obStep' + i);
+    if (s) s.style.display = (i === n) ? 'block' : 'none';
+  }
+  // Progress dots
+  for (let i = 1; i <= _OB_LAST_STEP; i++) {
+    const d = document.getElementById('obDot' + i);
+    if (d) d.className = 'ob-dot' + (i === n ? ' active' : (i < n ? ' done' : ''));
+  }
+  // Back button hidden on step 1
+  const back = document.getElementById('obBackBtn');
+  if (back) back.style.visibility = (n === 1) ? 'hidden' : 'visible';
+  // Next button label: "Finish" on the last step
+  const next = document.getElementById('obNextBtn');
+  if (next) next.textContent = (n === _OB_LAST_STEP) ? 'Finish' : 'Next';
+}
+
+function obNext() {
+  if (_obStep < _OB_LAST_STEP) { _obShowStep(_obStep + 1); return; }
+  obFinish();
+}
+
+function obBack() {
+  if (_obStep > 1) _obShowStep(_obStep - 1);
+}
+
+// Persist whatever the user entered, mark onboarded, close. Each field is
+// optional — a blank field just leaves the existing/default value.
+function obFinish() {
+  try {
+    const ccy = document.getElementById('obDisplayCcy');
+    if (ccy && ccy.value) {
+      // Store the preference directly (bypasses the Pro gate on setDisplayCurrency
+      // so the choice survives a later upgrade; getDisplayCurrency() still clamps
+      // free users to GBP at render time).
+      window._storeSet(DISPLAY_CCY_KEY, ccy.value);
+    }
+    const jur = document.getElementById('obJurisdiction');
+    if (jur && jur.value && JURISDICTION_METHODS[jur.value]) {
+      window._storeSet(TAX_JURISDICTION_KEY, jur.value);
+      if (jur.value === 'UK') window._storeSet(COST_BASIS_KEY, 'pooling');
+      else window._storeSet(COST_BASIS_KEY, JURISDICTION_METHODS[jur.value]);
+    }
+    const ak = document.getElementById('obApiKey');
+    if (ak && ak.value.trim()) saveApiKey(ak.value.trim());
+    const pk = document.getElementById('obPricempireKey');
+    if (pk && pk.value.trim()) window._storeSet(PRICEMPIRE_KEY_STORE, pk.value.trim());
+  } catch (e) { console.warn('[onboarding] save failed:', e); }
+  _finishOnboardingCommon();
+  toast('Setup complete — welcome to CS2 Vault', 'success');
+}
+
+function obSkip() {
+  _finishOnboardingCommon();
+}
+
+// Shared close path — set the flag, re-init currency display, refresh settings UI.
+function _finishOnboardingCommon() {
+  window._storeSet(ONBOARDED_KEY, 'true');
+  const ov = document.getElementById('onboardModal');
+  if (ov) ov.classList.remove('open');
+  // Apply the chosen settings to the live UI.
+  try { initDisplayCurrency().then(() => { try { renderHoldings(); updateStats(); renderSkins(); } catch(e){} }); } catch(e){}
+  try { syncCostBasisSettingsUI(); } catch(e){}
+  try { syncJurisdictionLock(); } catch(e){}
+  try { syncDisplayCcyLock(); } catch(e){}
+  try {
+    const apiEl = document.getElementById('apiKeyInput');
+    if (apiEl) apiEl.value = getApiKey() || '';
+    const sApi = document.getElementById('settingsApiKey');
+    if (sApi) sApi.value = getApiKey() || '';
+  } catch(e){}
+  try { checkApiStatus(); } catch(e){}
+}
+
+// Allow re-running the wizard from Settings (e.g. to reconfigure) — does not
+// touch the onboarded flag's "never auto-show again" guarantee.
+function reopenOnboarding() {
+  startOnboarding();
+}
+
+// ========================
 // API KEY
 // ========================
 function getApiKey() { return window._store['cs2vault_apikey'] || ''; }
@@ -755,14 +1034,30 @@ function curSymOf(code) {
 }
 // Fill all currency <select>s (entry selects show codes; settings shows full labels)
 function populateCcySelects() {
+  const entryUnlocked = featureUnlocked('multiCurrencyEntry');
   ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy'].forEach(id => {
     const el = document.getElementById(id);
-    if (!el || el.options.length) return;
-    SUPPORTED_CURRENCIES.forEach(c => {
+    if (!el) return;
+    // Rebuild each time so toggling the Pro override re-locks/unlocks entry.
+    el.innerHTML = '';
+    if (entryUnlocked) {
+      SUPPORTED_CURRENCIES.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.code; o.textContent = c.code;
+        el.appendChild(o);
+      });
+      el.disabled = false;
+      el.style.opacity = '1';
+      el.title = '';
+    } else {
+      // Free tier: GBP only, locked. Entry stays fully functional in GBP.
       const o = document.createElement('option');
-      o.value = c.code; o.textContent = c.code;
+      o.value = 'GBP'; o.textContent = 'GBP';
       el.appendChild(o);
-    });
+      el.disabled = true;
+      el.style.opacity = '0.55';
+      el.title = 'Multi-currency entry is a Vault Pro feature';
+    }
     el.value = 'GBP';
   });
   const s = document.getElementById('settingsDisplayCcy');
@@ -825,7 +1120,12 @@ async function getRate(from, to, date) {
 }
 
 // Display currency
-function getDisplayCurrency() { return window._store[DISPLAY_CCY_KEY] || 'GBP'; }
+function getDisplayCurrency() {
+  // Multi-currency display is Pro — free users always render in GBP, even if a
+  // value was stored while Pro (e.g. via the preview override) and later locked.
+  if (!featureUnlocked('multiCurrencyDisplay')) return 'GBP';
+  return window._store[DISPLAY_CCY_KEY] || 'GBP';
+}
 async function initDisplayCurrency() {
   _displayCcy = getDisplayCurrency();
   if (_displayCcy !== 'GBP') {
@@ -839,6 +1139,12 @@ async function initDisplayCurrency() {
   if (sel) sel.value = _displayCcy;
 }
 async function setDisplayCurrency(code) {
+  if (!featureUnlocked('multiCurrencyDisplay')) {
+    const sel = document.getElementById('settingsDisplayCcy');
+    if (sel) sel.value = 'GBP';
+    showProToast('multiCurrencyDisplay');
+    return;
+  }
   window._storeSet(DISPLAY_CCY_KEY, code);
   await initDisplayCurrency();
   // Re-render everything money-bearing on the current tab set
@@ -1874,16 +2180,23 @@ const JURISDICTION_METHODS = {
 };
 
 function getTaxJurisdiction() {
+  // Multi-jurisdiction is a Pro feature — free users are clamped to UK
+  // regardless of any stored value (so the engine, exports and badges all
+  // behave as UK without touching the gated-feature code itself).
+  if (!featureUnlocked('multiJurisdiction')) return 'UK';
   const j = window._store[TAX_JURISDICTION_KEY];
   return (j && JURISDICTION_METHODS[j]) ? j : 'UK';
 }
 
 // The effective method. For UK it is force-locked to pooling regardless of any
 // stored override (pooling is mandatory under HMRC S.104). Other jurisdictions
-// fall back to their default but may be overridden by the stored method.
+// fall back to their default but may be overridden by the stored method —
+// but choosing a non-default method is a Pro feature, so free users get the
+// jurisdiction default only.
 function getCostBasisMethod() {
   const j = getTaxJurisdiction();
   if (j === 'UK') return 'pooling';
+  if (!featureUnlocked('costBasisMethod')) return JURISDICTION_METHODS[j] || 'pooling';
   const stored = window._store[COST_BASIS_KEY];
   if (stored === 'pooling' || stored === 'fifo' || stored === 'specific') return stored;
   return JURISDICTION_METHODS[j] || 'pooling';
@@ -1907,6 +2220,13 @@ function _hasDisposalsThisTaxYear() {
 
 function setTaxJurisdiction(j) {
   if (!JURISDICTION_METHODS[j]) j = 'UK';
+  // Non-UK jurisdictions are a Pro feature. Free users are kept on UK.
+  if (j !== 'UK' && !featureUnlocked('multiJurisdiction')) {
+    const sel = document.getElementById('settingsJurisdiction');
+    if (sel) sel.value = 'UK';
+    showProToast('multiJurisdiction');
+    return;
+  }
   if (_hasDisposalsThisTaxYear()) {
     if (!confirm('You already have disposals recorded in the current tax year. Changing jurisdiction changes how their cost basis is matched, which will alter your reported gains for this year. Continue?')) {
       // revert the dropdown to the stored value
@@ -1932,6 +2252,12 @@ function setCostBasisMethod(m) {
     syncCostBasisSettingsUI();
     return;
   }
+  // Choosing a method is a Pro feature (free non-UK users get the default).
+  if (!featureUnlocked('costBasisMethod')) {
+    syncCostBasisSettingsUI();
+    showProToast('costBasisMethod');
+    return;
+  }
   if (m !== 'pooling' && m !== 'fifo' && m !== 'specific') return;
   if (_hasDisposalsThisTaxYear()) {
     if (!confirm('Changing the cost-basis method mid-year re-bases gains for disposals already recorded in this tax year. Continue?')) {
@@ -1952,16 +2278,24 @@ function syncCostBasisSettingsUI() {
   const jSel = document.getElementById('settingsJurisdiction');
   const mSel = document.getElementById('settingsCostBasis');
   const note = document.getElementById('costBasisNote');
+  const methodUnlocked = featureUnlocked('costBasisMethod');
   if (jSel) jSel.value = j;
   if (mSel) {
     mSel.value = m;
-    mSel.disabled = (j === 'UK'); // UK locked to pooling
-    mSel.style.opacity = (j === 'UK') ? '0.55' : '1';
+    // Disabled for UK (locked to pooling) OR when the method-choice feature is
+    // gated (free tier gets the jurisdiction default only).
+    const disabled = (j === 'UK') || !methodUnlocked;
+    mSel.disabled = disabled;
+    mSel.style.opacity = disabled ? '0.55' : '1';
   }
   if (note) {
-    note.textContent = (j === 'UK')
-      ? 'UK is locked to Section 104 pooling (average cost) with same-day + 30-day rules.'
-      : 'Active method: ' + costBasisMethodLabel(m) + '. Changing it mid-year re-bases recorded gains.';
+    if (j === 'UK') {
+      note.textContent = 'UK is locked to Section 104 pooling (average cost) with same-day + 30-day rules.';
+    } else if (!methodUnlocked) {
+      note.textContent = 'Active method: ' + costBasisMethodLabel(m) + '. Choosing a different method is a Vault Pro feature.';
+    } else {
+      note.textContent = 'Active method: ' + costBasisMethodLabel(m) + '. Changing it mid-year re-bases recorded gains.';
+    }
   }
 }
 
@@ -2526,6 +2860,10 @@ function _usBucketChips(cgt, f) {
 // CGT TAX REPORT EXPORT
 // ========================
 async function exportCGTReport() {
+  if (!featureUnlocked('taxReportExport')) {
+    showProToast('taxReportExport');
+    return;
+  }
   const cgt = await calculateCGTWithTaxCurrency();
   const profile = cgt.profile;
   const ccy = cgt.taxCurrency;
@@ -2649,6 +2987,7 @@ async function exportCGTReport() {
 // CASH OUT CALCULATOR
 // ========================
 function openCashOutCalc() {
+  if (!featureUnlocked('cashOut')) { showProToast('cashOut'); return; }
   document.getElementById('coSteamSellPrice').value = '';
   document.getElementById('coCsfloatSellPrice').value = '';
   document.getElementById('coCgtToggle').checked = false;
@@ -3540,6 +3879,9 @@ function saveSnapshots(d) { window._storeSet(SNAPSHOT_KEY, JSON.stringify(d)); }
 
 // Seed historical case-only data
 function seedHistoricalSnapshots() {
+  // Fresh installs start with no portfolio history — these are the developer's
+  // real monthly figures and must not appear on a new user's machine.
+  if (isFreshInstall()) return;
   const existing = JSON.parse(window._store[SNAPSHOT_KEY] || '[]');
   if (existing.some(s => s.source === 'historical')) return;
   const historical = [
@@ -5434,6 +5776,7 @@ async function exportAllData() {
     displayCurrency: window._store['cs2vault_display_currency'] || null,
     taxJurisdiction: window._store['cs2vault_tax_jurisdiction'] || null,
     costBasisMethod: window._store['cs2vault_cost_basis_method'] || null,
+    proOverride:     window._store['cs2vault_pro_override'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -5444,7 +5787,7 @@ async function exportAllData() {
 function clearAllData() {
   if (!confirm('⚠ This will delete ALL your holdings, history, snapshots and settings.\n\nAre you absolutely sure?')) return;
   if (!confirm('Last chance — delete everything?')) return;
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -5486,6 +5829,11 @@ async function updateSettingsInfo() {
     const pmEl = document.getElementById('settingsPricempireKey');
     if (pmEl) pmEl.value = getPricempireKey() || '';
   } catch(e) {}
+
+  // Keep the Pro tier UI in sync whenever Settings is opened.
+  try { syncProUI(); } catch(e) {}
+  try { syncDisplayCcyLock(); } catch(e) {}
+  try { syncJurisdictionLock(); } catch(e) {}
 }
 
 
@@ -5919,6 +6267,7 @@ function filterHistory(q) {
 }
 function sortTable(key) { if (sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=1;} renderHoldings(); }
 async function exportCSV() {
+  if (!featureUnlocked('csvExport')) { showProToast('csvExport'); return; }
   const rows=[['Name','Type','TUF','Qty','Buy Price','Buy Date','Market Hash','CSFloat','Steam','Best Price','P&L','Category','Notes']];
   holdings.forEach(h=>{
     const best=getBestPrice(h);
@@ -5934,6 +6283,7 @@ async function exportCSV() {
   }
 }
 async function exportHistoryCSV() {
+  if (!featureUnlocked('csvExport')) { showProToast('csvExport'); return; }
   const rows=[['Name','Type','Qty','Buy Price','Sell Price','Date','Platform','Fee %','Fee Amount','Net Realised','Net Profit']];
   tradeHistory.forEach(t=>{
     const g=(t.gross!=null)?t.gross:t.sellPrice*t.qty;
@@ -6062,8 +6412,62 @@ document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click
 // ========================
 // INIT
 // ========================
+
+// ---- Install-state detection (Phase 4a) -------------------------------------
+// A genuinely FRESH install must start EMPTY — never seeded with the developer's
+// personal portfolio. An EXISTING user (Rudi's machine, or anyone who already
+// has data) keeps every byte and is silently marked onboarded.
+//
+// Detection runs ONCE, before any seeding. The rule:
+//   - If cs2vault_install_state is already set → honour it (idempotent).
+//   - Else if any real user data exists (holdings / history / skins / snapshots)
+//     → this is a pre-existing user upgrading into v3.1.0. Mark 'existing' and
+//       'onboarded' so we never wipe them and never show the wizard.
+//   - Else (no install-state, no data) → 'fresh'. Seeding is suppressed and the
+//     onboarding wizard runs on first paint.
+const INSTALL_STATE_KEY = 'cs2vault_install_state';   // 'fresh' | 'existing'
+const ONBOARDED_KEY      = 'cs2vault_onboarded';       // 'true' once done/skipped
+
+function _hasAnyUserData() {
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_skins','cs2vault_snapshots'];
+  for (const k of keys) {
+    try {
+      const arr = JSON.parse(window._store[k] || '[]');
+      if (Array.isArray(arr) && arr.length) return true;
+    } catch (e) {}
+  }
+  // An API key also indicates a real, configured install.
+  if ((window._store['cs2vault_apikey'] || '').trim()) return true;
+  return false;
+}
+
+// Computed once per launch and cached for the rest of init.
+let _isFreshInstall = false;
+
+function detectInstallState() {
+  const stored = window._store[INSTALL_STATE_KEY];
+  if (stored === 'fresh' || stored === 'existing') {
+    _isFreshInstall = (stored === 'fresh');
+    return;
+  }
+  if (_hasAnyUserData()) {
+    // Pre-existing user upgrading in — protect their data, skip the wizard.
+    window._storeSet(INSTALL_STATE_KEY, 'existing');
+    window._storeSet(ONBOARDED_KEY, 'true');
+    _isFreshInstall = false;
+  } else {
+    window._storeSet(INSTALL_STATE_KEY, 'fresh');
+    _isFreshInstall = true;
+  }
+}
+
+function isFreshInstall() { return _isFreshInstall; }
+function hasOnboarded() { return window._store[ONBOARDED_KEY] === 'true'; }
+
 // Seed holdings if Clutch Case not already present
 function seedIfMissing() {
+  // Fresh installs start EMPTY — never seed the developer's personal portfolio.
+  if (isFreshInstall()) { holdings = []; return; }
   const existing = JSON.parse(window._store['cs2vault_holdings'] || '[]');
   if (existing.some(h => h.name === 'Clutch Case')) {
     holdings = existing;
@@ -6092,6 +6496,11 @@ function seedIfMissing() {
 
 // Seed new holdings and trade history if missing
 function seedNewItems() {
+  // Fresh installs must start EMPTY — never inject the developer's holdings or
+  // trade history. The data-migration passes below (platform backfill, FX
+  // provenance, lots) are harmless no-ops on empty stores, so we skip the
+  // personal-data seeding and let migrations run on whatever exists.
+  if (isFreshInstall()) { return; }
   // Add missing holdings
   const existingH = JSON.parse(window._store['cs2vault_holdings'] || '[]');
   const newItems = [
@@ -6249,6 +6658,7 @@ function seedNewItems() {
   } catch(e) { console.warn('[Migration] lots backfill failed:', e); }
 }
 function initApp() {
+  try { detectInstallState(); }        catch(e) { console.warn('[initApp] detectInstallState:', e); }
   try { seedHistoricalSnapshots(); } catch(e) { console.warn('[initApp] seedHistoricalSnapshots:', e); }
   try { seedIfMissing(); }             catch(e) { console.warn('[initApp] seedIfMissing:', e); }
   try { holdings     = loadData(); }      catch(e) { console.warn('[initApp] loadData:', e); holdings = []; }
@@ -6256,8 +6666,15 @@ function initApp() {
   // Load play skins AFTER initStore so window._store is populated
   try {
     const storedSkins = loadSkins();
-    skins = storedSkins || DEFAULT_SKINS;
-    if (!storedSkins) saveSkins(skins);
+    // Fresh installs start with NO play skins (DEFAULT_SKINS is the developer's
+    // personal set). Existing users keep theirs / get the default if unset.
+    if (isFreshInstall()) {
+      skins = storedSkins || [];
+      if (!storedSkins) saveSkins(skins);
+    } else {
+      skins = storedSkins || DEFAULT_SKINS;
+      if (!storedSkins) saveSkins(skins);
+    }
     // One-time fix: patch Number K market hash and type if stored with old bare name
     let skinsPatched = false;
     skins.forEach(s => {
@@ -6267,7 +6684,7 @@ function initApp() {
       }
     });
     if (skinsPatched) saveSkins(skins);
-  } catch(e) { console.warn('[initApp] loadSkins:', e); skins = DEFAULT_SKINS; }
+  } catch(e) { console.warn('[initApp] loadSkins:', e); skins = isFreshInstall() ? [] : DEFAULT_SKINS; }
   try { seedNewItems(); }                 catch(e) { console.warn('[initApp] seedNewItems:', e); }
   try { populateCcySelects(); }           catch(e) { console.warn('[initApp] populateCcySelects:', e); }
   // Display currency: async — re-renders money-bearing views once the rate lands (GBP = instant)
@@ -6286,6 +6703,12 @@ function initApp() {
     if (arEl) arEl.value = String(getAutoRefreshHours());
   } catch(e) { console.warn('[initApp] autoRefresh dropdown:', e); }
   try { syncCostBasisSettingsUI(); } catch(e) { console.warn('[initApp] costBasis UI:', e); }
+  // Pro tier UI sync — reflect override state and lock state across Settings.
+  try { syncProUI(); }            catch(e) { console.warn('[initApp] syncProUI:', e); }
+  try { syncDisplayCcyLock(); }   catch(e) { console.warn('[initApp] displayCcyLock:', e); }
+  try { syncJurisdictionLock(); } catch(e) { console.warn('[initApp] jurisdictionLock:', e); }
+  // First-run onboarding wizard — only on a genuinely fresh install, once.
+  try { maybeStartOnboarding(); } catch(e) { console.warn('[initApp] onboarding:', e); }
   try {
     const apiEl = document.getElementById('apiKeyInput');
     if (apiEl) apiEl.value = getApiKey() || '';

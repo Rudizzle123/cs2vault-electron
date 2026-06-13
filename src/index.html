@@ -117,6 +117,29 @@ tr:hover .row-actions{opacity:1;}
 .empty-state h3{font-family:'Rajdhani',sans-serif;font-size:18px;letter-spacing:1px;margin-bottom:8px;color:var(--text2);}
 .section-heading{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:12px;display:flex;align-items:center;gap:10px;}
 .section-heading::after{content:'';flex:1;height:1px;background:var(--border);}
+/* --- Vault Pro gating UX (Phase 4a) --- */
+.pro-inline-badge{display:inline-block;font-family:'Share Tech Mono',monospace;font-size:9px;font-weight:700;letter-spacing:1px;color:#000;background:var(--gold);border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
+.pro-tier-badge{display:inline-block;font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;letter-spacing:1.5px;border-radius:5px;padding:3px 9px;}
+.pro-tier-badge.is-pro{color:#000;background:var(--gold);}
+.pro-tier-badge.is-free{color:var(--text2);background:var(--surface3);border:1px solid var(--border2);}
+.pro-lock{display:flex;gap:14px;align-items:flex-start;background:var(--surface2);border:1px solid var(--border2);border-left:3px solid var(--gold);border-radius:8px;padding:16px 18px;}
+.pro-lock-badge{flex:0 0 auto;font-family:'Share Tech Mono',monospace;font-size:11px;font-weight:700;letter-spacing:1px;color:#000;background:var(--gold);border-radius:5px;padding:4px 10px;margin-top:2px;}
+.pro-lock-body{flex:1;}
+.pro-lock-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:15px;letter-spacing:.5px;color:var(--text);margin-bottom:4px;}
+.pro-lock-blurb{font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:6px;}
+.pro-lock-hint{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);}
+.pro-toggle-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.ob-dots{display:flex;gap:8px;justify-content:center;margin:4px 0 18px;}
+.ob-dot{width:8px;height:8px;border-radius:50%;background:var(--surface3);border:1px solid var(--border2);transition:all .2s;}
+.ob-dot.active{background:var(--accent);border-color:var(--accent);transform:scale(1.25);}
+.ob-dot.done{background:var(--green);border-color:var(--green);}
+.ob-step h3{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;letter-spacing:1px;color:var(--text);margin-bottom:6px;}
+.ob-step p{font-size:13px;color:var(--text2);line-height:1.55;margin-bottom:14px;}
+.ob-field{margin-bottom:14px;}
+.ob-field label{display:block;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:6px;}
+.ob-field input,.ob-field select{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 12px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;}
+.ob-field input:focus,.ob-field select:focus{border-color:var(--accent);}
+.ob-hint{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px;}
 .toast-container{position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;}
 .toast{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:10px;animation:toast-in .3s ease;max-width:320px;box-shadow:0 8px 24px rgba(0,0,0,.5);}
 .toast.success{border-left:3px solid var(--green);}.toast.error{border-left:3px solid var(--red);}.toast.info{border-left:3px solid var(--blue);}
@@ -464,7 +487,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <select id="filterStatus" onchange="filterTable(document.getElementById('searchInput').value)">
         <option value="">All Status</option><option value="profit">In Profit</option><option value="loss">At Loss</option>
       </select>
-      <button class="btn btn-secondary" onclick="exportCSV()">↓ Export CSV</button>
+      <button class="btn btn-secondary" onclick="exportCSV()">↓ Export CSV <span id="proBadgeExportCSV" class="pro-inline-badge" style="display:none;">PRO</span></button>
       <button class="btn btn-secondary" onclick="importCSV()">↑ Import CSV</button>
       <button class="btn btn-secondary" onclick="openBulkSellModal()">⊞ Bulk Sell</button>
       <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
@@ -499,9 +522,9 @@ header button, header input, header a { -webkit-app-region: no-drag; }
   <div class="tab-panel" id="tab-history">
     <div class="toolbar">
       <div class="search-box"><input type="text" placeholder="Search sold items..." oninput="filterHistory(this.value)"></div>
-      <button class="btn btn-secondary" onclick="openCashOutCalc()">💷 Cash Out Calculator</button>
-      <button class="btn btn-secondary" onclick="exportHistoryCSV()">↓ Export CSV</button>
-      <button class="btn btn-secondary" onclick="exportCGTReport()">📋 Export CGT Report</button>
+      <button class="btn btn-secondary" onclick="openCashOutCalc()">💷 Cash Out Calculator <span id="proBadgeCashOut" class="pro-inline-badge" style="display:none;">PRO</span></button>
+      <button class="btn btn-secondary" onclick="exportHistoryCSV()">↓ Export CSV <span id="proBadgeExportHist" class="pro-inline-badge" style="display:none;">PRO</span></button>
+      <button class="btn btn-secondary" onclick="exportCGTReport()">📋 Export CGT Report <span id="proBadgeCGTReport" class="pro-inline-badge" style="display:none;">PRO</span></button>
     </div>
     <div id="cgtSummary" style="margin-bottom:16px;"></div>
     <div id="historyList"></div>
@@ -770,6 +793,22 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         </div>
       </div>
 
+      <!-- Vault Pro tier (Phase 4a) -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;border-left:3px solid var(--gold);">
+        <div class="section-heading">Vault <span style="color:var(--gold);">Pro</span> <span id="proTierBadge" class="pro-tier-badge is-free" style="margin-left:auto;">FREE</span></div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">The free tier is a complete portfolio tracker: holdings, play skins, trade history, live pricing, watchlist, Case Intel, analytics, and the UK CGT summary. <strong style="color:var(--text);">Vault Pro</strong> unlocks the accounting &amp; tax engine — multi-jurisdiction tax (US / Germany / Canada), tax report export, cost-basis methods, and multi-currency display &amp; entry.</p>
+        <div class="pro-toggle-row">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--text2);">
+            <input type="checkbox" id="proOverrideToggle" onchange="setProOverride(this.checked)" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+            <span>Enable Pro features (preview override)</span>
+          </label>
+          <button class="btn btn-secondary btn-sm" onclick="reopenOnboarding()">↻ Re-run setup</button>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:10px;">
+          ⓘ The preview override is a local switch for exploring Pro now. Paid licensing arrives in a later update — when it does, this switch keeps working for your own use.
+        </div>
+      </div>
+
       <!-- API Key -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
         <div class="section-heading">CSFloat API Key</div>
@@ -821,7 +860,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 
       <!-- Display Currency (v2.9.0) -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
-        <div class="section-heading">Display Currency</div>
+        <div class="section-heading">Display Currency <span id="displayCcyProBadge" class="pro-inline-badge" style="display:none;">PRO</span></div>
         <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Portfolio values, P&amp;L, and analytics are shown in this currency (converted from GBP at the live ECB rate). Buy and sell prices can be entered in any currency — they're converted to GBP at the rate on the transaction date and stored with full FX provenance.</p>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <select id="settingsDisplayCcy" onchange="setDisplayCurrency(this.value)"
@@ -835,7 +874,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 
       <!-- Tax & Cost Basis (v3.0.0 — Vault Pro Phase 3: Multi-Jurisdiction Tax Engine) -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
-        <div class="section-heading">Tax &amp; Cost Basis</div>
+        <div class="section-heading">Tax &amp; Cost Basis <span id="jurisdictionProBadge" class="pro-inline-badge" style="display:none;">PRO</span></div>
         <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Your tax jurisdiction selects the full tax profile: tax-year boundary, allowance/exemption, rates, cost-basis method, holding-period rules, and the currency your tax figures are reported in. The UK uses HMRC Section 104 pooling (locked); the US splits short/long-term (FIFO); Germany exempts gains held over a year (FIFO); Canada uses ACB pooling with a 50% inclusion rate. Non-UK figures are reported in the local tax currency at each transaction&rsquo;s FX rate.</p>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <select id="settingsJurisdiction" onchange="setTaxJurisdiction(this.value)"
@@ -882,6 +921,85 @@ header button, header input, header a { -webkit-app-region: no-drag; }
 </main>
 </div>
 <div class="toast-container" id="toastContainer"></div>
+
+<!-- First-Run Onboarding Wizard (Phase 4a) -->
+<div class="modal-overlay" id="onboardModal">
+  <div class="modal" style="width:540px;">
+    <div class="modal-header">
+      <div class="modal-title">Welcome to <span>CS2 Vault</span></div>
+    </div>
+    <div class="modal-body">
+      <div class="ob-dots">
+        <div class="ob-dot active" id="obDot1"></div>
+        <div class="ob-dot" id="obDot2"></div>
+        <div class="ob-dot" id="obDot3"></div>
+        <div class="ob-dot" id="obDot4"></div>
+      </div>
+
+      <!-- Step 1: Welcome -->
+      <div class="ob-step" id="obStep1">
+        <h3>Let's set up your vault</h3>
+        <p>A quick three-step setup gets pricing and tax tracking working. You can skip any step and change everything later in Settings.</p>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text2);line-height:1.6;">
+          We'll set your <strong style="color:var(--text);">display currency</strong>, your <strong style="color:var(--text);">tax jurisdiction</strong>, and your <strong style="color:var(--text);">pricing API keys</strong>. Your data lives only on this computer.
+        </div>
+      </div>
+
+      <!-- Step 2: Currency + Jurisdiction -->
+      <div class="ob-step" id="obStep2" style="display:none;">
+        <h3>Currency &amp; tax</h3>
+        <p>Pick how you'd like values shown and which tax rules apply to you.</p>
+        <div class="ob-field">
+          <label>Display Currency</label>
+          <select id="obDisplayCcy"></select>
+          <div class="ob-hint">Multi-currency display is a Pro feature — the free tier shows values in GBP. Your choice is saved either way.</div>
+        </div>
+        <div class="ob-field">
+          <label>Tax Jurisdiction</label>
+          <select id="obJurisdiction">
+            <option value="UK">United Kingdom — CGT (free)</option>
+            <option value="US">United States — short/long-term (Pro)</option>
+            <option value="DE">Germany — 1-year exemption (Pro)</option>
+            <option value="CA">Canada — ACB, 50% inclusion (Pro)</option>
+          </select>
+          <div class="ob-hint">The UK profile is free. US / Germany / Canada are unlocked with Vault Pro — your selection is remembered for when you upgrade.</div>
+        </div>
+      </div>
+
+      <!-- Step 3: API Keys -->
+      <div class="ob-step" id="obStep3" style="display:none;">
+        <h3>Pricing API keys</h3>
+        <p>A free CSFloat key enables live pricing for skins, knives and charms. Pricempire is optional (historical price data). You can add these later.</p>
+        <div class="ob-field">
+          <label>CSFloat API Key</label>
+          <input type="password" id="obApiKey" placeholder="Paste your CSFloat API key (optional)">
+          <div class="ob-hint">Get it free at csfloat.com → Profile → API</div>
+        </div>
+        <div class="ob-field">
+          <label>Pricempire API Key <span style="color:var(--green);">(optional)</span></label>
+          <input type="password" id="obPricempireKey" placeholder="Paste your Pricempire key (optional)">
+          <div class="ob-hint">Free Trader tier at pricempire.com — 30,000 calls/month</div>
+        </div>
+      </div>
+
+      <!-- Step 4: Done -->
+      <div class="ob-step" id="obStep4" style="display:none;">
+        <h3>You're all set</h3>
+        <p>Your vault starts empty. Add holdings with <strong style="color:var(--text);">+ Add Item</strong>, or bulk-import an existing portfolio via <strong style="color:var(--text);">CSV import</strong> in the Holdings tab.</p>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:14px;font-size:12px;color:var(--text2);line-height:1.6;">
+          Want the full accounting &amp; tax engine — multi-jurisdiction tax, report export, cost-basis methods, multi-currency? That's <strong style="color:var(--gold);">Vault Pro</strong>. Explore it anytime via the preview toggle in Settings.
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;">
+      <button class="btn btn-secondary btn-sm" onclick="obSkip()">Skip setup</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" id="obBackBtn" onclick="obBack()" style="visibility:hidden;">Back</button>
+        <button class="btn btn-primary" id="obNextBtn" onclick="obNext()">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Bulk Sell Modal -->
 <div class="modal-overlay" id="addAlertModal">
