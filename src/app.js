@@ -1699,25 +1699,143 @@ function allocFilterClick(filter) {
 // ========================
 // CGT (CAPITAL GAINS TAX) TRACKER
 // ========================
-const CGT_ALLOWANCE = 3000; // £3,000 for 2024/25 and 2025/26 tax years
-const CGT_RATES = { basic: 18, higher: 24 };
+// ========================
+// TAX PROFILES (v3.0.0 — Vault Pro Phase 3: Multi-Jurisdiction Tax Engine)
+// ========================
+// Each jurisdiction is a pluggable TaxProfile. The Phase 2 lot/matching engine
+// (recomputeCGTGains) is REUSED untouched — profiles only decide what happens to
+// the per-disposal gains afterward: which disposals count, how they're classified
+// (holding period), the tax-year boundary, allowance/exemption, rates, and the
+// currency tax figures render in. Selected by getTaxJurisdiction().
+//
+// Schema (per profile):
+//   code, name, taxCurrency
+//   taxYearStart(now) -> 'YYYY-MM-DD'   (year boundary)
+//   taxYearLabel(now) -> string         (e.g. '2025/26' or '2026')
+//   allowance                           (annual exemption in tax currency; 0 = none)
+//   rates { ...bands }                  (for the estimate)
+//   disposalCounts(trade) -> bool       (disposal definition — UK excludes Steam Wallet)
+//   classifyGain(disp)    -> { bucket, taxable, label, flagged }
+//   feeDeductible                       (all true currently)
+//   disclaimer                          (per-jurisdiction wording)
 
-function getCurrentTaxYear() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  // UK tax year: 6 April to 5 April
-  if (month >= 4 && now.getDate() >= 6 || month > 4) return `${year}/${year + 1}`;
-  return `${year - 1}/${year}`;
+// Holding-period helper: months between an acquisition date and a disposal date.
+function _monthsHeld(acqDate, sellDate) {
+  if (!acqDate || !sellDate) return null;
+  const a = new Date(acqDate), s = new Date(sellDate);
+  if (isNaN(a) || isNaN(s)) return null;
+  return (s - a) / (365.25 / 12 * 86400000);
 }
 
-function getTaxYearStart() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  if (month > 4 || (month === 4 && now.getDate() >= 6)) return `${year}-04-06`;
-  return `${year - 1}-04-06`;
+// Derive a disposal's effective acquisition date from the matched lots returned by
+// the Phase 2 matcher. Earliest matched real lot date = most conservative for a
+// >12-month "long-term"/exemption test. Returns null if no dated real lot matched
+// (legacy data) so each profile can degrade explicitly.
+function _disposalAcqDate(rc) {
+  if (!rc || !Array.isArray(rc.lotMatches)) return null;
+  const dates = [];
+  rc.lotMatches.forEach(m => {
+    if (m.rule === 'legacy-fallback') return;
+    // UK same-day / B&B matches carry a single `date`; pool/FIFO/specific matches
+    // carry a `dateParts` array of the lots they consumed.
+    if (m.date) dates.push(m.date);
+    if (Array.isArray(m.dateParts)) m.dateParts.forEach(p => { if (p.date) dates.push(p.date); });
+  });
+  if (!dates.length) return null;
+  dates.sort();
+  return dates[0]; // earliest matched acquisition date (most conservative for >12mo tests)
 }
+
+const TAX_PROFILES = {
+  UK: {
+    code: 'UK', name: 'United Kingdom', taxCurrency: 'GBP',
+    taxYearStart(now) {
+      now = now || new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      if (m > 4 || (m === 4 && now.getDate() >= 6)) return y + '-04-06';
+      return (y - 1) + '-04-06';
+    },
+    taxYearLabel(now) {
+      now = now || new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      if ((m >= 4 && now.getDate() >= 6) || m > 4) return y + '/' + (y + 1);
+      return (y - 1) + '/' + y;
+    },
+    allowance: 3000,                 // £3,000 annual exempt amount (2024/25, 2025/26)
+    rates: { basic: 18, higher: 24 },
+    feeDeductible: true,
+    // The app's chosen position: a Steam-Wallet sale is not a taxable disposal.
+    disposalCounts(t) { return tradePlatform(t) !== 'steam'; },
+    // Single CGT bucket — no holding-period split in the UK.
+    classifyGain() { return { bucket: 'cgt', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only. The app\u2019s position: Steam Wallet sales aren\u2019t taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts \u2014 an unsettled area (whether a Valve-licensed skin is "property" at all remains legally undecided). This is not tax advice; consult a digital-asset-literate accountant before filing.',
+  },
+  US: {
+    code: 'US', name: 'United States', taxCurrency: 'USD',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,                    // no blanket annual capital-gains exemption
+    // Indicative bands: long-term 0/15/20%; short-term taxed as ordinary income
+    // (shown as an indicative ordinary band — the app can't know the user's bracket).
+    rates: { longLow: 15, longHigh: 20, shortLow: 22, shortHigh: 37 },
+    feeDeductible: true,
+    disposalCounts() { return true; }, // every sale is a disposal
+    // Short-term (held \u226412mo) vs long-term (>12mo). Unknown acq date -> short-term (conservative).
+    classifyGain(disp) {
+      const held = _monthsHeld(disp.acqDate, disp.sellDate);
+      if (held == null) return { bucket: 'short', taxable: true, label: 'short-term (acq. date unknown)', flagged: true };
+      return held > 12
+        ? { bucket: 'long', taxable: true, label: 'long-term', flagged: false }
+        : { bucket: 'short', taxable: true, label: 'short-term', flagged: false };
+    },
+    disclaimer: 'Estimated only and not tax advice. The US taxes every disposal: short-term gains (assets held 12 months or less) are taxed as ordinary income; long-term gains (held more than 12 months) use the 0/15/20% bands. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as short-term. Consult a qualified tax professional / CPA.',
+  },
+  DE: {
+    code: 'DE', name: 'Germany', taxCurrency: 'EUR',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 1000,                 // \u00a723 EStG Freigrenze (\u20ac600 historically, \u20ac1,000 from 2024)
+    rates: { flat: 30 },             // indicative personal income-tax rate on sub-12mo private sales
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    // \u00a723 EStG private sale: gain is TAX-FREE if the asset was held > 1 year.
+    // Only sub-12-month disposals are taxable. Unknown acq date -> treat as taxable (conservative).
+    classifyGain(disp) {
+      const held = _monthsHeld(disp.acqDate, disp.sellDate);
+      if (held == null) return { bucket: 'taxable', taxable: true, label: 'taxable (acq. date unknown)', flagged: true };
+      return held > 12
+        ? { bucket: 'exempt', taxable: false, label: 'exempt (held > 1 year)', flagged: false }
+        : { bucket: 'taxable', taxable: true, label: 'taxable (held \u2264 1 year)', flagged: false };
+    },
+    disclaimer: 'Estimated only and not tax advice (keine Steuerberatung). Under \u00a7 23 EStG, private sales of an asset held longer than one year are tax-free; only disposals within the 1-year holding period are taxable, and only above the annual Freigrenze. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as taxable. Consult a Steuerberater.',
+  },
+  CA: {
+    code: 'CA', name: 'Canada', taxCurrency: 'CAD',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,                    // no separate annual capital-gains exemption for this asset class
+    inclusionRate: 0.5,              // only 50% of a net capital gain is taxable
+    rates: { flat: 25 },             // indicative marginal rate applied to the taxable (50%) portion
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). The estimate applies an indicative marginal rate to that 50% portion. Consult a qualified Canadian tax professional.',
+  },
+};
+
+function getActiveTaxProfile() {
+  return TAX_PROFILES[getTaxJurisdiction()] || TAX_PROFILES.UK;
+}
+
+// --- Back-compat shims (UK-derived) ---------------------------------------
+// Older code referenced CGT_ALLOWANCE / CGT_RATES and the UK-only tax-year
+// helpers directly. These now delegate to the ACTIVE profile so existing call
+// sites keep working while the engine is jurisdiction-aware.
+const CGT_ALLOWANCE = 3000; // legacy alias (UK). Engine uses profile.allowance.
+const CGT_RATES = { basic: 18, higher: 24 }; // legacy alias (UK).
+
+function getCurrentTaxYear() { return getActiveTaxProfile().taxYearLabel(new Date()); }
+function getTaxYearStart() { return getActiveTaxProfile().taxYearStart(new Date()); }
 
 // Resolve the effective platform for a trade record.
 // Explicit platform wins. For older records that predate consistent platform
@@ -1922,8 +2040,11 @@ function _matchItemTimeline(events, method, opts) {
   const buyEvents = events.filter(e => e.kind === 'buy');
 
   const consumeFromPool = (qtyNeeded) => {
-    // Consume by method from the current pool. Returns total cost consumed.
+    // Consume by method from the current pool. Returns total cost consumed and the
+    // set of source lot dates consumed (with qty), so the caller can classify the
+    // disposal's holding period (US long/short, DE 1-year exemption).
     let cost = 0, remaining = qtyNeeded;
+    const dateParts = []; // [{ qty, date }]
     if (method === 'pooling') {
       // Section 104: single average price across the whole pool
       const poolQty = pool.reduce((a, l) => a + l.qty, 0);
@@ -1931,11 +2052,12 @@ function _matchItemTimeline(events, method, opts) {
       const avg = poolQty > 0 ? poolCost / poolQty : 0;
       const take = Math.min(remaining, poolQty);
       cost = take * avg;
-      // Drain the pool proportionally
+      // Drain the pool proportionally (record each lot's date as we drain it)
       let drain = take;
       for (const l of pool) {
         if (drain <= 0) break;
         const d = Math.min(l.qty, drain);
+        if (d > 0 && l.date) dateParts.push({ qty: d, date: l.date });
         l.qty -= d; drain -= d;
       }
       pool = pool.filter(l => l.qty > 1e-9);
@@ -1944,6 +2066,7 @@ function _matchItemTimeline(events, method, opts) {
       for (const l of pool) {
         if (remaining <= 0) break;
         const d = Math.min(l.qty, remaining);
+        if (d > 0 && l.date) dateParts.push({ qty: d, date: l.date });
         cost += d * l.unitCost; l.qty -= d; remaining -= d;
       }
       pool = pool.filter(l => l.qty > 1e-9);
@@ -1951,11 +2074,12 @@ function _matchItemTimeline(events, method, opts) {
       for (const l of pool) {
         if (remaining <= 0) break;
         const d = Math.min(l.qty, remaining);
+        if (d > 0 && l.date) dateParts.push({ qty: d, date: l.date });
         cost += d * l.unitCost; l.qty -= d; remaining -= d;
       }
       pool = pool.filter(l => l.qty > 1e-9);
     }
-    return { cost, shortfall: remaining };
+    return { cost, shortfall: remaining, dateParts };
   };
 
   for (const ev of events) {
@@ -2009,14 +2133,14 @@ function _matchItemTimeline(events, method, opts) {
         const r = consumeFromPool(need);
         const got = need - r.shortfall;
         matchedCost += r.cost; matchedQty += got;
-        if (got > 0) lotMatches.push({ qty: got, unitCost: +(r.cost / got).toFixed(6), rule: 'section-104' });
+        if (got > 0) lotMatches.push({ qty: got, unitCost: +(r.cost / got).toFixed(6), rule: 'section-104', dateParts: r.dateParts });
         need = r.shortfall;
       }
     } else {
       const r = consumeFromPool(qty);
       matchedCost = r.cost;
       matchedQty = qty - r.shortfall;
-      if (matchedQty > 0) lotMatches.push({ qty: matchedQty, unitCost: +(matchedCost / matchedQty).toFixed(6), rule: method });
+      if (matchedQty > 0) lotMatches.push({ qty: matchedQty, unitCost: +(matchedCost / matchedQty).toFixed(6), rule: method, dateParts: r.dateParts });
     }
 
     // Fallback: if we couldn't match all qty from lots (e.g. legacy data with
@@ -2105,93 +2229,255 @@ function recomputeCGTGains(method) {
   return out;
 }
 
+// Build a per-disposal record enriched with the recomputed cost basis, gain,
+// derived acquisition date, and the active profile's holding-period classification.
+function _enrichDisposal(t, gainMap, profile) {
+  const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
+  const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
+  const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
+  const rc = (t.id && gainMap[t.id]) ? gainMap[t.id] : null;
+  const costBasis = rc ? rc.costBasis : t.buyPrice * t.qty;
+  const gain = rc ? rc.gain : (gross - fee - costBasis);
+  const acqDate = _disposalAcqDate(rc);
+  const cls = profile.classifyGain({ acqDate, sellDate: t.sellDate, gain });
+  return { trade: t, gross, fee, netRealised, costBasis, gain, acqDate, classification: cls };
+}
+
 function calculateCGT() {
-  const taxYearStart = getTaxYearStart();
-  const taxYear = getCurrentTaxYear();
+  const profile = getActiveTaxProfile();
+  const taxYearStart = profile.taxYearStart(new Date());
+  const taxYear = profile.taxYearLabel(new Date());
   const method = getCostBasisMethod();
+  const allowance = profile.allowance || 0;
+  const inclusionRate = profile.inclusionRate != null ? profile.inclusionRate : 1;
 
   // Recompute per-disposal cost basis from lots using the active method.
-  // Trades present in the map use the recomputed cost basis; any not present
-  // (pure legacy / unreconcilable) fall back to their stored buyPrice × qty.
   let gainMap = {};
   try { gainMap = recomputeCGTGains(method); } catch (e) { console.warn('[CGT] recompute failed, using stored cost basis:', e); gainMap = {}; }
 
-  // Helper: roll up gains/losses for a given set of trades
-  const rollup = (trades) => {
+  // Roll up a set of disposals. `exemptFilter` drops disposals the profile treats
+  // as non-taxable on holding-period grounds (e.g. DE > 1yr) from the gain totals,
+  // while still counting them so the report can show them as exempt.
+  const rollup = (disposals) => {
     let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
-    trades.forEach(t => {
-      const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
-      const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
-      const rc = (t.id && gainMap[t.id]) ? gainMap[t.id] : null;
-      const costBasis = rc ? rc.costBasis : t.buyPrice * t.qty;
-      const gain = rc ? rc.gain : (gross - fee - costBasis);
-      totalFees += fee;
-      if (gain > 0) totalGains += gain;
-      else totalLosses += Math.abs(gain);
+    let exemptGain = 0, exemptCount = 0, flaggedCount = 0;
+    const buckets = {}; // bucket -> net gain (for US short/long display)
+    disposals.forEach(d => {
+      totalFees += d.fee;
       tradeCount++;
+      if (d.classification.flagged) flaggedCount++;
+      if (d.classification.taxable === false) {
+        // Profile-exempt (e.g. German >1yr): excluded from the taxable totals.
+        exemptGain += d.gain; exemptCount++;
+        return;
+      }
+      const b = d.classification.bucket || 'cgt';
+      buckets[b] = (buckets[b] || 0) + d.gain;
+      if (d.gain > 0) totalGains += d.gain;
+      else totalLosses += Math.abs(d.gain);
     });
     const netGain = totalGains - totalLosses;
-    const taxableGain = Math.max(0, netGain - CGT_ALLOWANCE);
-    const allowanceUsed = Math.min(Math.max(0, netGain), CGT_ALLOWANCE);
-    const allowancePct = Math.min(100, (allowanceUsed / CGT_ALLOWANCE) * 100);
-    const taxBasic = taxableGain * (CGT_RATES.basic / 100);
-    const taxHigher = taxableGain * (CGT_RATES.higher / 100);
-    return { totalGains, totalLosses, totalFees, netGain, taxableGain, allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount };
+    const afterAllowance = Math.max(0, netGain - allowance);
+    const taxableGain = +(afterAllowance * inclusionRate).toFixed(6); // CA: 50% inclusion
+    const allowanceUsed = Math.min(Math.max(0, netGain), allowance);
+    const allowancePct = allowance > 0 ? Math.min(100, (allowanceUsed / allowance) * 100) : (netGain > 0 ? 100 : 0);
+
+    // Tax estimate — profile-specific. UK keeps the 18/24% pair (taxBasic/taxHigher)
+    // for full back-compat; others fill the same two fields with their low/high band.
+    const r = profile.rates || {};
+    let taxBasic, taxHigher;
+    if (profile.code === 'UK') {
+      taxBasic = taxableGain * (r.basic / 100);
+      taxHigher = taxableGain * (r.higher / 100);
+    } else if (profile.code === 'US') {
+      // Split taxable gain across long/short buckets for a banded estimate.
+      const longNet = Math.max(0, buckets.long || 0);
+      const shortNet = Math.max(0, buckets.short || 0);
+      const totNet = longNet + shortNet;
+      // Apportion the post-allowance taxable amount across buckets.
+      const taxableLong = totNet > 0 ? taxableGain * (longNet / totNet) : 0;
+      const taxableShort = totNet > 0 ? taxableGain * (shortNet / totNet) : 0;
+      taxBasic = taxableLong * (r.longLow / 100) + taxableShort * (r.shortLow / 100);
+      taxHigher = taxableLong * (r.longHigh / 100) + taxableShort * (r.shortHigh / 100);
+    } else {
+      const rate = (r.flat != null ? r.flat : 30) / 100;
+      taxBasic = taxableGain * rate;
+      taxHigher = taxableGain * rate;
+    }
+    return {
+      totalGains, totalLosses, totalFees, netGain, taxableGain,
+      allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount,
+      exemptGain, exemptCount, flaggedCount, buckets, inclusionRate, allowance,
+    };
   };
 
   const inYear = tradeHistory.filter(t => t.sellDate >= taxYearStart);
 
-  // CURRENT app position: exclude Steam Market sales (Steam Wallet ≠ taxable disposal).
-  // Platform is inferred from the fee rate for older records lacking an explicit field.
-  const yearTrades = inYear.filter(t => tradePlatform(t) !== 'steam');
-  const exclSteam = rollup(yearTrades);
+  // CHOSEN position: apply the profile's disposal definition (UK excludes Steam Wallet;
+  // other profiles count every sale). This is the live, default figure.
+  const chosenTrades = inYear.filter(t => profile.disposalCounts(t));
+  const chosenDisp = chosenTrades.map(t => _enrichDisposal(t, gainMap, profile));
+  const chosen = rollup(chosenDisp);
 
-  // HYPOTHETICAL position: include ALL sales (treats Steam-to-Steam as a disposal too).
-  const inclSteam = rollup(inYear);
+  // STRICTER reading: count ALL in-year disposals regardless of disposal definition
+  // (generalises the v2.4.2 "incl. Steam" view per jurisdiction — only meaningful
+  // when the profile actually excludes something, i.e. UK).
+  const allDisp = inYear.map(t => _enrichDisposal(t, gainMap, profile));
+  const inclSteam = rollup(allDisp);
 
-  return Object.assign({ taxYear, taxYearStart, yearTrades, inYear, inclSteam, method, gainMap }, exclSteam);
+  // yearTrades kept as the raw trade array (back-compat with existing callers).
+  const yearTrades = chosenTrades;
+
+  return Object.assign({
+    taxYear, taxYearStart, yearTrades, inYear, inclSteam, method, gainMap,
+    profile, taxCurrency: profile.taxCurrency, disposals: chosenDisp,
+    allDisposals: allDisp, excludesAny: chosenTrades.length !== inYear.length,
+  }, chosen);
 }
 
-function renderCGTSummary() {
+// Async sibling: resolve every disposal's tax-currency figures at TRANSACTION-DATE
+// rates so non-UK profiles render in their own currency (USD/EUR/CAD) without a
+// blended/year-end rate. Buy legs convert at the buy/acquisition-date rate, sell
+// legs at the sell-date rate — preserving the real FX gain/loss component.
+// Returns the calculateCGT() object plus a `taxFx` map { tradeId -> {grossTax,
+// costBasisTax, feeTax, gainTax} } and rendered string fields. UK short-circuits
+// (taxCurrency GBP) so figures pass through unchanged and round-trip exactly.
+async function calculateCGTWithTaxCurrency() {
+  const cgt = calculateCGT();
+  const ccy = cgt.taxCurrency;
+  cgt.taxFx = {};
+  if (ccy === 'GBP') return cgt; // UK: no conversion needed
+
+  const convert = async (gbp, date) => {
+    const r = await getRate('GBP', ccy, date || todayStr());
+    return { val: (r != null) ? gbp * r : null, rate: r };
+  };
+
+  for (const d of cgt.allDisposals) {
+    const t = d.trade;
+    // Sell-side figures at the SELL-date rate.
+    const sellRate = await getRate('GBP', ccy, t.sellDate || todayStr());
+    // Cost basis at the ACQUISITION-date rate (falls back to sell date if unknown).
+    const buyRate = await getRate('GBP', ccy, d.acqDate || t.sellDate || todayStr());
+    const grossTax = (sellRate != null) ? d.gross * sellRate : null;
+    const feeTax = (sellRate != null) ? d.fee * sellRate : null;
+    const costBasisTax = (buyRate != null) ? d.costBasis * buyRate : null;
+    const gainTax = (grossTax != null && feeTax != null && costBasisTax != null)
+      ? grossTax - feeTax - costBasisTax : null;
+    cgt.taxFx[t.id] = { grossTax, feeTax, costBasisTax, gainTax, sellRate, buyRate };
+  }
+  return cgt;
+}
+
+// Tax-currency formatter for a profile. UK -> fmtGBP. Others -> symbol + value
+// already converted to the tax currency. Returns '—' on null (FX failure).
+function fmtTaxCcy(v, ccy, dp) {
+  if (v == null || isNaN(v)) return '—';
+  if (dp == null) dp = 2;
+  if (ccy === 'GBP') return fmtGBP(v, dp);
+  const sym = curSymOf(ccy);
+  return (v < 0 ? '-' : '') + sym + Math.abs(Number(v)).toFixed(dp);
+}
+
+async function renderCGTSummary() {
   const el = document.getElementById('cgtSummary');
   if (!el) return;
   if (!tradeHistory.length) { el.innerHTML = ''; return; }
 
-  const cgt = calculateCGT();
-  const barColor = cgt.allowancePct >= 90 ? 'var(--red)' : cgt.allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
+  const cgt = await calculateCGTWithTaxCurrency();
+  const profile = cgt.profile;
+  const ccy = cgt.taxCurrency;
+  const isUK = profile.code === 'UK';
+
+  // For non-UK profiles, sum the tax-currency figures from the per-disposal taxFx
+  // map (transaction-date rates). For UK, GBP figures are already correct.
+  let gainsTax = cgt.totalGains, lossesTax = cgt.totalLosses, netTax = cgt.netGain;
+  let allowanceUsedTax = cgt.allowanceUsed, taxableGainTax = cgt.taxableGain;
+  let taxBasicTax = cgt.taxBasic, taxHigherTax = cgt.taxHigher;
+  let fxIncomplete = false;
+  if (!isUK) {
+    let g = 0, l = 0;
+    cgt.disposals.forEach(d => {
+      if (d.classification.taxable === false) return; // exempt (e.g. DE >1yr)
+      const fx = cgt.taxFx[d.trade.id];
+      const gt = fx ? fx.gainTax : null;
+      if (gt == null) { fxIncomplete = true; return; }
+      if (gt > 0) g += gt; else l += Math.abs(gt);
+    });
+    gainsTax = g; lossesTax = l; netTax = g - l;
+    const allowance = profile.allowance || 0;
+    const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
+    allowanceUsedTax = Math.min(Math.max(0, netTax), allowance);
+    taxableGainTax = Math.max(0, netTax - allowance) * incl;
+    // Re-derive the tax estimate in tax currency using the same band logic.
+    const r = profile.rates || {};
+    if (profile.code === 'US') {
+      let longNet = 0, shortNet = 0;
+      cgt.disposals.forEach(d => {
+        if (d.classification.taxable === false) return;
+        const fx = cgt.taxFx[d.trade.id]; const gt = fx ? fx.gainTax : 0;
+        if (gt > 0) { if (d.classification.bucket === 'long') longNet += gt; else shortNet += gt; }
+      });
+      const totNet = longNet + shortNet;
+      const tLong = totNet > 0 ? taxableGainTax * (longNet / totNet) : 0;
+      const tShort = totNet > 0 ? taxableGainTax * (shortNet / totNet) : 0;
+      taxBasicTax = tLong * (r.longLow / 100) + tShort * (r.shortLow / 100);
+      taxHigherTax = tLong * (r.longHigh / 100) + tShort * (r.shortHigh / 100);
+    } else {
+      const rate = (r.flat != null ? r.flat : 30) / 100;
+      taxBasicTax = taxableGainTax * rate; taxHigherTax = taxableGainTax * rate;
+    }
+  }
+
+  const allowance = profile.allowance || 0;
+  const allowancePct = allowance > 0 ? Math.min(100, (allowanceUsedTax / allowance) * 100) : (netTax > 0 ? 100 : 0);
+  const barColor = allowancePct >= 90 ? 'var(--red)' : allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
+  const f = (v, dp) => fmtTaxCcy(v, ccy, dp);
+
+  // Dual-view (stricter reading) — only meaningful when the profile excludes something.
   const incl = cgt.inclSteam;
+  const steamDiffers = isUK && cgt.excludesAny && (incl.tradeCount !== cgt.tradeCount);
   const inclBarColor = incl.allowancePct >= 90 ? 'var(--red)' : incl.allowancePct >= 60 ? 'var(--accent)' : 'var(--green)';
-  const steamDiffers = incl.tradeCount !== cgt.tradeCount;
+
+  // US short/long breakdown + DE exempt count for the footer chips.
+  const usBreakdown = (profile.code === 'US');
+  const flagged = cgt.flaggedCount || 0;
+  const exemptCount = cgt.exemptCount || 0;
+
+  const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze Used'
+                           : allowance > 0 ? 'Allowance Used' : 'Taxable Amount';
+  const ccyTag = isUK ? 'GBP' : ccy;
 
   el.innerHTML = `
     <div class="cgt-summary">
       <div class="cgt-card">
         <div class="cgt-card-label">Tax Year</div>
         <div class="cgt-card-val" style="font-size:14px;">${cgt.taxYear}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cgt.tradeCount} taxable disposal${cgt.tradeCount !== 1 ? 's' : ''}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">${profile.name} · ${cgt.tradeCount} disposal${cgt.tradeCount !== 1 ? 's' : ''}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Realised Gains</div>
-        <div class="cgt-card-val" style="color:var(--green);">+${fmtGBP(cgt.totalGains, 2)}</div>
+        <div class="cgt-card-val" style="color:var(--green);">+${f(gainsTax, 2)}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Realised Losses</div>
-        <div class="cgt-card-val" style="color:var(--red);">-${fmtGBP(cgt.totalLosses, 2)}</div>
+        <div class="cgt-card-val" style="color:var(--red);">-${f(lossesTax, 2)}</div>
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Net Gain</div>
-        <div class="cgt-card-val" style="color:${cgt.netGain >= 0 ? 'var(--green)' : 'var(--red)'};">${cgt.netGain >= 0 ? '+' : ''}${fmtGBP(cgt.netGain, 2)}</div>
+        <div class="cgt-card-val" style="color:${netTax >= 0 ? 'var(--green)' : 'var(--red)'};">${netTax >= 0 ? '+' : ''}${f(netTax, 2)}</div>
+        ${profile.code === 'CA' ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;">50% inclusion applied to taxable</div>` : ''}
       </div>
       <div class="cgt-card">
-        <div class="cgt-card-label">Allowance Used</div>
+        <div class="cgt-card-label">${allowanceCardLabel}</div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <div class="cgt-card-val" style="font-size:14px;">${fmtGBP(cgt.allowanceUsed, 0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
-          <span class="plat-badge plat-badge-cf" style="font-size:8px;">CSFloat only</span>
+          <div class="cgt-card-val" style="font-size:14px;">${allowance > 0 ? f(allowanceUsedTax, 0) + ' / ' + fmtTaxCcy(allowance, ccy, 0) : f(taxableGainTax, 0)}</div>
+          <span class="plat-badge plat-badge-cf" style="font-size:8px;">${ccyTag}</span>
         </div>
-        <div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${cgt.allowancePct}%;background:${barColor};"></div></div>
+        ${allowance > 0 ? `<div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${allowancePct}%;background:${barColor};"></div></div>` : ''}
         ${steamDiffers ? `
         <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
-          <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">${fmtGBP(incl.allowanceUsed, 0)} / £${CGT_ALLOWANCE.toLocaleString()}</div>
+          <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">${fmtGBP(incl.allowanceUsed, 0)} / £${(profile.allowance||0).toLocaleString()}</div>
           <span class="plat-badge plat-badge-stm" style="font-size:8px;">incl. Steam</span>
         </div>
         <div class="cgt-allowance-bar" style="opacity:.55;"><div class="cgt-allowance-fill" style="width:${incl.allowancePct}%;background:${inclBarColor};"></div></div>
@@ -2200,64 +2486,161 @@ function renderCGTSummary() {
       </div>
       <div class="cgt-card">
         <div class="cgt-card-label">Est. Tax Owed</div>
-        <div class="cgt-card-val" style="color:${cgt.taxableGain > 0 ? 'var(--red)' : 'var(--green)'};">${cgt.taxableGain > 0 ? fmtGBP(cgt.taxBasic, 2) + ' – £' + cgt.taxHigher.toFixed(2) : '£0.00'}</div>
-        <div style="font-size:9px;color:var(--text3);margin-top:2px;">${cgt.taxableGain > 0 ? '18% basic / 24% higher' : 'Within allowance'}</div>
+        <div class="cgt-card-val" style="color:${taxableGainTax > 0 ? 'var(--red)' : 'var(--green)'};">${taxableGainTax > 0 ? f(taxBasicTax, 2) + ' – ' + f(taxHigherTax, 2) : f(0, 2)}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;">${taxableGainTax > 0 ? _rateBandLabel(profile) : (allowance > 0 ? 'Within allowance' : 'No taxable gain')}</div>
         ${steamDiffers && incl.taxableGain > 0 ? `<div style="font-size:8px;color:var(--text3);margin-top:4px;">incl. Steam: ${fmtGBP(incl.taxBasic, 2)} – ${fmtGBP(incl.taxHigher, 2)}</div>` : ''}
       </div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'Share Tech Mono',monospace;text-align:center;">
-      Cost basis: ${costBasisMethodLabel(cgt.method)}${cgt.method === 'pooling' ? ' · same-day + 30-day rules applied' : ''}<br>
-      ⚠ Estimated only. The app's position: Steam Wallet sales aren't taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts — an unsettled area. Consult a tax professional.
+      Cost basis: ${costBasisMethodLabel(cgt.method)}${cgt.method === 'pooling' && isUK ? ' · same-day + 30-day rules applied' : ''}${!isUK ? ' · figures in ' + ccy + ' at transaction-date FX' : ''}<br>
+      ${usBreakdown ? _usBucketChips(cgt, f) : ''}
+      ${exemptCount > 0 ? `<span style="color:var(--green);">${exemptCount} disposal${exemptCount !== 1 ? 's' : ''} exempt (held &gt; 1 year)</span> · ` : ''}
+      ${flagged > 0 ? `<span style="color:var(--accent);">⚠ ${flagged} disposal${flagged !== 1 ? 's' : ''} with unknown acquisition date (treated conservatively)</span><br>` : ''}
+      ${fxIncomplete ? `<span style="color:var(--accent);">⚠ Some FX rates unavailable — totals may be incomplete</span><br>` : ''}
+      ⚠ ${profile.disclaimer}
     </div>`;
+}
+
+// Tax-rate band label for the Est. Tax card.
+function _rateBandLabel(profile) {
+  const r = profile.rates || {};
+  if (profile.code === 'UK') return r.basic + '% basic / ' + r.higher + '% higher';
+  if (profile.code === 'US') return 'long ' + r.longLow + '–' + r.longHigh + '% / short ' + r.shortLow + '–' + r.shortHigh + '%';
+  if (profile.code === 'CA') return '~' + r.flat + '% on 50% inclusion (indicative)';
+  return '~' + (r.flat != null ? r.flat : 30) + '% (indicative)';
+}
+
+// US short/long-term net-gain chips for the summary footer.
+function _usBucketChips(cgt, f) {
+  let longNet = 0, shortNet = 0;
+  cgt.disposals.forEach(d => {
+    const fx = cgt.taxFx[d.trade.id];
+    const gt = fx ? fx.gainTax : d.gain;
+    if (gt == null) return;
+    if (d.classification.bucket === 'long') longNet += gt; else shortNet += gt;
+  });
+  return `<span style="color:var(--text2);">Long-term net: ${f(longNet, 2)} · Short-term net: ${f(shortNet, 2)}</span> · `;
 }
 
 // ========================
 // CGT TAX REPORT EXPORT
 // ========================
 async function exportCGTReport() {
-  const cgt = calculateCGT();
+  const cgt = await calculateCGTWithTaxCurrency();
+  const profile = cgt.profile;
+  const ccy = cgt.taxCurrency;
+  const isUK = profile.code === 'UK';
+  const f = (v, dp) => (v == null || isNaN(v)) ? 'n/a' : Number(v).toFixed(dp == null ? 2 : dp);
+  const cs = ccy; // currency suffix for column headers
+
+  // Recompute tax-currency totals for the summary (non-UK), mirroring renderCGTSummary.
+  let gainsT = cgt.totalGains, lossesT = cgt.totalLosses, netT = cgt.netGain,
+      feesT = cgt.totalFees, allowUsedT = cgt.allowanceUsed, taxableT = cgt.taxableGain,
+      basicT = cgt.taxBasic, higherT = cgt.taxHigher;
+  if (!isUK) {
+    let g = 0, l = 0, fees = 0;
+    cgt.disposals.forEach(d => {
+      const fx = cgt.taxFx[d.trade.id] || {};
+      if (fx.feeTax != null) fees += fx.feeTax;
+      if (d.classification.taxable === false) return;
+      const gt = fx.gainTax;
+      if (gt == null) return;
+      if (gt > 0) g += gt; else l += Math.abs(gt);
+    });
+    gainsT = g; lossesT = l; netT = g - l; feesT = fees;
+    const allowance = profile.allowance || 0;
+    const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
+    allowUsedT = Math.min(Math.max(0, netT), allowance);
+    taxableT = Math.max(0, netT - allowance) * incl;
+    const r = profile.rates || {};
+    const rate = (r.flat != null ? r.flat : 30) / 100;
+    basicT = taxableT * rate; higherT = taxableT * rate;
+    if (profile.code === 'US') {
+      let longNet = 0, shortNet = 0;
+      cgt.disposals.forEach(d => {
+        if (d.classification.taxable === false) return;
+        const gt = (cgt.taxFx[d.trade.id] || {}).gainTax || 0;
+        if (gt > 0) { if (d.classification.bucket === 'long') longNet += gt; else shortNet += gt; }
+      });
+      const tot = longNet + shortNet;
+      const tL = tot > 0 ? taxableT * (longNet / tot) : 0;
+      const tS = tot > 0 ? taxableT * (shortNet / tot) : 0;
+      basicT = tL * (r.longLow / 100) + tS * (r.shortLow / 100);
+      higherT = tL * (r.longHigh / 100) + tS * (r.shortHigh / 100);
+    }
+  }
+
   const rows = [
     ['CS2 Vault — Capital Gains Tax Report'],
+    [`Jurisdiction: ${profile.name} (${profile.code})`],
     [`Tax Year: ${cgt.taxYear}`],
+    [`Reporting Currency: ${ccy}` + (isUK ? '' : ' (converted from GBP base at each transaction-date FX rate)')],
     [`Cost Basis Method: ${costBasisMethodLabel(cgt.method)}`],
     [`Generated: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}`],
     [''],
     ['SUMMARY'],
-    [`Total Realised Gains,${fmtGBP(cgt.totalGains, 2)}`],
-    [`Total Realised Losses,-${fmtGBP(cgt.totalLosses, 2)}`],
-    [`Total Fees Paid,${fmtGBP(cgt.totalFees, 2)}`],
-    [`Net Gain/Loss,${fmtGBP(cgt.netGain, 2)}`],
-    [`Annual CGT Allowance,${fmtGBP(CGT_ALLOWANCE, 2)}`],
-    [`Allowance Used,${fmtGBP(cgt.allowanceUsed, 2)}`],
-    [`Taxable Gain,${fmtGBP(cgt.taxableGain, 2)}`],
-    [`Estimated Tax (Basic 18%),${fmtGBP(cgt.taxBasic, 2)}`],
-    [`Estimated Tax (Higher 24%),${fmtGBP(cgt.taxHigher, 2)}`],
-    [''],
-    ['DISPOSALS'],
-    ['Date,Item,Type,Qty,Platform,Cost Basis (£),Gross Proceeds (£),Platform Fee %,Fee Amount (£),Net Realised (£),Gain/Loss (£)'],
+    [`Total Realised Gains (${cs}),${f(gainsT)}`],
+    [`Total Realised Losses (${cs}),-${f(lossesT)}`],
+    [`Total Fees Paid (${cs}),${f(feesT)}`],
+    [`Net Gain/Loss (${cs}),${f(netT)}`],
   ];
+  if ((profile.allowance || 0) > 0) {
+    const allowLabel = profile.code === 'DE' ? 'Annual Freigrenze' : 'Annual Allowance/Exemption';
+    rows.push([`${allowLabel} (${cs}),${f(profile.allowance)}`]);
+    rows.push([`Allowance Used (${cs}),${f(allowUsedT)}`]);
+  }
+  if (profile.inclusionRate != null) {
+    rows.push([`Inclusion Rate,${Math.round(profile.inclusionRate * 100)}%`]);
+  }
+  rows.push([`Taxable Gain (${cs}),${f(taxableT)}`]);
+  if (profile.code === 'UK') {
+    rows.push([`Estimated Tax (Basic 18%) (${cs}),${f(basicT)}`]);
+    rows.push([`Estimated Tax (Higher 24%) (${cs}),${f(higherT)}`]);
+  } else if (profile.code === 'US') {
+    rows.push([`Estimated Tax (low band) (${cs}),${f(basicT)}`]);
+    rows.push([`Estimated Tax (high band) (${cs}),${f(higherT)}`]);
+  } else {
+    rows.push([`Estimated Tax (indicative) (${cs}),${f(basicT)}`]);
+  }
+  if (cgt.exemptCount > 0) rows.push([`Exempt Disposals (held > 1 year),${cgt.exemptCount}`]);
+  rows.push(['']);
+  rows.push(['DISPOSALS']);
 
-  cgt.yearTrades.forEach(t => {
-    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
-    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
-    const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
-    const rc = (t.id && cgt.gainMap && cgt.gainMap[t.id]) ? cgt.gainMap[t.id] : null;
-    const costBasis = rc ? rc.costBasis : t.buyPrice * t.qty;
-    const gain = rc ? rc.gain : (gross - fee - costBasis);
-    rows.push([
+  // Holding-period columns appear for profiles that classify by holding period.
+  const showHP = (profile.code === 'US' || profile.code === 'DE');
+  const header = ['Date', 'Item', 'Type', 'Qty', 'Platform',
+    `Cost Basis (${cs})`, `Gross Proceeds (${cs})`, 'Platform Fee %', `Fee Amount (${cs})`, `Net Realised (${cs})`, `Gain/Loss (${cs})`];
+  if (showHP) header.push('Acq. Date', 'Holding', 'Classification');
+  rows.push(header.join(','));
+
+  // Report the CHOSEN-position disposals (profile disposal definition applied).
+  cgt.disposals.forEach(d => {
+    const t = d.trade;
+    const fx = cgt.taxFx[t.id] || {};
+    const grossOut = isUK ? d.gross : fx.grossTax;
+    const feeOut = isUK ? d.fee : fx.feeTax;
+    const costOut = isUK ? d.costBasis : fx.costBasisTax;
+    const netReal = (grossOut != null && feeOut != null) ? grossOut - feeOut : null;
+    const gainOut = isUK ? d.gain : fx.gainTax;
+    const line = [
       t.sellDate, `"${t.name}"`, t.type, t.qty, tradePlatform(t),
-      costBasis.toFixed(2), gross.toFixed(2), t.feePercent,
-      fee.toFixed(2), netRealised.toFixed(2), gain.toFixed(2)
-    ].join(','));
+      f(costOut), f(grossOut), t.feePercent, f(feeOut), f(netReal), f(gainOut),
+    ];
+    if (showHP) {
+      const held = _monthsHeld(d.acqDate, t.sellDate);
+      line.push(d.acqDate || 'unknown', held != null ? held.toFixed(1) + 'mo' : 'unknown', `"${d.classification.label || d.classification.bucket}"`);
+    }
+    rows.push(line.join(','));
   });
 
   rows.push('');
   rows.push('DISCLAIMER');
-  rows.push('"This report is for informational purposes only and does not constitute tax advice. Selling on Steam Market into Steam Wallet balance is not a taxable disposal. CGT applies when items are sold for real money (e.g. via CSFloat). Consult a qualified tax professional for advice specific to your situation."');
+  rows.push('"' + profile.disclaimer.replace(/"/g, "'") + '"');
 
   const csvStr = rows.join('\n');
   if (typeof window.cs2vault !== 'undefined') {
-    const result = await window.cs2vault.exportSave(`cs2vault_cgt_report_${cgt.taxYear.replace('/', '-')}.csv`, csvStr);
+    const fname = `cs2vault_cgt_report_${profile.code}_${cgt.taxYear.replace('/', '-')}.csv`;
+    const result = await window.cs2vault.exportSave(fname, csvStr);
     if (result && result.saved) toast('CGT report saved to ' + result.filePath, 'success');
   }
 }
@@ -2355,11 +2738,14 @@ function updateCashOutCalc() {
   if (showCgt) {
     const cgtRate = parseInt(document.getElementById('coCgtBand').value) || 18;
     const cgt = calculateCGT();
-    const remainingAllowance = Math.max(0, CGT_ALLOWANCE - cgt.allowanceUsed);
+    const _prof = cgt.profile;
+    const _allow = _prof.allowance || 0;
+    const remainingAllowance = Math.max(0, _allow - cgt.allowanceUsed);
     // The gain from this cash-out would be: cash received - original cost of the items
     // We don't know the original cost here, so show the gain on the bridge skin only
     const bridgeGain = csfloatSellActual - steamWallet; // Usually negative (loss on the bridge)
-    const totalTaxableAfterThis = Math.max(0, cgt.netGain + bridgeGain - CGT_ALLOWANCE);
+    const _incl = _prof.inclusionRate != null ? _prof.inclusionRate : 1;
+    const totalTaxableAfterThis = Math.max(0, cgt.netGain + bridgeGain - _allow) * _incl;
     const estimatedTax = totalTaxableAfterThis * (cgtRate / 100);
 
     resultHtml += `
@@ -2381,7 +2767,7 @@ function updateCashOutCalc() {
           <div class="co-step-label">Estimated tax owed</div>
           <div class="co-step-val" style="color:${estimatedTax > 0 ? 'var(--red)' : 'var(--green)'};">${fmtGBP(estimatedTax, 2)}</div>
         </div>
-        <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ ${_prof.code === 'UK' ? 'Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.' : 'Estimate based on your ' + _prof.name + ' tax profile. Not tax advice.'}</div>
       </div>`;
   }
 
@@ -2394,6 +2780,7 @@ function renderHistory() {
   const sorted = [...tradeHistory].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
   const platLabel = { csfloat: 'CSFloat', steam: 'Steam', skinport: 'Skinport', custom: 'Custom' };
   const platBadgeClass = { csfloat: 'plat-badge-cf', steam: 'plat-badge-stm', skinport: 'plat-badge-sp', custom: 'plat-badge-custom' };
+  const profile = getActiveTaxProfile();
   c.innerHTML = sorted.map(t => {
     const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
     const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
@@ -2401,10 +2788,12 @@ function renderHistory() {
     const net = netRealised - (t.buyPrice * t.qty);
     const plat = tradePlatform(t);
     const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
-    const countsCGT = plat !== 'steam';
+    // Per-jurisdiction disposal definition: UK excludes Steam Wallet; others count all.
+    const countsCGT = profile.disposalCounts(t);
+    const taxLabel = profile.code === 'UK' ? 'CGT' : 'taxable';
     const cgtBadge = countsCGT
-      ? '<span class="cgt-tag cgt-tag-yes" title="Counts toward CGT">✓ CGT</span>'
-      : '<span class="cgt-tag cgt-tag-no" title="Excluded from CGT (Steam Wallet sale)">✕ not CGT</span>';
+      ? '<span class="cgt-tag cgt-tag-yes" title="Counts as a taxable disposal (' + profile.name + ')">✓ ' + taxLabel + '</span>'
+      : '<span class="cgt-tag cgt-tag-no" title="Excluded (Steam Wallet sale — UK position)">✕ not ' + taxLabel + '</span>';
     return '<div class="sold-card">' +
       '<div><strong>' + escHtml(t.name) + '</strong>' +
       '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + ' ' + cgtBadge + '</div></div>' +
