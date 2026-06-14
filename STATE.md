@@ -1,10 +1,13 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v3.3.0
+Last updated: June 2026 | Current version: v3.3.1
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.3.1 — CI build fix (signtoolOptions) ✅
+The v3.3.0 GitHub Actions build failed: `configuration.win has an unknown property 'signtoolOptions'`. That property doesn't exist in electron-builder **24.13.3** (it's a newer-version key), so the whole config was rejected and the build died before producing an installer. Fix: removed the `signtoolOptions` block from `package.json` entirely. It was never required — electron-builder auto-signs from the `CSC_LINK` / `CSC_KEY_PASSWORD` env vars (set as GitHub secrets) on its own, so no signing capability is lost. Docs (`CODE-SIGNING.md`, STATE.md) updated to drop the stale reference. No app-code change; v3.3.0's payments/licensing layer is unchanged.
 
 ### v3.3.0 — Payments, Licensing & Code Signing (Vault Pro Phase 4b) ✅
 **The monetisation layer — turns the finished tax engine into a sellable product.** Plugs real Paddle payments + licence validation in *behind* the existing `isPro()` check. **Payments-only: the tax engine (through v3.2.0) and the v3.1.0 gating framework (`FEATURES`/`isPro()` callers) are untouched.** `isPro()`'s body is the single swap point — it now checks, in order: dev override → validated Paddle licence (within offline grace) → in-date trial. All ~15 gated call sites are unchanged.
@@ -17,7 +20,7 @@ Last updated: June 2026 | Current version: v3.3.0
 - **Licence activation UI** (Settings → Vault Pro) — paste-key field with **Activate** / **Remove** buttons (`activateLicenceFromInput`, `deactivateLicence`), a live status line (`syncLicenceUI` → `licenceStatusLine`) that distinguishes override / active licence / trial / grace-expired / trial-expired / free, and the dev override toggle (kept, now clearly labelled "always wins — leave OFF to see your real tier"). `proStatus()` is the single source of truth for which of these is active
 - **Licence preserved on Clear All Data** — `cs2vault_licence` / `cs2vault_licence_state` / `cs2vault_trial_start` are deliberately NOT wiped by Clear All Data (wiping a paid licence on a data-clear would lock a customer out of their own purchase). Use Settings → Remove licence to sign out of Pro on a machine. All three ARE included in the JSON backup export
 - **Cloudflare Worker** (`worker/licence-worker.js` + `wrangler.toml` + `DEPLOY.md`) — **separate file, does NOT run in the Electron app.** Receives Paddle webhooks (`subscription.*`, `transaction.completed`, payment-failed), verifies the `Paddle-Signature` HMAC-SHA256, and upserts paid state into a KV namespace keyed by licence key. Answers the app's `/validate` check. Free-tier Cloudflare Workers (100k req/day) covers this comfortably
-- **Code signing wired into CI** — `.github/workflows/build.yml` now passes `CSC_LINK` / `CSC_KEY_PASSWORD` from GitHub secrets; electron-builder auto-signs **when the secrets exist** and builds unsigned (but succeeds) until then. `package.json` `build.win.signtoolOptions` added with sha256. EV-cert path (cloud HSM e.g. Azure Trusted Signing) documented separately — EV certs can't be exported as a `.pfx` so they need a custom `win.sign` hook, not `CSC_LINK`
+- **Code signing wired into CI** — `.github/workflows/build.yml` now passes `CSC_LINK` / `CSC_KEY_PASSWORD` from GitHub secrets; electron-builder auto-signs **when the secrets exist** and builds unsigned (but succeeds) until then. electron-builder auto-signs from the env vars with no extra `package.json` config (an earlier `signtoolOptions` key was removed in v3.3.1 — unsupported by electron-builder 24.13.3). EV-cert path (cloud HSM e.g. Azure Trusted Signing) documented separately — EV certs can't be exported as a `.pfx` so they need a custom `win.sign` hook, not `CSC_LINK`
 - **Privacy Policy + Terms of Service** (`legal/privacy.html`, `legal/terms.html`) — themed to match the app, bundled into the package (`files` now includes `legal/**/*`), opened via Settings → About & Legal (`openLegal`). Templates with `[ACTION REQUIRED]` markers for Rudi's legal name + governing-law jurisdiction; both carry the "estimates, not tax advice" disclaimer prominently
 - **Setup docs** — `PADDLE-SETUP.md` (account → product/prices → token → fill `PRO_CONFIG` → wire Worker → webhook + email checklist) and `CODE-SIGNING.md` (OV vs EV, base64-pfx → secrets, EV/cloud-HSM hook). Both written for a non-code-literate solo dev
 - ⚠ **External prerequisites Rudi must obtain before the first paid sale** (code is built to the boundary for each): (1) **Paddle account** (seller approval can take days) → paste token + price IDs into `PRO_CONFIG`; (2) **Cloudflare Worker deploy** → paste URL into `PRO_CONFIG.licenceApiBase`; (3) **code-signing cert** (~£200–400/yr) → add `CSC_LINK`/`CSC_KEY_PASSWORD` secrets; (4) **finalise the price** in Paddle and update the two `*Display` strings. See PADDLE-SETUP.md / worker/DEPLOY.md / CODE-SIGNING.md
@@ -482,7 +485,7 @@ Agents stored with full Steam name e.g. `Number K | The Professionals`. CSFloat 
 - **`setProSurfaces()`** — shared re-sync (badges, locks, currency/jurisdiction clamps, re-renders) called by both `setProOverride` and licence activate/deactivate. `syncLicenceUI()` drives the Settings status line + checkout/activation block
 - **Licence preserved on Clear All Data** (the three licence keys are excluded from the wipe); included in JSON backup. `STORE_KEYS` (index.html) now loads all 20 keys so the licence survives relaunch
 - **Cloudflare Worker** (`worker/licence-worker.js`) — NOT part of the Electron app. Paddle webhook receiver (HMAC-SHA256 `Paddle-Signature` verify) → KV upsert keyed by licence key; `/validate` endpoint answers the app. Deploy via `worker/DEPLOY.md`
-- **Code signing** — `.github/workflows/build.yml` passes `CSC_LINK`/`CSC_KEY_PASSWORD` from GitHub secrets (auto-signs when present, unsigned otherwise); `package.json` `build.win.signtoolOptions` sha256. EV/cloud-HSM path documented in `CODE-SIGNING.md`
+- **Code signing** — `.github/workflows/build.yml` passes `CSC_LINK`/`CSC_KEY_PASSWORD` from GitHub secrets (auto-signs when present, unsigned otherwise); no extra `package.json` signing config needed. EV/cloud-HSM path documented in `CODE-SIGNING.md`
 - **Legal** — `legal/privacy.html` + `legal/terms.html` (bundled via `files: legal/**/*`), opened by `openLegal('privacy'|'terms')` from Settings → About & Legal
 
 ### Multi-Jurisdiction Tax Engine (v3.0.0 — Phase 3; expanded v3.2.0)

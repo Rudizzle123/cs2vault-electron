@@ -6,7 +6,8 @@ Actions build. **The build already works unsigned** — it only signs once you a
 the secrets below, so nothing is blocked until you buy a certificate.
 
 The wiring lives in `.github/workflows/build.yml` (env vars `CSC_LINK` /
-`CSC_KEY_PASSWORD`) and `package.json` (`build.win.signtoolOptions`).
+`CSC_KEY_PASSWORD`). electron-builder signs automatically from those env vars — no
+extra `package.json` config is required.
 
 ---
 
