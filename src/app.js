@@ -2326,6 +2326,10 @@ function allocFilterClick(filter) {
 //   allowanceIsCliff                    (DE: allowance is a Freigrenze — total gains < it
 //                                        are fully tax-free, but at/above it the WHOLE gain
 //                                        is taxable from the first unit. UK/CA: deductible.)
+//   allowanceIsProceedsCliff            (FI: like a cliff, but the trip-wire is total in-year
+//                                        sale PROCEEDS, not gains. Below the threshold of
+//                                        proceeds the whole gain is tax-free; at/above it the
+//                                        whole gain is taxable. Caller passes proceedsTotal.)
 //   pupFloor                            (CA: personal-use-property $1,000 floor — both cost
 //                                        and proceeds deemed >= this per disposal)
 //   rates { ...bands }                  (for the estimate)
@@ -2336,27 +2340,39 @@ function allocFilterClick(filter) {
 //   knownLimits                         (optional: short in-product "known limits" note)
 
 // Apply a profile's annual exemption to a net gain, returning the gain that remains
-// taxable AFTER the exemption. Two regimes:
+// taxable AFTER the exemption. Three regimes:
+//   - Proceeds cliff (FI small-sales exemption): the trip-wire is total in-year sale
+//     PROCEEDS, not gains. If total proceeds are strictly below the threshold the whole
+//     gain is tax-free (returns 0); at/above it the ENTIRE gain is taxable. The caller
+//     must pass proceedsTotal (in the same currency as the gain being rolled up).
 //   - Cliff (Freigrenze, DE): gains strictly below the threshold are fully tax-free
 //     (returns 0); at/above it the ENTIRE gain is taxable (returns netGain).
 //   - Deductible (UK allowance, default): the threshold is subtracted (returns
 //     max(0, netGain - allowance)).
 // inclusionRate (CA 50%) is applied by the caller AFTER this, on the taxable remainder.
-function _applyExemption(netGain, profile) {
+function _applyExemption(netGain, profile, proceedsTotal) {
   const allowance = profile.allowance || 0;
   const g = Math.max(0, netGain);
   if (allowance <= 0) return g;
+  if (profile.allowanceIsProceedsCliff) {                       // FI proceeds cliff
+    const proceeds = Math.max(0, proceedsTotal || 0);
+    return proceeds <= allowance ? 0 : g;
+  }
   if (profile.allowanceIsCliff) return g < allowance ? 0 : g; // Freigrenze cliff
   return Math.max(0, g - allowance);                          // deductible allowance
 }
 
-// "Exemption used" for the progress bar. For a cliff it's all-or-nothing (0 below the
-// threshold, the full threshold once tripped); for a deductible allowance it's the
-// portion consumed.
-function _exemptionUsed(netGain, profile) {
+// "Exemption used" for the progress bar. For a proceeds cliff it tracks proceeds vs the
+// threshold (all-or-nothing once proceeds cross it); for a gains cliff it's all-or-nothing
+// on gains; for a deductible allowance it's the portion of the allowance consumed.
+function _exemptionUsed(netGain, profile, proceedsTotal) {
   const allowance = profile.allowance || 0;
   const g = Math.max(0, netGain);
   if (allowance <= 0) return 0;
+  if (profile.allowanceIsProceedsCliff) {
+    const proceeds = Math.max(0, proceedsTotal || 0);
+    return Math.min(proceeds, allowance);
+  }
   if (profile.allowanceIsCliff) return g < allowance ? Math.min(g, allowance) : allowance;
   return Math.min(g, allowance);
 }
@@ -2430,7 +2446,7 @@ const TAX_PROFILES = {
         ? { bucket: 'long', taxable: true, label: 'long-term', flagged: false }
         : { bucket: 'short', taxable: true, label: 'short-term', flagged: false };
     },
-    disclaimer: 'Estimated only and not tax advice. The US taxes every disposal: short-term gains (assets held 12 months or less) are taxed as ordinary income; long-term gains (held more than 12 months) use the 0/15/20% bands. Edge case not modelled: knives and rare items may qualify as "collectibles", whose long-term gains are taxed at up to 28% (not the 0/15/20% bands shown) \u2014 review high-value items with a CPA. 1099-K: marketplaces may report your GROSS proceeds to the IRS; the app\u2019s per-disposal cost-basis records are your defence for reporting the actual gain rather than the gross. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as short-term. Consult a qualified tax professional / CPA.',
+    disclaimer: 'Estimated only and not tax advice. The US taxes every disposal: short-term gains (assets held 12 months or less) are taxed as ordinary income; long-term gains (held more than 12 months) use the 0/15/20% bands. Edge case not modelled: knives and rare items may qualify as "collectibles", whose long-term gains are taxed at up to 28% (not the 0/15/20% bands shown) \u2014 review high-value items with a CPA. 1099-K: marketplaces may report your GROSS proceeds to the IRS (federal reporting threshold reverted to $20,000 AND 200+ transactions for 2025 onward under the OBBB Act; individual states may set lower thresholds); the app\u2019s per-disposal cost-basis records are your defence for reporting the actual gain rather than the gross. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as short-term. Consult a qualified tax professional / CPA.',
     knownLimits: 'Collectibles rate (up to 28% on long-term gains for knives/rare items) is not modelled \u2014 the 0/15/20% bands are shown. 1099-K marketplace reporting is gross-proceeds; keep your cost-basis records.',
   },
   DE: {
@@ -2492,8 +2508,8 @@ const TAX_PROFILES = {
     feeDeductible: true,
     disposalCounts() { return true; },
     classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
-    disclaimer: 'Estimated only and not tax advice (to nie jest porada podatkowa). Poland taxes capital gains at a flat 19% rate (the general tax-free amount does not apply to this income), regardless of holding period. Acquisition cost and transaction expenses are deductible. Capital losses can only offset gains from the same source and may be carried forward up to 5 years (with annual caps) \u2014 the app does not model the carry-forward. Report on the PIT-38 form. Consult a Polish doradca podatkowy.',
-    knownLimits: 'Loss carry-forward (up to 5 years, with annual caps, same-source only) is not modelled \u2014 the app only nets gains/losses within the current tax year.',
+    disclaimer: 'Estimated only and not tax advice (to nie jest porada podatkowa). Poland taxes capital gains at a flat 19% rate (the general tax-free amount does not apply to this income), regardless of holding period. Acquisition cost and transaction expenses are deductible. For virtual-currency income, any excess acquisition costs in a year are not lost \u2014 they roll forward and are deductible against the next year\u2019s crypto proceeds (income is floored at zero, so a \u201closs\u201d as such cannot arise). The app only nets gains/costs within the current tax year and does not carry the excess forward. Report on the PIT-38 form. Consult a Polish doradca podatkowy.',
+    knownLimits: 'Excess acquisition costs rolling into the next year\u2019s crypto costs (no 5-year cap; income floored at zero) are not modelled \u2014 the app only nets gains/costs within the current tax year. FIFO is a label only: Poland pools all in-year costs against all in-year proceeds, with no lot-matching.',
   },
   AU: {
     code: 'AU', name: 'Australia', taxCurrency: 'AUD',
@@ -2561,15 +2577,16 @@ const TAX_PROFILES = {
     code: 'FI', name: 'Finland', taxCurrency: 'EUR',
     taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
     taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
-    // \u20ac1,000 total-PROCEEDS small-sales exemption modelled as a gains cliff (simplification).
+    // \u20ac1,000 small-sales exemption: tax-free only if TOTAL annual sale proceeds are
+    // at or below \u20ac1,000 (TVL \u00a748.6), not a gains cliff. Modelled as a proceeds cliff.
     allowance: 1000,
-    allowanceIsCliff: true,
+    allowanceIsProceedsCliff: true,
     rates: { lower: 30, upper: 34, threshold: 30000 }, // 30% up to \u20ac30k capital income, 34% above
     feeDeductible: true,
     disposalCounts() { return true; },
     classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
-    disclaimer: 'Estimated only and not tax advice (ei veroneuvontaa). Finland taxes capital income at 30% up to \u20ac30,000 of capital income per year and 34% above that. A small-sales exemption makes gains tax-free if your TOTAL sale proceeds for the year stay at or below \u20ac1,000 \u2014 the app approximates this as a \u20ac1,000 gains cliff (it tracks gains, not total proceeds, so treat the boundary as indicative). Each disposal (including swaps) is a taxable event; cost basis can use actual cost or the deemed-acquisition-cost (hankintameno-olettama) rule, which the app does NOT apply. Report on form 9. Consult a Finnish veroasiantuntija.',
-    knownLimits: 'The \u20ac1,000 exemption is really on TOTAL annual sale proceeds, not gains \u2014 the app approximates it as a \u20ac1,000 gains cliff. The deemed-acquisition-cost (hankintameno-olettama) option is not modelled. The 30%/34% split is on total capital income, which the app sees only partially.',
+    disclaimer: 'Estimated only and not tax advice (ei veroneuvontaa). Finland taxes capital income at 30% up to \u20ac30,000 of capital income per year and 34% above that. A small-sales exemption makes your gains tax-free if your TOTAL sale proceeds for the year stay at or below \u20ac1,000 (TVL \u00a748.6); once your total proceeds cross \u20ac1,000, the whole gain is taxable. The app tracks your total in-year proceeds against this threshold. Each disposal (including swaps) is a taxable event; cost basis can use actual cost or the deemed-acquisition-cost (hankintameno-olettama) rule, which the app does NOT apply. Report on form 9. Consult a Finnish veroasiantuntija.',
+    knownLimits: 'The \u20ac1,000 small-sales exemption is keyed off your total in-year sale proceeds (correct per TVL \u00a748.6). The proceeds total only covers items tracked in the app \u2014 add any other virtual-currency sales before judging the boundary. The deemed-acquisition-cost (hankintameno-olettama) option is not modelled (the app uses actual cost, so it may overstate tax). The 30%/34% split is on total capital income, which the app sees only partially.',
   },
 };
 
@@ -3046,6 +3063,7 @@ function calculateCGT() {
     let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
     let exemptGain = 0, exemptCount = 0, flaggedCount = 0;
     let includedGain = 0; // AU: per-disposal-inclusion-weighted net (only when perDisposalInclusion)
+    let totalProceeds = 0; // FI: total in-year sale proceeds (drives the proceeds cliff)
     const buckets = {}; // bucket -> net gain (for US short/long display)
     disposals.forEach(d => {
       totalFees += d.fee;
@@ -3056,6 +3074,7 @@ function calculateCGT() {
         exemptGain += d.gain; exemptCount++;
         return;
       }
+      totalProceeds += d.gross;
       const b = d.classification.bucket || 'cgt';
       buckets[b] = (buckets[b] || 0) + d.gain;
       if (d.gain > 0) totalGains += d.gain;
@@ -3071,12 +3090,12 @@ function calculateCGT() {
     // net, AFTER the (zero) allowance; for everyone else it's the flat-inclusion path.
     let taxableGain;
     if (profile.perDisposalInclusion) {
-      taxableGain = +(_applyExemption(Math.max(0, includedGain), profile)).toFixed(6);
+      taxableGain = +(_applyExemption(Math.max(0, includedGain), profile, totalProceeds)).toFixed(6);
     } else {
-      const afterAllowance = _applyExemption(netGain, profile);
+      const afterAllowance = _applyExemption(netGain, profile, totalProceeds);
       taxableGain = +(afterAllowance * inclusionRate).toFixed(6); // CA: 50% inclusion
     }
-    const allowanceUsed = _exemptionUsed(netGain, profile);
+    const allowanceUsed = _exemptionUsed(netGain, profile, totalProceeds);
     const allowancePct = allowance > 0 ? Math.min(100, (allowanceUsed / allowance) * 100) : (netGain > 0 ? 100 : 0);
 
     // Tax estimate — profile-specific. UK keeps the 18/24% pair (taxBasic/taxHigher)
@@ -3112,6 +3131,7 @@ function calculateCGT() {
       totalGains, totalLosses, totalFees, netGain, taxableGain,
       allowanceUsed, allowancePct, taxBasic, taxHigher, tradeCount,
       exemptGain, exemptCount, flaggedCount, buckets, inclusionRate, allowance,
+      totalProceeds,
     };
   };
 
@@ -3209,6 +3229,7 @@ async function renderCGTSummary() {
   let allowanceUsedTax = cgt.allowanceUsed, taxableGainTax = cgt.taxableGain;
   let taxBasicTax = cgt.taxBasic, taxHigherTax = cgt.taxHigher;
   let fxIncomplete = false;
+  let proceedsTax = 0; // FI: total in-year proceeds in tax currency (drives the proceeds cliff)
   if (!isUK) {
     let g = 0, l = 0, includedTax = 0;
     cgt.disposals.forEach(d => {
@@ -3216,6 +3237,7 @@ async function renderCGTSummary() {
       const fx = cgt.taxFx[d.trade.id];
       const gt = fx ? fx.gainTax : null;
       if (gt == null) { fxIncomplete = true; return; }
+      if (fx && fx.grossTax != null) proceedsTax += fx.grossTax; // FI proceeds cliff (tax ccy)
       if (gt > 0) g += gt; else l += Math.abs(gt);
       if (profile.perDisposalInclusion) {
         const inc = (d.classification.inclusion != null) ? d.classification.inclusion : 1;
@@ -3224,11 +3246,11 @@ async function renderCGTSummary() {
     });
     gainsTax = g; lossesTax = l; netTax = g - l;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
-    allowanceUsedTax = _exemptionUsed(netTax, profile);
+    allowanceUsedTax = _exemptionUsed(netTax, profile, proceedsTax);
     if (profile.perDisposalInclusion) {
-      taxableGainTax = _applyExemption(Math.max(0, includedTax), profile);
+      taxableGainTax = _applyExemption(Math.max(0, includedTax), profile, proceedsTax);
     } else {
-      taxableGainTax = _applyExemption(netTax, profile) * incl;
+      taxableGainTax = _applyExemption(netTax, profile, proceedsTax) * incl;
     }
     // Re-derive the tax estimate in tax currency using the same band logic.
     const r = profile.rates || {};
@@ -3276,17 +3298,26 @@ async function renderCGTSummary() {
     cgt.disposals.forEach(d => { const fx = cgt.taxFx[d.trade.id]; if (fx && fx.pupApplied) pupAppliedCount++; });
   }
 
-  const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze' 
+  const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze'
+                           : profile.code === 'FI' ? 'Small-Sales Exemption (proceeds)'
                            : allowance > 0 ? 'Allowance Used' : 'Taxable Amount';
   const ccyTag = isUK ? 'GBP' : ccy;
-  // DE Freigrenze is a cliff: show whether the year's gains have crossed the threshold.
-  const isCliff = !!profile.allowanceIsCliff;
-  const cliffTripped = isCliff && Math.max(0, netTax) >= allowance;
-  const cliffNote = isCliff
-    ? (cliffTripped
-        ? '<span style="color:var(--red);">cliff crossed — entire gain taxable</span>'
-        : '<span style="color:var(--green);">below cliff — fully tax-free</span>')
-    : '';
+  // DE Freigrenze is a gains cliff; FI small-sales exemption is a PROCEEDS cliff.
+  // Show whether the year has crossed the relevant threshold.
+  const isGainsCliff = !!profile.allowanceIsCliff;
+  const isProceedsCliff = !!profile.allowanceIsProceedsCliff;
+  const isCliff = isGainsCliff || isProceedsCliff;
+  const cliffTripped = isProceedsCliff
+    ? (proceedsTax > allowance)
+    : (isGainsCliff && Math.max(0, netTax) >= allowance);
+  const cliffNote = !isCliff ? ''
+    : isProceedsCliff
+      ? (cliffTripped
+          ? '<span style="color:var(--red);">proceeds over ' + f(allowance, 0) + ' — gains taxable</span>'
+          : '<span style="color:var(--green);">proceeds within ' + f(allowance, 0) + ' — gains tax-free</span>')
+      : (cliffTripped
+          ? '<span style="color:var(--red);">cliff crossed — entire gain taxable</span>'
+          : '<span style="color:var(--green);">below cliff — fully tax-free</span>');
 
   el.innerHTML = `
     <div class="cgt-summary">
@@ -3388,6 +3419,7 @@ async function exportCGTReport() {
   let gainsT = cgt.totalGains, lossesT = cgt.totalLosses, netT = cgt.netGain,
       feesT = cgt.totalFees, allowUsedT = cgt.allowanceUsed, taxableT = cgt.taxableGain,
       basicT = cgt.taxBasic, higherT = cgt.taxHigher;
+  let proceedsT = 0; // FI proceeds cliff (tax ccy)
   if (!isUK) {
     let g = 0, l = 0, fees = 0, includedT = 0;
     cgt.disposals.forEach(d => {
@@ -3396,6 +3428,7 @@ async function exportCGTReport() {
       if (d.classification.taxable === false) return;
       const gt = fx.gainTax;
       if (gt == null) return;
+      if (fx.grossTax != null) proceedsT += fx.grossTax; // FI proceeds cliff
       if (gt > 0) g += gt; else l += Math.abs(gt);
       if (profile.perDisposalInclusion) {
         const inc = (d.classification.inclusion != null) ? d.classification.inclusion : 1;
@@ -3404,11 +3437,11 @@ async function exportCGTReport() {
     });
     gainsT = g; lossesT = l; netT = g - l; feesT = fees;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
-    allowUsedT = _exemptionUsed(netT, profile);
+    allowUsedT = _exemptionUsed(netT, profile, proceedsT);
     if (profile.perDisposalInclusion) {
-      taxableT = _applyExemption(Math.max(0, includedT), profile);
+      taxableT = _applyExemption(Math.max(0, includedT), profile, proceedsT);
     } else {
-      taxableT = _applyExemption(netT, profile) * incl;
+      taxableT = _applyExemption(netT, profile, proceedsT) * incl;
     }
     const r = profile.rates || {};
     const rate = (r.flat != null ? r.flat : 30) / 100;
@@ -3449,7 +3482,12 @@ async function exportCGTReport() {
     [`Net Gain/Loss (${cs}),${f(netT)}`],
   ];
   if ((profile.allowance || 0) > 0) {
-    if (profile.allowanceIsCliff) {
+    if (profile.allowanceIsProceedsCliff) {
+      rows.push([`Small-Sales Exemption (proceeds cliff) (${cs}),${f(profile.allowance)}`]);
+      rows.push([`Total Sale Proceeds (${cs}),${f(proceedsT)}`]);
+      const tripped = proceedsT > profile.allowance;
+      rows.push([`Exemption Status,${tripped ? 'proceeds over threshold — gains taxable' : 'proceeds within threshold — gains tax-free'}`]);
+    } else if (profile.allowanceIsCliff) {
       rows.push([`Annual Freigrenze (cliff) (${cs}),${f(profile.allowance)}`]);
       const tripped = Math.max(0, netT) >= profile.allowance;
       rows.push([`Freigrenze Status,${tripped ? 'CROSSED — entire gain taxable' : 'below threshold — fully tax-free'}`]);
@@ -3618,12 +3656,17 @@ function updateCashOutCalc() {
     const cgt = calculateCGT();
     const _prof = cgt.profile;
     const _allow = _prof.allowance || 0;
-    const remainingAllowance = _prof.allowanceIsCliff ? 0 : Math.max(0, _allow - cgt.allowanceUsed);
+    const _isProceedsCliff = !!_prof.allowanceIsProceedsCliff;
+    const _isGainsCliff = !!_prof.allowanceIsCliff;
+    const remainingAllowance = (_isGainsCliff || _isProceedsCliff) ? 0 : Math.max(0, _allow - cgt.allowanceUsed);
     // The gain from this cash-out would be: cash received - original cost of the items
     // We don't know the original cost here, so show the gain on the bridge skin only
     const bridgeGain = csfloatSellActual - steamWallet; // Usually negative (loss on the bridge)
     const _incl = _prof.inclusionRate != null ? _prof.inclusionRate : 1;
-    const totalTaxableAfterThis = _applyExemption(cgt.netGain + bridgeGain, _prof) * _incl;
+    // FI proceeds cliff: feed the year's total proceeds (plus this cash-out's proceeds)
+    // so the exemption keys off proceeds, not gains. Other profiles ignore the 3rd arg.
+    const _proceedsForCliff = (cgt.totalProceeds || 0) + Math.max(0, csfloatSellActual);
+    const totalTaxableAfterThis = _applyExemption(cgt.netGain + bridgeGain, _prof, _proceedsForCliff) * _incl;
     const estimatedTax = totalTaxableAfterThis * (cgtRate / 100);
 
     resultHtml += `
@@ -3634,8 +3677,8 @@ function updateCashOutCalc() {
           <div class="co-step-val">${fmtGBP(cgt.netGain, 2)}</div>
         </div>
         <div class="co-step">
-          <div class="co-step-label">${_prof.allowanceIsCliff ? 'Freigrenze (cliff)' : 'Remaining allowance'}</div>
-          <div class="co-step-val" style="color:var(--green);">${_prof.allowanceIsCliff ? fmtGBP(_allow, 2) + ' all-or-nothing' : fmtGBP(remainingAllowance, 2)}</div>
+          <div class="co-step-label">${_isProceedsCliff ? 'Small-sales exemption (proceeds)' : _isGainsCliff ? 'Freigrenze (cliff)' : 'Remaining allowance'}</div>
+          <div class="co-step-val" style="color:var(--green);">${_isProceedsCliff ? fmtGBP(_allow, 2) + ' proceeds cap' : _isGainsCliff ? fmtGBP(_allow, 2) + ' all-or-nothing' : fmtGBP(remainingAllowance, 2)}</div>
         </div>
         <div class="co-step">
           <div class="co-step-label">Taxable amount (if any)</div>

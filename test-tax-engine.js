@@ -16,15 +16,19 @@ global.window = { _store: {} };
 function tradePlatform(t) { return t.platform || 'csfloat'; }
 
 function lineOf(reSrc) { const re = new RegExp(reSrc); for (let i = 0; i < lines.length; i++) if (re.test(lines[i])) return i + 1; throw new Error('not found: ' + reSrc); }
+// End of a top-level `function name(...) { ... }` = the next line that is exactly `}`.
+function fnEnd(startLine) { for (let i = startLine; i < lines.length; i++) { if (/^}/.test(lines[i])) return i + 1; } throw new Error('no fn end from ' + startLine); }
 const aApply = lineOf('^function _applyExemption');
+const aUsed = lineOf('^function _exemptionUsed');
 const aMonths = lineOf('^function _monthsHeld');
 const aProfilesStart = lineOf('^const TAX_PROFILES');
 let aProfilesEnd = aProfilesStart;
 for (let i = aProfilesStart; i < lines.length; i++) { if (/^};/.test(lines[i])) { aProfilesEnd = i + 1; break; } }
 
 const extracted = [
-  slice(aApply, aApply + 17),
-  slice(aMonths, aMonths + 5),
+  slice(aApply, fnEnd(aApply)),
+  slice(aUsed, fnEnd(aUsed)),
+  slice(aMonths, fnEnd(aMonths)),
   slice(aProfilesStart, aProfilesEnd),
 ].join('\n\n');
 eval(extracted +
@@ -103,17 +107,32 @@ check('AU mixed long+short -> 900', auTaxable([{ gain: 1000, acq: '2024-01-01', 
 check('AU long gain + loss -> 200 taxable', auTaxable([{ gain: 1000, acq: '2024-01-01', sell: '2026-01-01' }, { gain: -300, acq: '2025-01-01', sell: '2026-02-01' }], P.AU), 200);
 checkBool('AU knownLimits notes $10k personal-use exemption', /10,?000|personal-use/i.test(P.AU.knownLimits), true);
 
-console.log('\n=== Finland (30%/34% two-tier + €1,000 cliff) ===');
+console.log('\n=== Finland (30%/34% two-tier + €1,000 PROCEEDS cliff) ===');
 checkBool('FI currency EUR', P.FI.taxCurrency === 'EUR', true);
-checkBool('FI cliff flag', P.FI.allowanceIsCliff === true, true);
-check('FI €999 -> 0 (below cliff)', _applyExemption(999, P.FI), 0);
-check('FI €1000 -> 1000 (cliff crossed)', _applyExemption(1000, P.FI), 1000);
+checkBool('FI proceeds-cliff flag', P.FI.allowanceIsProceedsCliff === true, true);
+checkBool('FI is NOT a gains cliff', !P.FI.allowanceIsCliff, true);
+// Proceeds cliff: the trip-wire is total in-year PROCEEDS, not the gain.
+// _applyExemption(gain, profile, proceedsTotal)
+check('FI gain 900, proceeds 800 -> 0 (proceeds within cap)', _applyExemption(900, P.FI, 800), 0);
+check('FI gain 900, proceeds 1000 -> 0 (proceeds at cap, still exempt)', _applyExemption(900, P.FI, 1000), 0);
+check('FI gain 900, proceeds 8000 -> 900 taxable (THE BUG FIX)', _applyExemption(900, P.FI, 8000), 900);
+check('FI gain 5000, proceeds 20000 -> 5000 taxable', _applyExemption(5000, P.FI, 20000), 5000);
+check('FI gain 5000, proceeds 500 -> 0 (low-proceeds exempt)', _applyExemption(5000, P.FI, 500), 0);
+check('FI no proceeds arg -> 0 (defensive: treats proceeds as 0)', _applyExemption(900, P.FI), 0);
+// Exemption-used (progress bar) tracks proceeds vs the cap.
+check('FI used: proceeds 800 -> 800', _exemptionUsed(0, P.FI, 800), 800);
+check('FI used: proceeds 8000 -> capped at 1000', _exemptionUsed(0, P.FI, 8000), 1000);
 check('FI rates lower 30', P.FI.rates.lower, 30);
 check('FI rates upper 34', P.FI.rates.upper, 34);
 check('FI threshold 30000', P.FI.rates.threshold, 30000);
 check('FI €20k taxable -> €6,000 tax', fiTax(20000, P.FI), 6000);
 check('FI €50k taxable -> €15,800 tax', fiTax(50000, P.FI), 15800);
 check('FI €30k taxable -> €9,000 tax', fiTax(30000, P.FI), 9000);
+
+console.log('\n=== DE gains cliff unaffected by the FI proceeds-cliff change ===');
+check('DE €999 -> 0 (gains cliff, no proceeds arg needed)', _applyExemption(999, P.DE), 0);
+check('DE €1000 -> 1000 (gains cliff crossed)', _applyExemption(1000, P.DE), 1000);
+check('UK £3500 -> 500 (deductible, proceeds arg ignored)', _applyExemption(3500, P.UK, 99999), 500);
 
 console.log('\n=== All new profiles have disclaimer + knownLimits ===');
 ['SE','PL','AU','NO','DK','FI'].forEach(code => {
