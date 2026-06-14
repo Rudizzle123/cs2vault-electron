@@ -34,6 +34,9 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - `cs2vault_display_currency` — display currency setting (default GBP)
 - `cs2vault_tax_jurisdiction` — active tax jurisdiction (UK / US / DE / CA / SE / PL / AU / NO / DK / FI; default UK)
 - `cs2vault_cost_basis_method` — active cost-basis method (pooling / fifo / specific)
+- `cs2vault_licence` — Vault Pro licence key (paste from purchase email)
+- `cs2vault_licence_state` — cached licence-validation result (status, checkedAt, plan)
+- `cs2vault_trial_start` — ISO date the 14-day no-card Pro trial began
 
 **External APIs used:**
 - frankfurter.app (no auth, ECB rates) — FX conversion, live + historical; open.er-api.com as fallback
@@ -54,7 +57,19 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v3.2.0)
+## Features (current as of v3.3.0)
+
+### Vault Pro — Payments, Licensing & Trial (v3.3.0 — Phase 4b)
+- **Paddle checkout** (merchant of record — handles global VAT/sales tax for a solo dev). Settings → Vault Pro shows Monthly/Annual buttons that open Paddle's hosted checkout in the browser. The price shown is a display string in `PRO_CONFIG`; the real charge is set on the Paddle price IDs (no amount is hardcoded in the app)
+- **Paddle-native licence validation** — after purchase, Paddle emails a licence key; paste it into Settings → Activate. The app validates it against a Cloudflare Worker and caches the result. **14-day offline grace** keeps Pro unlocked if validation can't reach the network, so a flaky connection never locks out a paying user
+- **14-day no-card trial** — starts automatically on a fresh install; the tier badge shows `PRO · TRIAL` with days remaining. Free tier stays fully usable after it ends
+- **Dev/preview override** (Settings) — a local switch that always unlocks Pro for evaluation/support; it takes precedence over licence state
+- **Single config block** (`PRO_CONFIG` in `src/app.js`) — Paddle token, price IDs, Worker URL, display prices, trial/grace knobs. Until it's filled in, checkout shows a "not configured" notice and the override/trial still work. Setup steps: **PADDLE-SETUP.md**, **worker/DEPLOY.md**, **CODE-SIGNING.md**
+- **Cloudflare Worker** (`worker/licence-worker.js`) — separate from the app; receives Paddle webhooks (signature-verified) and answers the "did they pay?" check from a KV store. Free-tier hosting
+- **Code signing** — wired into GitHub Actions; signs the installer when `CSC_LINK`/`CSC_KEY_PASSWORD` secrets are present, builds unsigned otherwise
+- **Privacy Policy + Terms of Service** — bundled pages (Settings → About & Legal), with the "estimates, not tax advice" disclaimer
+- **Licence is preserved on Clear All Data** (so a data-clear never voids a purchase) and included in the JSON backup
+- ⚠ **Before the first paid sale:** re-verify all tax figures against primary government sources, complete the Paddle/Worker/cert setup, and fill the legal-name placeholders in the legal pages. See STATE.md → LAUNCH GATE
 
 ### Multi-Jurisdiction Tax Engine (v3.0.0 — Vault Pro Phase 3; expanded to 10 jurisdictions in v3.2.0)
 - **Pluggable tax profiles** — Settings → Tax & Cost Basis selects your jurisdiction, which sets the full tax profile: tax-year boundary, allowance/exemption, rates, cost-basis method, holding-period rules, and the currency your tax figures are reported in. **Ten profiles** (UK is free; the rest are Vault Pro):
@@ -71,7 +86,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - **Tax-currency reporting** — non-UK profiles render every tax figure in the local tax currency (USD/EUR/CAD/SEK/PLN/AUD/NOK/DKK), converted from the GBP base at each transaction's own FX rate (sell legs at the sell-date rate, cost basis at the acquisition-date rate) — never a single blended or year-end rate, so the real FX gain/loss is preserved. UK stays GBP throughout
 - **Holding-period aware** — disposals are classified by how long the matched lots were held (US long/short, Germany 1-year exemption), derived from the Phase 2 lot acquisition dates. Trades imported before lot tracking (no acquisition date) degrade to the conservative reading (US short-term / Germany taxable) and are clearly flagged
 - **Per-jurisdiction CGT report export** — correct tax-year label, allowance/exemption/inclusion lines, rate bands, and holding-period columns (acquisition date, holding, classification) where relevant. Per-profile disclaimer
-- **NOT a paywall yet** — the full tax engine is free to use in v3.0.0. Free-vs-Pro gating arrives in Phase 4a (v3.1.0, no external accounts needed); payments (Paddle, merchant of record), Paddle-native licence validation with offline grace, and code signing follow in Phase 4b once the Paddle account and signing certificate are in place. The webhook backing licence checks is planned for Cloudflare Workers (free tier)
+- **Gating + payments** — the tax engine is gated behind `isPro()` (free-vs-Pro framework, Phase 4a / v3.1.0). As of **v3.3.0 (Phase 4b)** real payments are wired in: Paddle checkout, Paddle-native licence validation with 14-day offline grace, a 14-day no-card trial, a Cloudflare Worker webhook receiver, and CI code-signing. The payment layer is inert until `PRO_CONFIG` is filled in (Paddle account + deployed Worker), so the app runs free/trial/override out of the box. See the Vault Pro section above
 
 ### Configurable Cost Basis (v2.10.0 — Vault Pro Phase 2)
 - **Lot-aware data model** — every holding tracks individual buy lots (qty, unit cost, date, currency, FX rate); disposals consume lots per the active method

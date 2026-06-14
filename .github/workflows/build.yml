@@ -25,7 +25,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Code signing ──────────────────────────────────────────────────────
+      # electron-builder automatically signs the Windows installer when these
+      # env vars are present. They are read from GitHub repo Secrets, so the
+      # build stays UNSIGNED (but succeeds) until you add the secrets.
+      #
+      # OV certificate (file-based .pfx, base64-encoded):
+      #   CSC_LINK           = base64 of your .pfx   (see CODE-SIGNING.md)
+      #   CSC_KEY_PASSWORD   = the .pfx password
+      #
+      # EV certificate (cloud HSM — e.g. Azure Trusted Signing / SSL.com eSigner):
+      #   EV certs can no longer be exported as a .pfx file. Use a custom signing
+      #   hook instead — see CODE-SIGNING.md → "EV / cloud HSM". Leave CSC_LINK
+      #   unset in that case.
       - name: Build and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run release

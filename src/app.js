@@ -739,8 +739,280 @@ const FEATURES = {
 // isPro() — the ONE check. Reads the local override for now (Phase 4a).
 // Phase 4b replaces the body with a Paddle licence check; callers never change.
 function isPro() {
-  try { return window._store[PRO_OVERRIDE_KEY] === 'true'; }
-  catch (e) { return false; }
+  // Phase 4b precedence (highest → lowest):
+  //   1. Dev/preview override (Settings toggle) — always wins, for dev & support.
+  //   2. A validated Paddle licence (active, or within the offline grace window).
+  //   3. An in-date no-card trial.
+  // Any one being true unlocks Pro. The override is checked first so support can
+  // always force-unlock regardless of licence/trial state.
+  try {
+    if (window._store[PRO_OVERRIDE_KEY] === 'true') return true;
+  } catch (e) {}
+  try { if (_licenceIsActive()) return true; } catch (e) {}
+  try { if (_trialIsActive()) return true; } catch (e) {}
+  return false;
+}
+
+// ========================
+// VAULT PRO — PAYMENTS, LICENSING & TRIAL (Phase 4b)
+// ========================
+// Paddle (merchant of record) handles checkout + global tax. Licence validation
+// is Paddle-native: a Cloudflare Worker receives Paddle webhooks and answers a
+// single question — "is this licence key currently paid?" The app calls that
+// Worker, caches the answer locally, and honours a ~14-day offline grace so a
+// flaky connection never locks out a paying user. NO self-hosted licence server.
+//
+// ── EXTERNAL SETUP REQUIRED (see PADDLE-SETUP.md) ───────────────────────────
+// Everything Rudi must paste in lives in PRO_CONFIG below. Until it's filled in,
+// checkout shows a "not yet available" notice and validation no-ops gracefully
+// (trial + override still work). Nothing here hardcodes a price — PRO_CONFIG
+// carries display strings only; the real charge is whatever the Paddle price IDs
+// are set to in the Paddle dashboard.
+const PRO_CONFIG = {
+  // ── Paddle (Billing / v2) ─────────────────────────────────────────────────
+  // From Paddle dashboard → Developer Tools → Authentication / Catalog.
+  paddleVendorToken: '',          // Paddle "client-side token" (starts live_ or test_)
+  paddleEnvironment: 'sandbox',   // 'sandbox' while testing, 'production' when live
+  priceIdMonthly:    '',          // Paddle price ID for the monthly plan (pri_...)
+  priceIdAnnual:     '',          // Paddle price ID for the annual plan (pri_...)
+
+  // ── Licence validation Worker (Cloudflare) ────────────────────────────────
+  // The deployed Worker URL from PADDLE-SETUP.md, e.g.
+  // 'https://cs2vault-licence.<your-subdomain>.workers.dev'. Leave blank to
+  // disable network validation (trial/override still function).
+  licenceApiBase: '',
+
+  // ── Pricing DISPLAY ONLY (single source of truth for shown copy) ──────────
+  // The actual amount charged is set by the Paddle price IDs above — these are
+  // just the strings shown in-app. Benchmark: SkinKeeper Pro ~$4.99/mo·$34.99/yr.
+  // Rudi finalises the number in Paddle; update these to match. DO NOT hardcode
+  // a charge anywhere else.
+  priceMonthlyDisplay: '$4.99 / mo',
+  priceAnnualDisplay:  '$34.99 / yr',
+
+  // ── Trial ─────────────────────────────────────────────────────────────────
+  trialDays: 14,                  // no-card Pro trial length
+  // ── Offline grace ─────────────────────────────────────────────────────────
+  graceDays: 14,                  // keep Pro unlocked this long after last good check
+  // ── Re-validation cadence ─────────────────────────────────────────────────
+  revalidateHours: 24,            // how often to re-check a cached active licence
+};
+function proConfigured()  { return !!(PRO_CONFIG.paddleVendorToken && PRO_CONFIG.priceIdAnnual); }
+function licenceApiReady() { return !!PRO_CONFIG.licenceApiBase; }
+
+// ── Storage keys (loaded at launch via STORE_KEYS in index.html) ───────────
+const LICENCE_KEY        = 'cs2vault_licence';        // user's licence key string
+const LICENCE_STATE_KEY  = 'cs2vault_licence_state';  // cached validation JSON
+const TRIAL_START_KEY    = 'cs2vault_trial_start';    // ISO date trial began
+
+// ── Licence state cache shape ───────────────────────────────────────────────
+// { status:'active'|'inactive', checkedAt:<ms>, key:<string>, plan:<string|null>,
+//   cancelledAt:<ms|null> }
+function _loadLicenceState() {
+  try { return JSON.parse(window._store[LICENCE_STATE_KEY]) || null; }
+  catch (e) { return null; }
+}
+function _saveLicenceState(state) {
+  try { window._storeSet(LICENCE_STATE_KEY, JSON.stringify(state)); } catch (e) {}
+}
+function getLicenceKey() { try { return (window._store[LICENCE_KEY] || '').trim(); } catch (e) { return ''; } }
+
+// True if we hold a licence the last check called 'active' AND that check is
+// still within the offline-grace window. Network failures NEVER downgrade a
+// previously-active user inside grace — that's the whole point.
+function _licenceIsActive() {
+  const st = _loadLicenceState();
+  if (!st || st.status !== 'active') return false;
+  if (!st.checkedAt) return false;
+  const ageMs = Date.now() - st.checkedAt;
+  const graceMs = PRO_CONFIG.graceDays * 86400000;
+  return ageMs <= graceMs;
+}
+
+// ── Trial ───────────────────────────────────────────────────────────────────
+// Starts automatically on first launch of a fresh install (set in initApp).
+// A user who already paid never needs it; a returning free user keeps whatever
+// days remain. Tampering is possible (local clock) but this is a low-value,
+// honour-system trial — acceptable for a solo indie product.
+function _trialStartMs() {
+  const iso = window._store[TRIAL_START_KEY];
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return isNaN(ms) ? null : ms;
+}
+function ensureTrialStarted() {
+  // Only begin a trial for genuinely fresh installs, and only once.
+  if (_trialStartMs() != null) return;
+  try {
+    if (typeof isFreshInstall === 'function' && !isFreshInstall()) return;
+  } catch (e) {}
+  try { window._storeSet(TRIAL_START_KEY, new Date().toISOString()); } catch (e) {}
+}
+function trialDaysLeft() {
+  const start = _trialStartMs();
+  if (start == null) return 0;
+  const elapsedDays = (Date.now() - start) / 86400000;
+  return Math.max(0, Math.ceil(PRO_CONFIG.trialDays - elapsedDays));
+}
+function _trialIsActive() { return trialDaysLeft() > 0; }
+
+// What's unlocking Pro right now? For UI copy. Order mirrors isPro().
+function proStatus() {
+  let override = false;
+  try { override = window._store[PRO_OVERRIDE_KEY] === 'true'; } catch (e) {}
+  if (override) return { tier: 'pro', reason: 'override' };
+  if (_licenceIsActive()) {
+    const st = _loadLicenceState();
+    return { tier: 'pro', reason: 'licence', plan: st && st.plan || null };
+  }
+  if (_trialIsActive()) return { tier: 'pro', reason: 'trial', daysLeft: trialDaysLeft() };
+  // Expired licence (out of grace) vs expired trial vs never-pro — useful for copy.
+  const st = _loadLicenceState();
+  if (st && st.status === 'active') return { tier: 'free', reason: 'grace-expired' };
+  if (_trialStartMs() != null) return { tier: 'free', reason: 'trial-expired' };
+  return { tier: 'free', reason: 'free' };
+}
+
+// ── Paddle checkout ─────────────────────────────────────────────────────────
+// Opens Paddle's hosted checkout in the user's browser (via the existing
+// shell.openExternal window-open handler — any <a target="_blank"> or
+// window.open already routes there). We use Paddle's "pay link" hosted page so
+// no Paddle.js bundle is needed inside the Electron renderer (keeps CSP simple
+// and avoids shipping their SDK). The licence key Paddle issues post-purchase is
+// emailed to the customer; they paste it into Settings → Activate.
+function startProCheckout(plan) {
+  if (!proConfigured()) {
+    toast('Checkout isn\'t set up yet — see PADDLE-SETUP.md. Use the preview override in Settings to explore Pro now.', 'info');
+    return;
+  }
+  const priceId = plan === 'monthly' ? PRO_CONFIG.priceIdMonthly : PRO_CONFIG.priceIdAnnual;
+  if (!priceId) { toast('That plan isn\'t configured in PRO_CONFIG yet.', 'warn'); return; }
+  // Paddle Billing hosted checkout deep link. The customer completes payment in
+  // their browser; Paddle fulfils + emails the licence key (Worker-generated).
+  const env = PRO_CONFIG.paddleEnvironment === 'production' ? 'buy' : 'sandbox-buy';
+  const url = 'https://' + env + '.paddle.com/checkout/' + encodeURIComponent(priceId);
+  try { window.open(url, '_blank'); }
+  catch (e) { toast('Could not open the checkout window.', 'error'); }
+  toast('Opening Paddle checkout in your browser. After paying, paste the licence key from your email into Settings → Activate.', 'info');
+}
+
+// Open a bundled legal page (privacy / terms) in the user's browser. The files
+// ship in the app's legal/ folder; we resolve their on-disk path via the same
+// window-open handler that powers external links.
+function openLegal(which) {
+  const file = which === 'terms' ? 'terms.html' : 'privacy.html';
+  // legal/ sits next to src/ in the packaged app. Build a file:// URL relative
+  // to the running index.html so it works both packaged and in dev.
+  try {
+    const base = window.location.href.replace(/\/src\/index\.html.*$/, '/');
+    window.open(base + 'legal/' + file, '_blank');
+  } catch (e) {
+    toast('Could not open the document.', 'error');
+  }
+}
+
+// ── Licence activation + validation ─────────────────────────────────────────
+// Called when the user pastes a licence key, and on launch for a stored key.
+// Talks to the Cloudflare Worker: GET {licenceApiBase}/validate?key=...&product=cs2vault
+// Worker replies { active:true|false, plan, cancelledAt }. On a network error we
+// DO NOT change a within-grace active state (offline grace). Returns a result
+// object for the caller to surface; never throws.
+async function validateLicence(key, opts) {
+  opts = opts || {};
+  key = (key || getLicenceKey()).trim();
+  if (!key) return { ok: false, status: 'no-key' };
+  if (!licenceApiReady()) {
+    // No Worker configured yet: accept the key locally as "pending" so the user
+    // isn't blocked during setup, but mark it so we re-check once the URL exists.
+    const pending = { status: 'active', checkedAt: Date.now(), key: key, plan: 'unverified', cancelledAt: null, pending: true };
+    _saveLicenceState(pending);
+    try { window._storeSet(LICENCE_KEY, key); } catch (e) {}
+    return { ok: true, status: 'pending-no-api', state: pending };
+  }
+  const base = PRO_CONFIG.licenceApiBase.replace(/\/+$/, '');
+  const url = base + '/validate?key=' + encodeURIComponent(key) + '&product=cs2vault';
+  try {
+    const res = await window.cs2vault.fetch(url, { 'Accept': 'application/json' });
+    let data = {};
+    try { data = JSON.parse(res.body || '{}'); } catch (e) { data = {}; }
+    if (res.status >= 200 && res.status < 300 && typeof data.active === 'boolean') {
+      const state = {
+        status: data.active ? 'active' : 'inactive',
+        checkedAt: Date.now(),
+        key: key,
+        plan: data.plan || null,
+        cancelledAt: data.cancelledAt || null,
+      };
+      _saveLicenceState(state);
+      try { window._storeSet(LICENCE_KEY, key); } catch (e) {}
+      return { ok: true, status: state.status, state: state };
+    }
+    // Bad/blank response: treat as a soft failure (keep grace), unless the
+    // Worker explicitly said the key is unknown (404).
+    if (res.status === 404) {
+      const state = { status: 'inactive', checkedAt: Date.now(), key: key, plan: null, cancelledAt: null };
+      _saveLicenceState(state);
+      return { ok: true, status: 'inactive', state: state };
+    }
+    return { ok: false, status: 'bad-response', httpStatus: res.status };
+  } catch (e) {
+    // Network failure — DO NOT touch cached state (offline grace protects us).
+    return { ok: false, status: 'network-error' };
+  }
+}
+
+// Re-validate a stored active licence on launch, but not more than once per
+// revalidateHours, and never blocking the UI. Safe to call fire-and-forget.
+async function refreshLicenceIfDue() {
+  const key = getLicenceKey();
+  if (!key) return;
+  const st = _loadLicenceState();
+  const dueMs = PRO_CONFIG.revalidateHours * 3600000;
+  if (st && st.checkedAt && (Date.now() - st.checkedAt) < dueMs && !st.pending) return;
+  await validateLicence(key, { silent: true });
+  try { syncProUI(); } catch (e) {}
+}
+
+// User pasted a key in Settings → Activate. Validate + refresh all tier UI.
+async function activateLicenceFromInput() {
+  const input = document.getElementById('licenceKeyInput');
+  const key = input ? (input.value || '').trim() : '';
+  if (!key) { toast('Paste your licence key first.', 'warn'); return; }
+  toast('Checking licence…', 'info');
+  const r = await validateLicence(key);
+  if (r.ok && r.status === 'active') {
+    toast('Licence active — Vault Pro unlocked. Thank you!', 'success');
+  } else if (r.ok && r.status === 'pending-no-api') {
+    toast('Licence saved. Online validation will run once the licence server URL is configured.', 'info');
+  } else if (r.ok && r.status === 'inactive') {
+    toast('That licence key isn\'t active. If you just paid, give it a minute and try again.', 'warn');
+  } else if (r.status === 'network-error') {
+    toast('Could not reach the licence server. Check your connection and retry.', 'error');
+  } else {
+    toast('Licence check failed (' + (r.status || 'unknown') + '). Try again shortly.', 'error');
+  }
+  try { setProSurfaces(); } catch (e) {}
+}
+
+// Remove a stored licence (sign out of Pro on this machine).
+function deactivateLicence() {
+  if (!confirm('Remove the licence from this machine? You can re-activate with the same key anytime.')) return;
+  try { window._storeSet(LICENCE_KEY, ''); } catch (e) {}
+  _saveLicenceState({ status: 'inactive', checkedAt: Date.now(), key: '', plan: null, cancelledAt: null });
+  toast('Licence removed from this machine.', 'info');
+  try { setProSurfaces(); } catch (e) {}
+}
+
+// Re-sync everything that changes between tiers (shared by override + licence).
+function setProSurfaces() {
+  try { syncProUI(); } catch (e) {}
+  try { syncCostBasisSettingsUI(); } catch (e) {}
+  try { populateCcySelects(); } catch (e) {}
+  try { syncDisplayCcyLock(); } catch (e) {}
+  try { syncJurisdictionLock(); } catch (e) {}
+  try { renderHistory(); } catch (e) {}
+  try { renderHoldings(); updateStats(); } catch (e) {}
+  try { renderSkins(); } catch (e) {}
 }
 
 // True if a given feature key is currently usable by this user.
@@ -756,30 +1028,62 @@ function featureUnlocked(key) {
 // a dev override layered on top of the real licence check.
 function setProOverride(on) {
   window._storeSet(PRO_OVERRIDE_KEY, on ? 'true' : 'false');
-  // Re-sync every surface that changes between tiers.
-  try { syncProUI(); } catch (e) {}
-  try { syncCostBasisSettingsUI(); } catch (e) {}
-  try { populateCcySelects(); } catch (e) {}
-  try { syncDisplayCcyLock(); } catch (e) {}
-  try { syncJurisdictionLock(); } catch (e) {}
-  // If a free user had somehow landed on a Pro jurisdiction/currency, the
-  // getters below clamp them back — re-render anything tax/money bearing.
-  try { renderHistory(); } catch (e) {}
-  try { renderHoldings(); updateStats(); } catch (e) {}
-  try { renderSkins(); } catch (e) {}
+  // Re-sync every surface that changes between tiers (shared helper).
+  try { setProSurfaces(); } catch (e) {}
   toast(on ? 'Pro features unlocked (preview override ON)' : 'Pro override OFF — free tier', on ? 'success' : 'info');
 }
 
 // Reflect the override switch state in Settings (called from updateSettingsInfo).
 function syncProUI() {
   const t = document.getElementById('proOverrideToggle');
-  if (t) t.checked = isPro();
+  if (t) { try { t.checked = window._store[PRO_OVERRIDE_KEY] === 'true'; } catch (e) {} }
+  const ps = (function(){ try { return proStatus(); } catch (e) { return { tier: isPro() ? 'pro' : 'free', reason: 'free' }; } })();
   const badge = document.getElementById('proTierBadge');
   if (badge) {
-    badge.textContent = isPro() ? 'PRO' : 'FREE';
-    badge.className = 'pro-tier-badge ' + (isPro() ? 'is-pro' : 'is-free');
+    let txt = ps.tier === 'pro' ? 'PRO' : 'FREE';
+    if (ps.tier === 'pro' && ps.reason === 'trial') txt = 'PRO · TRIAL';
+    badge.textContent = txt;
+    badge.className = 'pro-tier-badge ' + (ps.tier === 'pro' ? 'is-pro' : 'is-free');
   }
+  try { syncLicenceUI(ps); } catch (e) {}
   try { syncProButtons(); } catch (e) {}
+}
+
+// Update the licence/checkout/activation block in Settings to match state.
+function syncLicenceUI(ps) {
+  ps = ps || proStatus();
+  const statusEl = document.getElementById('licenceStatusLine');
+  if (statusEl) {
+    let msg = '';
+    if (ps.reason === 'override') {
+      msg = 'Preview override ON — Pro features unlocked locally for evaluation.';
+    } else if (ps.reason === 'licence') {
+      msg = 'Licence active' + (ps.plan ? ' (' + escHtml(ps.plan) + ' plan)' : '') + ' — thank you for supporting Vault Pro.';
+    } else if (ps.reason === 'trial') {
+      msg = 'Free Pro trial — ' + ps.daysLeft + ' day' + (ps.daysLeft === 1 ? '' : 's') + ' remaining. No card needed.';
+    } else if (ps.reason === 'grace-expired') {
+      msg = 'Your licence couldn\'t be confirmed recently and the offline grace period has lapsed. Reconnect and re-activate to restore Pro.';
+    } else if (ps.reason === 'trial-expired') {
+      msg = 'Your free trial has ended. Upgrade to Vault Pro to keep the accounting & tax engine.';
+    } else {
+      msg = 'You\'re on the free tier. Upgrade to Vault Pro for the multi-jurisdiction tax engine, report export, cost-basis methods and multi-currency.';
+    }
+    statusEl.innerHTML = msg;
+  }
+  // Show the key field's current value (masked-ish — just the stored key).
+  const keyInput = document.getElementById('licenceKeyInput');
+  if (keyInput && !keyInput.value) { try { keyInput.value = getLicenceKey(); } catch (e) {} }
+  // Pricing display strings.
+  const pm = document.getElementById('proPriceMonthly');
+  if (pm) pm.textContent = PRO_CONFIG.priceMonthlyDisplay;
+  const pa = document.getElementById('proPriceAnnual');
+  if (pa) pa.textContent = PRO_CONFIG.priceAnnualDisplay;
+  // If checkout isn't configured yet, show a setup notice in place of buttons.
+  const notice = document.getElementById('checkoutSetupNotice');
+  const buyRow = document.getElementById('checkoutButtonsRow');
+  const configured = (function(){ try { return proConfigured(); } catch (e) { return false; } })();
+  if (notice) notice.style.display = configured ? 'none' : 'block';
+  if (buyRow) buyRow.style.display = configured ? 'flex' : 'none';
 }
 
 // Show/hide the inline PRO badge on each gated toolbar button by tier.
@@ -6012,6 +6316,9 @@ async function exportAllData() {
     taxJurisdiction: window._store['cs2vault_tax_jurisdiction'] || null,
     costBasisMethod: window._store['cs2vault_cost_basis_method'] || null,
     proOverride:     window._store['cs2vault_pro_override'] || null,
+    licence:         window._store['cs2vault_licence'] || null,
+    licenceState:    window._store['cs2vault_licence_state'] || null,
+    trialStart:      window._store['cs2vault_trial_start'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -6022,6 +6329,10 @@ async function exportAllData() {
 function clearAllData() {
   if (!confirm('⚠ This will delete ALL your holdings, history, snapshots and settings.\n\nAre you absolutely sure?')) return;
   if (!confirm('Last chance — delete everything?')) return;
+  // NOTE: cs2vault_licence / cs2vault_licence_state / cs2vault_trial_start are
+  // deliberately NOT cleared here — wiping a paid licence on "clear data" would
+  // lock a paying customer out of a purchase they made. Use Settings → Remove
+  // licence to sign out of Pro on this machine.
   const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded'];
   keys.forEach(k => {
     window._store[k] = null;
@@ -6894,6 +7205,8 @@ function seedNewItems() {
 }
 function initApp() {
   try { detectInstallState(); }        catch(e) { console.warn('[initApp] detectInstallState:', e); }
+  // Vault Pro (Phase 4b): begin the no-card trial on a genuinely fresh install.
+  try { ensureTrialStarted(); }        catch(e) { console.warn('[initApp] ensureTrialStarted:', e); }
   try { seedHistoricalSnapshots(); } catch(e) { console.warn('[initApp] seedHistoricalSnapshots:', e); }
   try { seedIfMissing(); }             catch(e) { console.warn('[initApp] seedIfMissing:', e); }
   try { holdings     = loadData(); }      catch(e) { console.warn('[initApp] loadData:', e); holdings = []; }
@@ -6940,6 +7253,9 @@ function initApp() {
   try { syncCostBasisSettingsUI(); } catch(e) { console.warn('[initApp] costBasis UI:', e); }
   // Pro tier UI sync — reflect override state and lock state across Settings.
   try { syncProUI(); }            catch(e) { console.warn('[initApp] syncProUI:', e); }
+  // Vault Pro (Phase 4b): re-validate a stored licence in the background. Never
+  // blocks the UI; honours the offline-grace window on any network failure.
+  try { refreshLicenceIfDue().catch(()=>{}); } catch(e) { console.warn('[initApp] refreshLicence:', e); }
   try { syncDisplayCcyLock(); }   catch(e) { console.warn('[initApp] displayCcyLock:', e); }
   try { syncJurisdictionLock(); } catch(e) { console.warn('[initApp] jurisdictionLock:', e); }
   // First-run onboarding wizard — only on a genuinely fresh install, once.

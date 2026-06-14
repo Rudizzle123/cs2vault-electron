@@ -793,10 +793,43 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         </div>
       </div>
 
-      <!-- Vault Pro tier (Phase 4a) -->
+      <!-- Vault Pro tier (Phase 4a gating + Phase 4b payments/licensing) -->
       <div class="table-wrap" style="padding:20px;margin-bottom:16px;border-left:3px solid var(--gold);">
         <div class="section-heading">Vault <span style="color:var(--gold);">Pro</span> <span id="proTierBadge" class="pro-tier-badge is-free" style="margin-left:auto;">FREE</span></div>
-        <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">The free tier is a complete portfolio tracker: holdings, play skins, trade history, live pricing, watchlist, Case Intel, analytics, and the UK CGT summary. <strong style="color:var(--text);">Vault Pro</strong> unlocks the accounting &amp; tax engine — multi-jurisdiction tax (US / Germany / Canada), tax report export, cost-basis methods, and multi-currency display &amp; entry.</p>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">The free tier is a complete portfolio tracker: holdings, play skins, trade history, live pricing, watchlist, Case Intel, analytics, and the UK CGT summary. <strong style="color:var(--text);">Vault Pro</strong> unlocks the accounting &amp; tax engine — multi-jurisdiction tax (US / Germany / Canada and more), tax report export, cost-basis methods, and multi-currency display &amp; entry.</p>
+
+        <!-- Live status line -->
+        <div id="licenceStatusLine" style="font-size:13px;color:var(--text);background:var(--bg3);border-radius:8px;padding:10px 14px;margin-bottom:14px;">You're on the free tier.</div>
+
+        <!-- Checkout (shown once PRO_CONFIG is filled in) -->
+        <div id="checkoutSetupNotice" style="display:none;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;padding:10px 14px;margin-bottom:14px;">
+          ⓘ Checkout isn't configured yet. Paddle vendor token &amp; price IDs go in <strong style="color:var(--text2);">PRO_CONFIG</strong> (src/app.js) — see <strong style="color:var(--text2);">PADDLE-SETUP.md</strong>. Until then, use the preview override below to explore Pro.
+        </div>
+        <div id="checkoutButtonsRow" style="display:none;gap:10px;margin-bottom:14px;align-items:stretch;">
+          <button class="btn btn-secondary" style="flex:1;flex-direction:column;align-items:flex-start;padding:12px 16px;" onclick="startProCheckout('monthly')">
+            <span style="font-size:13px;font-weight:700;color:var(--text);">Monthly</span>
+            <span id="proPriceMonthly" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--gold);">—</span>
+          </button>
+          <button class="btn btn-primary" style="flex:1;flex-direction:column;align-items:flex-start;padding:12px 16px;" onclick="startProCheckout('annual')">
+            <span style="font-size:13px;font-weight:700;">Annual <span style="opacity:.7;font-weight:400;">(best value)</span></span>
+            <span id="proPriceAnnual" style="font-family:'Share Tech Mono',monospace;font-size:12px;">—</span>
+          </button>
+        </div>
+
+        <!-- Licence activation -->
+        <div style="margin-bottom:12px;">
+          <label class="form-label">Licence key</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="licenceKeyInput" class="form-input" placeholder="Paste the key from your purchase email" style="flex:1;font-family:'Share Tech Mono',monospace;font-size:12px;">
+            <button class="btn btn-primary btn-sm" onclick="activateLicenceFromInput()">Activate</button>
+            <button class="btn btn-secondary btn-sm" onclick="deactivateLicence()">Remove</button>
+          </div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px;">
+            After paying, Paddle emails your licence key. Paste it here to unlock Pro on this machine. Pro stays unlocked for up to 14 days offline, so a dropped connection never locks you out.
+          </div>
+        </div>
+
+        <!-- Dev/preview override -->
         <div class="pro-toggle-row">
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--text2);">
             <input type="checkbox" id="proOverrideToggle" onchange="setProOverride(this.checked)" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
@@ -805,7 +838,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
           <button class="btn btn-secondary btn-sm" onclick="reopenOnboarding()">↻ Re-run setup</button>
         </div>
         <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:10px;">
-          ⓘ The preview override is a local switch for exploring Pro now. Paid licensing arrives in a later update — when it does, this switch keeps working for your own use.
+          ⓘ The preview override is a local switch for exploring Pro (dev/support). It always wins over licence state, so leave it OFF to see your real tier.
         </div>
       </div>
 
@@ -918,6 +951,16 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
           <button class="btn btn-secondary" onclick="exportAllData()">↓ Export Full Backup (JSON)</button>
           <button class="btn btn-danger btn-sm" onclick="clearAllData()">⚠ Clear All Data</button>
+        </div>
+      </div>
+
+      <!-- About & Legal -->
+      <div class="table-wrap" style="padding:20px;margin-bottom:16px;">
+        <div class="section-heading">About &amp; Legal</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">CS2 Vault is a portfolio &amp; tax-estimation tool. The tax figures it produces are <strong style="color:var(--text);">educational estimates, not tax advice</strong> — always confirm with a qualified accountant before filing.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="openLegal('privacy')">Privacy Policy</button>
+          <button class="btn btn-secondary btn-sm" onclick="openLegal('terms')">Terms of Service</button>
         </div>
       </div>
 
@@ -1314,6 +1357,28 @@ const STORE_KEYS = [
   'cs2vault_watchlist',
   'cs2vault_alerts',
   'cs2vault_apikey',
+  // --- Previously NOT loaded at launch (latent persistence bug) ---
+  // These keys are written during a session but, before v3.3.0, were never
+  // re-loaded into window._store on the next launch, so settings like the tax
+  // jurisdiction, display currency, onboarding flag and Pro override silently
+  // reset every restart. Phase 4b depends on the licence token surviving a
+  // relaunch, so the full set is loaded here now.
+  'cs2vault_pricempire_key',
+  'cs2vault_price_log',
+  'cs2vault_steam_history',
+  'cs2vault_case_supply',
+  'cs2vault_fx_cache',
+  'cs2vault_display_currency',
+  'cs2vault_tax_jurisdiction',
+  'cs2vault_cost_basis_method',
+  'cs2vault_autorefresh',
+  'cs2vault_pro_override',
+  'cs2vault_install_state',
+  'cs2vault_onboarded',
+  // --- Vault Pro Phase 4b: payments / licensing / trial ---
+  'cs2vault_licence',
+  'cs2vault_licence_state',
+  'cs2vault_trial_start',
 ];
 
 window._store = {};

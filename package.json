@@ -1,6 +1,6 @@
 {
   "name": "cs2vault",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "CS2 Portfolio Tracker — Professional Investment Dashboard",
   "main": "src/main.js",
   "scripts": {
@@ -32,7 +32,11 @@
           ]
         }
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "signtoolOptions": {
+        "//": "Signing is OFF until a certificate is provided. electron-builder auto-signs when CSC_LINK + CSC_KEY_PASSWORD are present in the environment (set as GitHub Actions secrets — see .github/workflows/build.yml and CODE-SIGNING.md). For an EV cert on a cloud HSM (e.g. Azure Trusted Signing / SSL.com eSigner), use a custom 'sign' hook instead; the file-based CSC_LINK path is OV-cert only.",
+        "signingHashAlgorithms": ["sha256"]
+      }
     },
     "nsis": {
       "oneClick": true,
@@ -48,6 +52,7 @@
     "files": [
       "src/**/*",
       "assets/**/*",
+      "legal/**/*",
       "package.json"
     ],
     "compression": "maximum"

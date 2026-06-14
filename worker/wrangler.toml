@@ -1,0 +1,18 @@
+# CS2 Vault — Cloudflare Worker config
+# Deploy with: wrangler deploy   (from inside the worker/ folder)
+# See DEPLOY.md for the full walkthrough.
+
+name = "cs2vault-licence"
+main = "licence-worker.js"
+compatibility_date = "2025-01-01"
+
+# KV namespace that stores paid licence state, keyed by licence key.
+# Create it once:  wrangler kv namespace create LICENCES
+# then paste the returned id below (replace PASTE_KV_NAMESPACE_ID_HERE).
+[[kv_namespaces]]
+binding = "LICENCES"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+# Secrets are NOT set here — set them with `wrangler secret put`:
+#   wrangler secret put PADDLE_WEBHOOK_SECRET
+#   wrangler secret put PADDLE_API_KEY        (optional)
