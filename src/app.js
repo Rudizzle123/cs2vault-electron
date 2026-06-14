@@ -2018,12 +2018,44 @@ function allocFilterClick(filter) {
 //   code, name, taxCurrency
 //   taxYearStart(now) -> 'YYYY-MM-DD'   (year boundary)
 //   taxYearLabel(now) -> string         (e.g. '2025/26' or '2026')
-//   allowance                           (annual exemption in tax currency; 0 = none)
+//   allowance                           (annual exemption/Freigrenze in tax currency; 0 = none)
+//   allowanceIsCliff                    (DE: allowance is a Freigrenze — total gains < it
+//                                        are fully tax-free, but at/above it the WHOLE gain
+//                                        is taxable from the first unit. UK/CA: deductible.)
+//   pupFloor                            (CA: personal-use-property $1,000 floor — both cost
+//                                        and proceeds deemed >= this per disposal)
 //   rates { ...bands }                  (for the estimate)
 //   disposalCounts(trade) -> bool       (disposal definition — UK excludes Steam Wallet)
 //   classifyGain(disp)    -> { bucket, taxable, label, flagged }
 //   feeDeductible                       (all true currently)
 //   disclaimer                          (per-jurisdiction wording)
+//   knownLimits                         (optional: short in-product "known limits" note)
+
+// Apply a profile's annual exemption to a net gain, returning the gain that remains
+// taxable AFTER the exemption. Two regimes:
+//   - Cliff (Freigrenze, DE): gains strictly below the threshold are fully tax-free
+//     (returns 0); at/above it the ENTIRE gain is taxable (returns netGain).
+//   - Deductible (UK allowance, default): the threshold is subtracted (returns
+//     max(0, netGain - allowance)).
+// inclusionRate (CA 50%) is applied by the caller AFTER this, on the taxable remainder.
+function _applyExemption(netGain, profile) {
+  const allowance = profile.allowance || 0;
+  const g = Math.max(0, netGain);
+  if (allowance <= 0) return g;
+  if (profile.allowanceIsCliff) return g < allowance ? 0 : g; // Freigrenze cliff
+  return Math.max(0, g - allowance);                          // deductible allowance
+}
+
+// "Exemption used" for the progress bar. For a cliff it's all-or-nothing (0 below the
+// threshold, the full threshold once tripped); for a deductible allowance it's the
+// portion consumed.
+function _exemptionUsed(netGain, profile) {
+  const allowance = profile.allowance || 0;
+  const g = Math.max(0, netGain);
+  if (allowance <= 0) return 0;
+  if (profile.allowanceIsCliff) return g < allowance ? Math.min(g, allowance) : allowance;
+  return Math.min(g, allowance);
+}
 
 // Holding-period helper: months between an acquisition date and a disposal date.
 function _monthsHeld(acqDate, sellDate) {
@@ -2094,13 +2126,16 @@ const TAX_PROFILES = {
         ? { bucket: 'long', taxable: true, label: 'long-term', flagged: false }
         : { bucket: 'short', taxable: true, label: 'short-term', flagged: false };
     },
-    disclaimer: 'Estimated only and not tax advice. The US taxes every disposal: short-term gains (assets held 12 months or less) are taxed as ordinary income; long-term gains (held more than 12 months) use the 0/15/20% bands. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as short-term. Consult a qualified tax professional / CPA.',
+    disclaimer: 'Estimated only and not tax advice. The US taxes every disposal: short-term gains (assets held 12 months or less) are taxed as ordinary income; long-term gains (held more than 12 months) use the 0/15/20% bands. Edge case not modelled: knives and rare items may qualify as "collectibles", whose long-term gains are taxed at up to 28% (not the 0/15/20% bands shown) \u2014 review high-value items with a CPA. 1099-K: marketplaces may report your GROSS proceeds to the IRS; the app\u2019s per-disposal cost-basis records are your defence for reporting the actual gain rather than the gross. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as short-term. Consult a qualified tax professional / CPA.',
+    knownLimits: 'Collectibles rate (up to 28% on long-term gains for knives/rare items) is not modelled \u2014 the 0/15/20% bands are shown. 1099-K marketplace reporting is gross-proceeds; keep your cost-basis records.',
   },
   DE: {
     code: 'DE', name: 'Germany', taxCurrency: 'EUR',
     taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
     taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
     allowance: 1000,                 // \u00a723 EStG Freigrenze (\u20ac600 historically, \u20ac1,000 from 2024)
+    allowanceIsCliff: true,          // Freigrenze: total in-year gains < \u20ac1,000 are tax-free,
+                                     // at/above \u20ac1,000 the WHOLE gain is taxable from the first euro
     rates: { flat: 30 },             // indicative personal income-tax rate on sub-12mo private sales
     feeDeductible: true,
     disposalCounts() { return true; },
@@ -2113,7 +2148,8 @@ const TAX_PROFILES = {
         ? { bucket: 'exempt', taxable: false, label: 'exempt (held > 1 year)', flagged: false }
         : { bucket: 'taxable', taxable: true, label: 'taxable (held \u2264 1 year)', flagged: false };
     },
-    disclaimer: 'Estimated only and not tax advice (keine Steuerberatung). Under \u00a7 23 EStG, private sales of an asset held longer than one year are tax-free; only disposals within the 1-year holding period are taxable, and only above the annual Freigrenze. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as taxable. Consult a Steuerberater.',
+    disclaimer: 'Estimated only and not tax advice (keine Steuerberatung). Under \u00a7 23 EStG, private sales of an asset held longer than one year are tax-free; only disposals within the 1-year holding period are taxable. The \u20ac1,000 Freigrenze is a cliff, not an allowance: if your total taxable private-sale gains for the year stay below \u20ac1,000 they are entirely tax-free, but once they reach \u20ac1,000 the whole amount is taxable from the first euro. The Freigrenze pools ALL of your private sales in the year (crypto, gold, other valuables \u2014 not just skins), so this skins-only view is necessarily partial: add your other \u00a7 23 disposals before judging whether the \u20ac1,000 cliff is crossed. Disposals whose acquisition date is unknown (imported before lot tracking) are treated as taxable. Consult a Steuerberater.',
+    knownLimits: 'The \u20ac1,000 Freigrenze covers ALL your \u00a7 23 EStG private sales for the year, not just skins \u2014 combine with any other private-sale gains (crypto, gold, etc.) before judging the cliff.',
   },
   CA: {
     code: 'CA', name: 'Canada', taxCurrency: 'CAD',
@@ -2121,11 +2157,14 @@ const TAX_PROFILES = {
     taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
     allowance: 0,                    // no separate annual capital-gains exemption for this asset class
     inclusionRate: 0.5,              // only 50% of a net capital gain is taxable
+    pupFloor: 1000,                  // personal-use-property rule: cost AND proceeds each
+                                     // deemed to be at least CAD $1,000 per disposal
     rates: { flat: 25 },             // indicative marginal rate applied to the taxable (50%) portion
     feeDeductible: true,
     disposalCounts() { return true; },
     classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
-    disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). The estimate applies an indicative marginal rate to that 50% portion. Consult a qualified Canadian tax professional.',
+    disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). Personal-use property: both the cost and the proceeds of each disposal are deemed to be at least CAD $1,000, so a cheap-bought item sold cheaply shows little or no gain \u2014 this app applies that $1,000 floor automatically. Limit: listed personal property (LPP \u2014 art, jewellery, rare coins/stamps/books) losses can only offset LPP gains, not ordinary capital gains; the app pools all gains and losses together and does NOT ring-fence LPP losses, so if you hold LPP items review them separately with an accountant. The estimate applies an indicative marginal rate to the taxable (50%) portion. Consult a qualified Canadian tax professional.',
+    knownLimits: 'LPP (listed personal property) loss ring-fencing is not modelled \u2014 the app pools all gains/losses; LPP losses can only offset LPP gains, so review LPP items separately. The CAD $1,000 personal-use-property floor IS applied per disposal.',
   },
 };
 
@@ -2611,9 +2650,9 @@ function calculateCGT() {
       else totalLosses += Math.abs(d.gain);
     });
     const netGain = totalGains - totalLosses;
-    const afterAllowance = Math.max(0, netGain - allowance);
+    const afterAllowance = _applyExemption(netGain, profile);
     const taxableGain = +(afterAllowance * inclusionRate).toFixed(6); // CA: 50% inclusion
-    const allowanceUsed = Math.min(Math.max(0, netGain), allowance);
+    const allowanceUsed = _exemptionUsed(netGain, profile);
     const allowancePct = allowance > 0 ? Math.min(100, (allowanceUsed / allowance) * 100) : (netGain > 0 ? 100 : 0);
 
     // Tax estimate — profile-specific. UK keeps the 18/24% pair (taxBasic/taxHigher)
@@ -2687,18 +2726,28 @@ async function calculateCGTWithTaxCurrency() {
     return { val: (r != null) ? gbp * r : null, rate: r };
   };
 
+  const pupFloor = cgt.profile.pupFloor || 0; // CA personal-use-property $1,000 floor (in tax ccy)
+
   for (const d of cgt.allDisposals) {
     const t = d.trade;
     // Sell-side figures at the SELL-date rate.
     const sellRate = await getRate('GBP', ccy, t.sellDate || todayStr());
     // Cost basis at the ACQUISITION-date rate (falls back to sell date if unknown).
     const buyRate = await getRate('GBP', ccy, d.acqDate || t.sellDate || todayStr());
-    const grossTax = (sellRate != null) ? d.gross * sellRate : null;
+    let grossTax = (sellRate != null) ? d.gross * sellRate : null;
     const feeTax = (sellRate != null) ? d.fee * sellRate : null;
-    const costBasisTax = (buyRate != null) ? d.costBasis * buyRate : null;
+    let costBasisTax = (buyRate != null) ? d.costBasis * buyRate : null;
+    let pupApplied = false;
+    // Personal-use-property floor (CA): both cost and proceeds are deemed to be at
+    // least the floor per disposal. Done in tax currency so the CAD $1,000 figure is
+    // applied as-is (not an FX-shifted GBP equivalent).
+    if (pupFloor > 0) {
+      if (grossTax != null && grossTax < pupFloor) { grossTax = pupFloor; pupApplied = true; }
+      if (costBasisTax != null && costBasisTax < pupFloor) { costBasisTax = pupFloor; pupApplied = true; }
+    }
     const gainTax = (grossTax != null && feeTax != null && costBasisTax != null)
       ? grossTax - feeTax - costBasisTax : null;
-    cgt.taxFx[t.id] = { grossTax, feeTax, costBasisTax, gainTax, sellRate, buyRate };
+    cgt.taxFx[t.id] = { grossTax, feeTax, costBasisTax, gainTax, sellRate, buyRate, pupApplied };
   }
   return cgt;
 }
@@ -2739,10 +2788,9 @@ async function renderCGTSummary() {
       if (gt > 0) g += gt; else l += Math.abs(gt);
     });
     gainsTax = g; lossesTax = l; netTax = g - l;
-    const allowance = profile.allowance || 0;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
-    allowanceUsedTax = Math.min(Math.max(0, netTax), allowance);
-    taxableGainTax = Math.max(0, netTax - allowance) * incl;
+    allowanceUsedTax = _exemptionUsed(netTax, profile);
+    taxableGainTax = _applyExemption(netTax, profile) * incl;
     // Re-derive the tax estimate in tax currency using the same band logic.
     const r = profile.rates || {};
     if (profile.code === 'US') {
@@ -2777,10 +2825,23 @@ async function renderCGTSummary() {
   const usBreakdown = (profile.code === 'US');
   const flagged = cgt.flaggedCount || 0;
   const exemptCount = cgt.exemptCount || 0;
+  // CA: how many disposals had the $1,000 personal-use-property floor applied.
+  let pupAppliedCount = 0;
+  if (profile.code === 'CA' && cgt.taxFx) {
+    cgt.disposals.forEach(d => { const fx = cgt.taxFx[d.trade.id]; if (fx && fx.pupApplied) pupAppliedCount++; });
+  }
 
-  const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze Used'
+  const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze' 
                            : allowance > 0 ? 'Allowance Used' : 'Taxable Amount';
   const ccyTag = isUK ? 'GBP' : ccy;
+  // DE Freigrenze is a cliff: show whether the year's gains have crossed the threshold.
+  const isCliff = !!profile.allowanceIsCliff;
+  const cliffTripped = isCliff && Math.max(0, netTax) >= allowance;
+  const cliffNote = isCliff
+    ? (cliffTripped
+        ? '<span style="color:var(--red);">cliff crossed — entire gain taxable</span>'
+        : '<span style="color:var(--green);">below cliff — fully tax-free</span>')
+    : '';
 
   el.innerHTML = `
     <div class="cgt-summary">
@@ -2809,6 +2870,7 @@ async function renderCGTSummary() {
           <span class="plat-badge plat-badge-cf" style="font-size:8px;">${ccyTag}</span>
         </div>
         ${allowance > 0 ? `<div class="cgt-allowance-bar"><div class="cgt-allowance-fill" style="width:${allowancePct}%;background:${barColor};"></div></div>` : ''}
+        ${cliffNote ? `<div style="font-size:8px;margin-top:3px;">${cliffNote}</div>` : ''}
         ${steamDiffers ? `
         <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
           <div class="cgt-card-val" style="font-size:13px;color:var(--text2);">${fmtGBP(incl.allowanceUsed, 0)} / £${(profile.allowance||0).toLocaleString()}</div>
@@ -2829,8 +2891,10 @@ async function renderCGTSummary() {
       Cost basis: ${costBasisMethodLabel(cgt.method)}${cgt.method === 'pooling' && isUK ? ' · same-day + 30-day rules applied' : ''}${!isUK ? ' · figures in ' + ccy + ' at transaction-date FX' : ''}<br>
       ${usBreakdown ? _usBucketChips(cgt, f) : ''}
       ${exemptCount > 0 ? `<span style="color:var(--green);">${exemptCount} disposal${exemptCount !== 1 ? 's' : ''} exempt (held &gt; 1 year)</span> · ` : ''}
+      ${pupAppliedCount > 0 ? `<span style="color:var(--text2);">$1,000 PUP floor applied to ${pupAppliedCount} disposal${pupAppliedCount !== 1 ? 's' : ''}</span><br>` : ''}
       ${flagged > 0 ? `<span style="color:var(--accent);">⚠ ${flagged} disposal${flagged !== 1 ? 's' : ''} with unknown acquisition date (treated conservatively)</span><br>` : ''}
       ${fxIncomplete ? `<span style="color:var(--accent);">⚠ Some FX rates unavailable — totals may be incomplete</span><br>` : ''}
+      ${profile.knownLimits ? `<span style="color:var(--text3);">ⓘ Known limit: ${profile.knownLimits}</span><br>` : ''}
       ⚠ ${profile.disclaimer}
     </div>`;
 }
@@ -2886,10 +2950,9 @@ async function exportCGTReport() {
       if (gt > 0) g += gt; else l += Math.abs(gt);
     });
     gainsT = g; lossesT = l; netT = g - l; feesT = fees;
-    const allowance = profile.allowance || 0;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
-    allowUsedT = Math.min(Math.max(0, netT), allowance);
-    taxableT = Math.max(0, netT - allowance) * incl;
+    allowUsedT = _exemptionUsed(netT, profile);
+    taxableT = _applyExemption(netT, profile) * incl;
     const r = profile.rates || {};
     const rate = (r.flat != null ? r.flat : 30) / 100;
     basicT = taxableT * rate; higherT = taxableT * rate;
@@ -2923,12 +2986,20 @@ async function exportCGTReport() {
     [`Net Gain/Loss (${cs}),${f(netT)}`],
   ];
   if ((profile.allowance || 0) > 0) {
-    const allowLabel = profile.code === 'DE' ? 'Annual Freigrenze' : 'Annual Allowance/Exemption';
-    rows.push([`${allowLabel} (${cs}),${f(profile.allowance)}`]);
-    rows.push([`Allowance Used (${cs}),${f(allowUsedT)}`]);
+    if (profile.allowanceIsCliff) {
+      rows.push([`Annual Freigrenze (cliff) (${cs}),${f(profile.allowance)}`]);
+      const tripped = Math.max(0, netT) >= profile.allowance;
+      rows.push([`Freigrenze Status,${tripped ? 'CROSSED — entire gain taxable' : 'below threshold — fully tax-free'}`]);
+    } else {
+      rows.push([`Annual Allowance/Exemption (${cs}),${f(profile.allowance)}`]);
+      rows.push([`Allowance Used (${cs}),${f(allowUsedT)}`]);
+    }
   }
   if (profile.inclusionRate != null) {
     rows.push([`Inclusion Rate,${Math.round(profile.inclusionRate * 100)}%`]);
+  }
+  if (profile.pupFloor) {
+    rows.push([`Personal-Use-Property Floor (${cs}),${f(profile.pupFloor)} (cost and proceeds deemed >= this per disposal)`]);
   }
   rows.push([`Taxable Gain (${cs}),${f(taxableT)}`]);
   if (profile.code === 'UK') {
@@ -2972,6 +3043,11 @@ async function exportCGTReport() {
   });
 
   rows.push('');
+  if (profile.knownLimits) {
+    rows.push('KNOWN LIMITS');
+    rows.push('"' + profile.knownLimits.replace(/"/g, "'") + '"');
+    rows.push('');
+  }
   rows.push('DISCLAIMER');
   rows.push('"' + profile.disclaimer.replace(/"/g, "'") + '"');
 
@@ -3079,12 +3155,12 @@ function updateCashOutCalc() {
     const cgt = calculateCGT();
     const _prof = cgt.profile;
     const _allow = _prof.allowance || 0;
-    const remainingAllowance = Math.max(0, _allow - cgt.allowanceUsed);
+    const remainingAllowance = _prof.allowanceIsCliff ? 0 : Math.max(0, _allow - cgt.allowanceUsed);
     // The gain from this cash-out would be: cash received - original cost of the items
     // We don't know the original cost here, so show the gain on the bridge skin only
     const bridgeGain = csfloatSellActual - steamWallet; // Usually negative (loss on the bridge)
     const _incl = _prof.inclusionRate != null ? _prof.inclusionRate : 1;
-    const totalTaxableAfterThis = Math.max(0, cgt.netGain + bridgeGain - _allow) * _incl;
+    const totalTaxableAfterThis = _applyExemption(cgt.netGain + bridgeGain, _prof) * _incl;
     const estimatedTax = totalTaxableAfterThis * (cgtRate / 100);
 
     resultHtml += `
@@ -3095,8 +3171,8 @@ function updateCashOutCalc() {
           <div class="co-step-val">${fmtGBP(cgt.netGain, 2)}</div>
         </div>
         <div class="co-step">
-          <div class="co-step-label">Remaining allowance</div>
-          <div class="co-step-val" style="color:var(--green);">${fmtGBP(remainingAllowance, 2)}</div>
+          <div class="co-step-label">${_prof.allowanceIsCliff ? 'Freigrenze (cliff)' : 'Remaining allowance'}</div>
+          <div class="co-step-val" style="color:var(--green);">${_prof.allowanceIsCliff ? fmtGBP(_allow, 2) + ' all-or-nothing' : fmtGBP(remainingAllowance, 2)}</div>
         </div>
         <div class="co-step">
           <div class="co-step-label">Taxable amount (if any)</div>
