@@ -1,10 +1,13 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v3.3.1
+Last updated: June 2026 | Current version: v3.3.2
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.3.2 — CI build fix (empty CSC_LINK) ✅
+The v3.3.1 build got past the config-validation error and packaged the app, then failed at the signing stage: `Env WIN_CSC_LINK is not correct, cannot resolve: …\cs2vault-electron not a file`. Cause: the workflow always passed `CSC_LINK: ${{ secrets.CSC_LINK }}` to electron-builder, but the signing-cert secret isn't set yet, so it resolved to an **empty string** — and electron-builder treats an empty `CSC_LINK` as "a cert path was given but is blank" (not the same as unset) and tries to resolve it as a file. Fix: the workflow now computes a job-level `HAS_CSC` flag from the secret and runs **two mutually exclusive build steps** — "Build and publish (signed)" (only when `CSC_LINK` is set) and "Build and publish (unsigned)" (otherwise). With no cert yet, only the unsigned step runs and no empty `CSC_LINK` is ever passed. (`secrets` can't be used in a step `if:`, so it's surfaced via `env` first.) Adding the `CSC_LINK`/`CSC_KEY_PASSWORD` secrets later flips it to signed builds with no further edits. No app-code change; CODE-SIGNING.md updated.
 
 ### v3.3.1 — CI build fix (signtoolOptions) ✅
 The v3.3.0 GitHub Actions build failed: `configuration.win has an unknown property 'signtoolOptions'`. That property doesn't exist in electron-builder **24.13.3** (it's a newer-version key), so the whole config was rejected and the build died before producing an installer. Fix: removed the `signtoolOptions` block from `package.json` entirely. It was never required — electron-builder auto-signs from the `CSC_LINK` / `CSC_KEY_PASSWORD` env vars (set as GitHub secrets) on its own, so no signing capability is lost. Docs (`CODE-SIGNING.md`, STATE.md) updated to drop the stale reference. No app-code change; v3.3.0's payments/licensing layer is unchanged.

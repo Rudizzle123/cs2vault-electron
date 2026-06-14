@@ -36,11 +36,18 @@ Two options:
 2. In GitHub → repo → Settings → Secrets and variables → Actions → New secret:
    - `CSC_LINK` = the base64 string from `cert.txt`
    - `CSC_KEY_PASSWORD` = your `.pfx` password
-3. Push a version tag as usual. The workflow picks up the secrets and
-   electron-builder signs the installer automatically. Done.
+3. Push a version tag as usual. The moment the `CSC_LINK` secret exists, the
+   workflow's **"Build and publish (signed)"** step runs instead of the unsigned
+   one, and electron-builder signs the installer automatically. Done.
 
-That's it for OV — no code change needed; the env vars are already in the
-workflow.
+That's it for OV — no code change needed. The workflow has two mutually exclusive
+build steps (signed / unsigned) gated on whether `CSC_LINK` is set, so adding the
+secret is all it takes to switch from unsigned to signed builds.
+
+> Note: the build deliberately runs **unsigned until the secret is present** — an
+> empty `CSC_LINK` is not the same as unset and would break electron-builder, so
+> the workflow only passes the signing env vars when the secret actually has a
+> value.
 
 ## Step 3 — verify
 - After a signed release, download the installer and check:

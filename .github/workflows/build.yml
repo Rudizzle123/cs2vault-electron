@@ -12,6 +12,12 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # Surface the signing secret into job-level env so it can be used in step
+    # `if:` conditions. (The `secrets` context is NOT available in `if:`, but
+    # `env` is — so we copy it here once.)
+    env:
+      HAS_CSC: ${{ secrets.CSC_LINK != '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,21 +32,29 @@ jobs:
         run: npm ci
 
       # ── Code signing ──────────────────────────────────────────────────────
-      # electron-builder automatically signs the Windows installer when these
-      # env vars are present. They are read from GitHub repo Secrets, so the
-      # build stays UNSIGNED (but succeeds) until you add the secrets.
+      # electron-builder signs the Windows installer when CSC_LINK +
+      # CSC_KEY_PASSWORD are present. IMPORTANT: an *empty* CSC_LINK is NOT the
+      # same as unset — electron-builder treats an empty string as "a cert path
+      # was given but is blank" and fails ("WIN_CSC_LINK is not correct, cannot
+      # resolve ... not a file"). So we run TWO mutually exclusive build steps
+      # gated on HAS_CSC (true only once you add the CSC_LINK secret).
       #
       # OV certificate (file-based .pfx, base64-encoded):
-      #   CSC_LINK           = base64 of your .pfx   (see CODE-SIGNING.md)
-      #   CSC_KEY_PASSWORD   = the .pfx password
-      #
-      # EV certificate (cloud HSM — e.g. Azure Trusted Signing / SSL.com eSigner):
-      #   EV certs can no longer be exported as a .pfx file. Use a custom signing
-      #   hook instead — see CODE-SIGNING.md → "EV / cloud HSM". Leave CSC_LINK
-      #   unset in that case.
-      - name: Build and publish
+      #   CSC_LINK         = base64 of your .pfx   (see CODE-SIGNING.md)
+      #   CSC_KEY_PASSWORD = the .pfx password
+      # EV certificate (cloud HSM): can't be exported as .pfx — use a custom
+      #   win.sign hook instead (CODE-SIGNING.md → "EV / cloud HSM").
+
+      - name: Build and publish (signed)
+        if: env.HAS_CSC == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npm run release
+
+      - name: Build and publish (unsigned)
+        if: env.HAS_CSC != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
