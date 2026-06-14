@@ -883,6 +883,12 @@ header button, header input, header a { -webkit-app-region: no-drag; }
             <option value="US">United States — USD (FIFO, short/long-term)</option>
             <option value="DE">Germany — EUR (FIFO, 1-year exemption)</option>
             <option value="CA">Canada — CAD (ACB pooling, 50% inclusion)</option>
+            <option value="AU">Australia — AUD (50% discount if held > 1yr)</option>
+            <option value="SE">Sweden — SEK (flat 30%)</option>
+            <option value="NO">Norway — NOK (flat 22%, general asset)</option>
+            <option value="FI">Finland — EUR (30%/34%, €1k small-sales exemption)</option>
+            <option value="DK">Denmark — DKK (personal income, indicative ~42%)</option>
+            <option value="PL">Poland — PLN (flat 19%)</option>
           </select>
           <select id="settingsCostBasis" onchange="setCostBasisMethod(this.value)"
             style="background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;min-width:220px;">
@@ -961,8 +967,14 @@ header button, header input, header a { -webkit-app-region: no-drag; }
             <option value="US">United States — short/long-term (Pro)</option>
             <option value="DE">Germany — 1-year exemption (Pro)</option>
             <option value="CA">Canada — ACB, 50% inclusion (Pro)</option>
+            <option value="AU">Australia — 50% discount > 1yr (Pro)</option>
+            <option value="SE">Sweden — flat 30% (Pro)</option>
+            <option value="NO">Norway — flat 22% (Pro)</option>
+            <option value="FI">Finland — 30%/34% (Pro)</option>
+            <option value="DK">Denmark — personal income (Pro)</option>
+            <option value="PL">Poland — flat 19% (Pro)</option>
           </select>
-          <div class="ob-hint">The UK profile is free. US / Germany / Canada are unlocked with Vault Pro — your selection is remembered for when you upgrade.</div>
+          <div class="ob-hint">The UK profile is free. All other jurisdictions are unlocked with Vault Pro — your selection is remembered for when you upgrade.</div>
         </div>
       </div>
 

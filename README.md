@@ -9,7 +9,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 **Stack:** Electron 29 + vanilla JS + Chart.js 4.4 + electron-store
 
 **Key files:**
-- `src/app.js` — all application logic (~4,550 lines): pricing, rendering, analytics, health report, CGT tracker, trending, charts
+- `src/app.js` — all application logic (~6,300 lines): pricing, rendering, analytics, health report, multi-jurisdiction tax engine, cost-basis lot matching, trending, charts
 - `src/index.html` — UI layout + CSS (~1,250 lines): all tabs, modals, styles
 - `src/main.js` — Electron main process (~280 lines): window management, IPC handlers, HTTP proxy with Brotli/gzip decompression, auto-updater
 - `src/preload.js` — IPC bridge exposing `window.cs2vault` API to renderer
@@ -30,8 +30,13 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - `cs2vault_price_log` — per-item price history from refreshes
 - `cs2vault_steam_history` — Steam Market historical price data (parsed from listing pages)
 - `cs2vault_case_supply` — Case Intel supply snapshots (listing counts over time, keyed by market hash)
+- `cs2vault_fx_cache` — historical FX rates (keyed `date|from|to`, cached permanently)
+- `cs2vault_display_currency` — display currency setting (default GBP)
+- `cs2vault_tax_jurisdiction` — active tax jurisdiction (UK / US / DE / CA / SE / PL / AU / NO / DK / FI; default UK)
+- `cs2vault_cost_basis_method` — active cost-basis method (pooling / fifo / specific)
 
 **External APIs used:**
+- frankfurter.app (no auth, ECB rates) — FX conversion, live + historical; open.er-api.com as fallback
 - CSFloat API (requires API key) — primary pricing for skins/knives/armory/charms
 - Steam Market (no auth) — pricing for cases, stickers, and TUF-tagged skins
 - Pricempire API (free Trader tier, 30k calls/month) — CSFloat historical prices
@@ -49,7 +54,40 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v2.8.0)
+## Features (current as of v3.2.0)
+
+### Multi-Jurisdiction Tax Engine (v3.0.0 — Vault Pro Phase 3; expanded to 10 jurisdictions in v3.2.0)
+- **Pluggable tax profiles** — Settings → Tax & Cost Basis selects your jurisdiction, which sets the full tax profile: tax-year boundary, allowance/exemption, rates, cost-basis method, holding-period rules, and the currency your tax figures are reported in. **Ten profiles** (UK is free; the rest are Vault Pro):
+  - **United Kingdom** — Capital Gains Tax in GBP, 6 Apr–5 Apr tax year, £3,000 annual exempt amount, 18%/24% bands, Section 104 pooling (with same-day + 30-day rules). Steam Wallet sales excluded as the app's chosen position, with the informational "incl. Steam" stricter-reading view
+  - **United States** — USD, calendar tax year, no annual exemption, FIFO/specific. Each disposal split into **short-term** (held ≤12 months, taxed as ordinary income) vs **long-term** (>12 months, 0/15/20% bands). Disclosed edge cases (not auto-calculated): knives/rare items may be "collectibles" taxed up to 28%; 1099-K marketplace reporting is on **gross** proceeds, so your cost-basis records are your defence
+  - **Germany** — EUR, calendar year, FIFO. Under §23 EStG a private sale is **tax-free if held over one year**; only sub-12-month disposals are taxable. The €1,000 Freigrenze is a **cliff, not an allowance** — total in-year private-sale gains below €1,000 are fully tax-free, but at €1,000+ the **entire** gain is taxable from the first euro. (The Freigrenze pools ALL your private sales for the year — crypto, gold, etc. — so the skins-only view is partial)
+  - **Canada** — CAD, calendar year, ACB pooling, **50% inclusion rate** (only half a net capital gain is taxable). The **$1,000 personal-use-property floor** is applied per disposal (both cost and proceeds deemed ≥ CAD $1,000), so cheap-bought items don't show fake gains. (LPP loss ring-fencing is disclosed but not modelled — all gains/losses are pooled)
+  - **Sweden** — SEK, calendar year, **flat 30%** on capital gains, no holding-period rule (pooling / genomsnittsmetoden). Simplified loss deductibility is disclosed
+  - **Poland** — PLN, calendar year, **flat 19%** (the personal tax-free amount does not apply to capital gains), no holding-period rule. The 5-year same-source loss carry-forward is not modelled
+  - **Australia** — AUD, **1 Jul–30 Jun tax year**, marginal rate (indicative), with the **50% CGT discount applied per disposal for assets held more than 12 months** (short-held or unknown-acquisition-date disposals are taxed on the full gain and flagged). The $10,000 personal-use-asset exemption is NOT applied; the 2027 indexation reform is not yet modelled (current pre-July-2027 rules)
+  - **Norway** — NOK, calendar year, **flat 22%**. Skins are treated as a general (crypto-like) asset — the 1.72 share/dividend uplift (effective 37.84%) does NOT apply. FIFO
+  - **Denmark** — DKK, calendar year. Speculative personal-asset gains are taxed as **personal income at your marginal rate (up to ~52%)**; the app shows an indicative ~42% and an emphatic disclaimer that your real rate depends on your bracket. Strict same-asset loss rules disclosed (not modelled). FIFO
+  - **Finland** — EUR, calendar year, **two-tier 30% (up to €30,000 capital income) / 34% (above)**. The €1,000 small-sales exemption (really on total annual proceeds) is approximated as a €1,000 gains cliff; the deemed-acquisition-cost option is not modelled. FIFO
+- **Tax-currency reporting** — non-UK profiles render every tax figure in the local tax currency (USD/EUR/CAD/SEK/PLN/AUD/NOK/DKK), converted from the GBP base at each transaction's own FX rate (sell legs at the sell-date rate, cost basis at the acquisition-date rate) — never a single blended or year-end rate, so the real FX gain/loss is preserved. UK stays GBP throughout
+- **Holding-period aware** — disposals are classified by how long the matched lots were held (US long/short, Germany 1-year exemption), derived from the Phase 2 lot acquisition dates. Trades imported before lot tracking (no acquisition date) degrade to the conservative reading (US short-term / Germany taxable) and are clearly flagged
+- **Per-jurisdiction CGT report export** — correct tax-year label, allowance/exemption/inclusion lines, rate bands, and holding-period columns (acquisition date, holding, classification) where relevant. Per-profile disclaimer
+- **NOT a paywall yet** — the full tax engine is free to use in v3.0.0. Free-vs-Pro gating arrives in Phase 4a (v3.1.0, no external accounts needed); payments (Paddle, merchant of record), Paddle-native licence validation with offline grace, and code signing follow in Phase 4b once the Paddle account and signing certificate are in place. The webhook backing licence checks is planned for Cloudflare Workers (free tier)
+
+### Configurable Cost Basis (v2.10.0 — Vault Pro Phase 2)
+- **Lot-aware data model** — every holding tracks individual buy lots (qty, unit cost, date, currency, FX rate); disposals consume lots per the active method
+- **Cost-basis methods** — **Average cost / Section 104 pooling** (UK, with same-day + 30-day bed-and-breakfast matching; Canada ACB), **FIFO** (first-in first-out; US default, Germany), **Specific identification** (US optional). Method is a per-jurisdiction setting; UK is locked to pooling
+- Fixes the implicit specific-identification behaviour of the old row-based selling. Legacy trades without buy lots are grandfathered to their stored cost
+
+### Multi-Currency (v2.9.0 — Vault Pro Phase 1)
+- **Display currency** — Settings → Display Currency (12 ECB currencies). Portfolio values, P&L, analytics, health report, and charts render in the chosen currency, converted from the GBP base at the live ECB rate
+- **Multi-currency entry** — buy, sell, and top-up amounts can be entered in any supported currency via a select next to the price field; converted to GBP at the rate **on the transaction date** (frankfurter.app historical rates, cached permanently) and stored with full FX provenance (`origCurrency`, `origAmount`, `fxRate`)
+- **GBP remains the internal base** — all stored amounts are GBP; tax surfaces (CGT summary, trade history, cash-out calculator, all CSV exports) are always shown in £ GBP regardless of display currency
+- One-time launch migration backfills GBP provenance on all existing records (lossless)
+
+### Branding (v2.8.1)
+- New logo: two-layer green diamond + gold price line, transparent background (clean taskbar icon, no black square)
+- `assets/`: `header-logo.png` (512, header + Settings tab), `icon.png` (256, window/notifications), `icon.ico` (multi-res 16–256; 16–48px use a simplified single-diamond variant for legibility)
+- Source SVG masters (`full.svg`, `small.svg`) and a full web/Steam branding pack (transparent PNGs 16–1024, Steam avatar 184, favicon, apple-touch-icon, og-square) live in the separately delivered `cs2vault-branding.zip` — re-render any size from the SVGs
 
 ### Holdings Tab
 - **Allocation strip (v2.5.0)** — stacked bar + legend under the stat cards showing portfolio value split across Cases / Stickers / TUF / Skins / Knives / Armory / Other; click a segment to filter the table, click again to clear
@@ -83,11 +121,11 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 ### Trade History Tab
 - All completed trades with buy/sell/fee/realised/net profit — each disposal stores platform, fee %, fee amount (£), gross (£), and net realised (£ = gross − fees)
 - Colour-coded platform badges (CSFloat / Steam / Custom) — platform is resolved via `tradePlatform()`; records lacking an explicit platform are inferred from the fee rate (15% = Steam, 2% = CSFloat) and backfilled on launch, so a Steam sale never mislabels as CSFloat or wrongly counts toward CGT
-- Per-sale CGT badge on every row: green `✓ CGT` (counts) or grey `✕ not CGT` (Steam Wallet sale, excluded)
-- CGT Summary: tax year, realised gains, losses, net gain, allowance usage bar, estimated tax
-- **Dual allowance view** — allowance/tax shown two ways when the year has Steam sales: the live **CSFloat-only** position plus a dimmed **incl. Steam** hypothetical (the stricter reading where a Steam-to-Steam disposal also counts). Informational only; the app's default CGT position is unchanged
-- Cash Out Calculator (Steam sell → bridge skin → CSFloat sell → withdraw → cash in hand)
-- CGT tax report export (CSV with full disposal schedule incl. Platform and Net Realised columns)
+- Per-sale tax badge on every row: green `✓ CGT` / `✓ taxable` (counts as a disposal) or grey `✕ not CGT` (Steam Wallet sale, excluded under the UK profile). The badge follows the active jurisdiction's disposal definition
+- CGT Summary: tax year, realised gains, losses, net gain, allowance/exemption usage, estimated tax — rendered in the active jurisdiction's tax currency, with US short/long-term net chips, Germany exempt-disposal count, and an unknown-acquisition-date flag where relevant
+- **Dual allowance view (UK)** — allowance/tax shown two ways when the year has Steam sales: the live **CSFloat-only** position plus a dimmed **incl. Steam** hypothetical (the stricter reading where a Steam-to-Steam disposal also counts). Informational only; the app's default UK position is unchanged
+- Cash Out Calculator (Steam sell → bridge skin → CSFloat sell → withdraw → cash in hand) — CGT estimate uses the active profile's allowance and inclusion rate
+- Per-jurisdiction CGT tax report export (CSV with full disposal schedule; tax-currency figures, allowance/exemption/inclusion lines, and acquisition-date/holding/classification columns for US + Germany)
 - Bulk-sold cases/stickers record as a single grouped row (qty × unit price, auto-calculated)
 - Delete button (✕) on each trade row — removes a single history record (atomic; does not restore the item to holdings/play skins)
 - Search/filter trades
@@ -133,10 +171,12 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - Table columns: Score, Grade, Drop Pool, Steam Listings, Supply Trend, 7D, 30D, Months Discontinued, Current Price, vs 90D Low, Holdings
 
 ### Settings Tab
+- **Tax & Cost Basis** — tax jurisdiction selector (UK / US / Germany / Canada / Sweden / Poland / Australia / Norway / Denmark / Finland) sets the full tax profile and reporting currency; cost-basis method selector (pooling / FIFO / specific — UK locked to pooling). Mid-year change warnings when disposals already exist in the current tax year
+- Display currency (12 ECB currencies) — portfolio values render in your chosen currency; tax surfaces follow the jurisdiction's tax currency
 - CSFloat API key management with test connection
 - Pricempire API key management with test connection
 - Background Auto-Refresh schedule (Off / 1h / 3h / 6h)
-- Data management (backup/restore/clear)
+- Data management (backup/restore/clear) — includes the FX cache, display currency, tax jurisdiction, and cost-basis method keys
 
 ### Infrastructure
 - Auto-updater via GitHub Releases (electron-updater) — silent download, auto-restart

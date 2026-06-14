@@ -2166,6 +2166,107 @@ const TAX_PROFILES = {
     disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). Personal-use property: both the cost and the proceeds of each disposal are deemed to be at least CAD $1,000, so a cheap-bought item sold cheaply shows little or no gain \u2014 this app applies that $1,000 floor automatically. Limit: listed personal property (LPP \u2014 art, jewellery, rare coins/stamps/books) losses can only offset LPP gains, not ordinary capital gains; the app pools all gains and losses together and does NOT ring-fence LPP losses, so if you hold LPP items review them separately with an accountant. The estimate applies an indicative marginal rate to the taxable (50%) portion. Consult a qualified Canadian tax professional.',
     knownLimits: 'LPP (listed personal property) loss ring-fencing is not modelled \u2014 the app pools all gains/losses; LPP losses can only offset LPP gains, so review LPP items separately. The CAD $1,000 personal-use-property floor IS applied per disposal.',
   },
+  SE: {
+    code: 'SE', name: 'Sweden', taxCurrency: 'SEK',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,                    // no general allowance for this asset class (the SEK 50k
+                                     // personal-asset exemption is real-property/personalty specific; not relied on here)
+    rates: { flat: 30 },             // flat 30% on capital income (kapitalvinst)
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice (ej skatter\u00e5dgivning). Sweden taxes capital gains (kapitalvinst) on investment assets at a flat 30% rate, regardless of holding period. Gains are computed per disposal (sale price minus omkostnadsbelopp / acquisition cost). Losses on this kind of asset are generally only partly deductible against other capital income \u2014 the app pools gains and losses, which may overstate deductible losses. Report on the K4 form. Consult a Swedish skatter\u00e5dgivare / revisor.',
+    knownLimits: 'Loss deductibility is simplified \u2014 Sweden restricts how non-share capital losses offset other capital income (often to ~70%); the app pools gains/losses in full. Review losses with a revisor.',
+  },
+  PL: {
+    code: 'PL', name: 'Poland', taxCurrency: 'PLN',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,                    // the personal tax-free amount does NOT apply to capital gains
+    rates: { flat: 19 },             // flat 19% PIT on capital gains
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice (to nie jest porada podatkowa). Poland taxes capital gains at a flat 19% rate (the general tax-free amount does not apply to this income), regardless of holding period. Acquisition cost and transaction expenses are deductible. Capital losses can only offset gains from the same source and may be carried forward up to 5 years (with annual caps) \u2014 the app does not model the carry-forward. Report on the PIT-38 form. Consult a Polish doradca podatkowy.',
+    knownLimits: 'Loss carry-forward (up to 5 years, with annual caps, same-source only) is not modelled \u2014 the app only nets gains/losses within the current tax year.',
+  },
+  AU: {
+    code: 'AU', name: 'Australia', taxCurrency: 'AUD',
+    // Australian tax year: 1 July \u2013 30 June.
+    taxYearStart(now) {
+      now = now || new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      return (m >= 7 ? y : y - 1) + '-07-01';
+    },
+    taxYearLabel(now) {
+      now = now || new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      const start = (m >= 7 ? y : y - 1);
+      return start + '/' + (start + 1);
+    },
+    allowance: 0,
+    // The 50% CGT discount is HOLDING-PERIOD GATED (only gains on assets held >12mo),
+    // so inclusion is decided per disposal, not as a flat profile rate.
+    perDisposalInclusion: true,
+    rates: { flat: 32.5 },           // indicative marginal rate (the app can't know the user's bracket)
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    // >12mo held -> eligible for the 50% CGT discount (incl 0.5); else full gain (incl 1.0).
+    // Unknown acq date -> no discount (conservative, full inclusion), flagged.
+    classifyGain(disp) {
+      const held = _monthsHeld(disp.acqDate, disp.sellDate);
+      if (held == null) return { bucket: 'full', taxable: true, label: 'no discount (acq. date unknown)', flagged: true, inclusion: 1 };
+      return held > 12
+        ? { bucket: 'discount', taxable: true, label: 'discounted (50% \u2014 held > 1 year)', flagged: false, inclusion: 0.5 }
+        : { bucket: 'full', taxable: true, label: 'full (held \u2264 1 year)', flagged: false, inclusion: 1 };
+    },
+    disclaimer: 'Estimated only and not tax advice. Australia includes net capital gains in your assessable income and taxes them at your marginal rate; the figures here use an indicative rate because the app can\u2019t know your bracket. The 50% CGT discount applies only to assets held more than 12 months \u2014 the app applies it per disposal based on the matched lot dates. Disposals whose acquisition date is unknown (imported before lot tracking) get NO discount (full gain), flagged. Note: assets acquired for $10,000 or less may be exempt as a personal-use asset (and personal-use-asset losses are disregarded) \u2014 the app does NOT apply this exemption, so low-value items may be over-counted. A 2027 reform will replace the 50% discount with cost-base indexation; this profile models the CURRENT (pre-July-2027) rules. Consult a registered Australian tax agent.',
+    knownLimits: 'The $10,000 personal-use-asset CGT exemption is NOT applied (low-value items may be over-counted). The marginal rate is indicative. 2027 reform (indexation replacing the 50% discount) is not yet modelled.',
+  },
+  NO: {
+    code: 'NO', name: 'Norway', taxCurrency: 'NOK',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,
+    // Skins are treated as a general asset (like crypto), taxed at the flat 22% ordinary
+    // capital-income rate \u2014 NOT the 1.72 share/dividend uplift (that's shares-only).
+    rates: { flat: 22 },
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice (ikke skatter\u00e5dgivning). Norway taxes general capital gains (including crypto-like assets) as ordinary income at a flat 22%, regardless of holding period. The 1.72 upward adjustment factor that pushes shares/dividends to an effective 37.84% does NOT apply to this asset class \u2014 skins are treated as a general asset, not a share. Cost basis uses FIFO. Losses are deductible against income. Consult a Norwegian skatter\u00e5dgiver.',
+    knownLimits: 'Treated as a general (crypto-like) asset at 22%, not a share \u2014 if the tax office were to treat skins as a financial instrument the 1.72 uplift (eff. 37.84%) could apply. Verify classification.',
+  },
+  DK: {
+    code: 'DK', name: 'Denmark', taxCurrency: 'DKK',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    allowance: 0,
+    // Denmark taxes speculative personal-asset gains as PERSONAL INCOME at the user's
+    // marginal rate (up to ~52%). The app can't know the bracket, so it shows an
+    // indicative high rate. This is the messiest profile \u2014 disclaimer is emphatic.
+    rates: { flat: 42 },             // indicative; true rate is marginal personal income up to ~52%
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'income', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice (ikke skatter\u00e5dgivning). Denmark generally treats gains on speculative personal assets (the crypto/skins category) as PERSONAL INCOME, taxed at your marginal rate \u2014 which can reach about 52%. The app shows an indicative rate because it cannot know your bracket, so your real liability may be higher or lower. Cost basis uses FIFO (in DKK). Loss rules are strict and asset-specific (losses generally only offset gains of the same kind, with no buys in between) \u2014 the app pools gains/losses, which may overstate deductible losses. Whether a given holding is "speculative" is itself a Skattestyrelsen judgement. Consult a Danish revisor / skatter\u00e5dgiver before filing.',
+    knownLimits: 'Rate is INDICATIVE \u2014 Denmark taxes these gains as marginal personal income (up to ~52%), not a flat rate the app can compute. Strict same-asset loss rules are not modelled (losses pooled). Speculative-intent classification is case-by-case.',
+  },
+  FI: {
+    code: 'FI', name: 'Finland', taxCurrency: 'EUR',
+    taxYearStart(now) { return (now || new Date()).getFullYear() + '-01-01'; },
+    taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
+    // \u20ac1,000 total-PROCEEDS small-sales exemption modelled as a gains cliff (simplification).
+    allowance: 1000,
+    allowanceIsCliff: true,
+    rates: { lower: 30, upper: 34, threshold: 30000 }, // 30% up to \u20ac30k capital income, 34% above
+    feeDeductible: true,
+    disposalCounts() { return true; },
+    classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
+    disclaimer: 'Estimated only and not tax advice (ei veroneuvontaa). Finland taxes capital income at 30% up to \u20ac30,000 of capital income per year and 34% above that. A small-sales exemption makes gains tax-free if your TOTAL sale proceeds for the year stay at or below \u20ac1,000 \u2014 the app approximates this as a \u20ac1,000 gains cliff (it tracks gains, not total proceeds, so treat the boundary as indicative). Each disposal (including swaps) is a taxable event; cost basis can use actual cost or the deemed-acquisition-cost (hankintameno-olettama) rule, which the app does NOT apply. Report on form 9. Consult a Finnish veroasiantuntija.',
+    knownLimits: 'The \u20ac1,000 exemption is really on TOTAL annual sale proceeds, not gains \u2014 the app approximates it as a \u20ac1,000 gains cliff. The deemed-acquisition-cost (hankintameno-olettama) option is not modelled. The 30%/34% split is on total capital income, which the app sees only partially.',
+  },
 };
 
 function getActiveTaxProfile() {
@@ -2216,6 +2317,12 @@ const JURISDICTION_METHODS = {
   US: 'fifo',
   DE: 'fifo',
   CA: 'pooling',
+  AU: 'pooling',   // ATO accepts methods; pooling/average is a reasonable default
+  SE: 'pooling',   // Sweden uses genomsnittsmetoden (average-cost) for securities-like assets
+  NO: 'fifo',      // Norway uses FIFO for crypto-like assets
+  FI: 'fifo',      // Finland FIFO (hankintameno actual-cost; FIFO ordering)
+  DK: 'fifo',      // Denmark FIFO
+  PL: 'fifo',      // Poland — FIFO a reasonable default
 };
 
 function getTaxJurisdiction() {
@@ -2634,6 +2741,7 @@ function calculateCGT() {
   const rollup = (disposals) => {
     let totalGains = 0, totalLosses = 0, totalFees = 0, tradeCount = 0;
     let exemptGain = 0, exemptCount = 0, flaggedCount = 0;
+    let includedGain = 0; // AU: per-disposal-inclusion-weighted net (only when perDisposalInclusion)
     const buckets = {}; // bucket -> net gain (for US short/long display)
     disposals.forEach(d => {
       totalFees += d.fee;
@@ -2648,10 +2756,22 @@ function calculateCGT() {
       buckets[b] = (buckets[b] || 0) + d.gain;
       if (d.gain > 0) totalGains += d.gain;
       else totalLosses += Math.abs(d.gain);
+      // AU: apply the 50%/100% discount per disposal (gains discounted, losses in full).
+      if (profile.perDisposalInclusion) {
+        const inc = (d.classification.inclusion != null) ? d.classification.inclusion : 1;
+        includedGain += d.gain > 0 ? d.gain * inc : d.gain;
+      }
     });
     const netGain = totalGains - totalLosses;
-    const afterAllowance = _applyExemption(netGain, profile);
-    const taxableGain = +(afterAllowance * inclusionRate).toFixed(6); // CA: 50% inclusion
+    // For per-disposal-inclusion profiles (AU) the taxable base is the inclusion-weighted
+    // net, AFTER the (zero) allowance; for everyone else it's the flat-inclusion path.
+    let taxableGain;
+    if (profile.perDisposalInclusion) {
+      taxableGain = +(_applyExemption(Math.max(0, includedGain), profile)).toFixed(6);
+    } else {
+      const afterAllowance = _applyExemption(netGain, profile);
+      taxableGain = +(afterAllowance * inclusionRate).toFixed(6); // CA: 50% inclusion
+    }
     const allowanceUsed = _exemptionUsed(netGain, profile);
     const allowancePct = allowance > 0 ? Math.min(100, (allowanceUsed / allowance) * 100) : (netGain > 0 ? 100 : 0);
 
@@ -2672,6 +2792,13 @@ function calculateCGT() {
       const taxableShort = totNet > 0 ? taxableGain * (shortNet / totNet) : 0;
       taxBasic = taxableLong * (r.longLow / 100) + taxableShort * (r.shortLow / 100);
       taxHigher = taxableLong * (r.longHigh / 100) + taxableShort * (r.shortHigh / 100);
+    } else if (profile.code === 'FI') {
+      // Two-tier: 30% up to the threshold of capital income, 34% above.
+      const thr = r.threshold || 30000;
+      const lowPart = Math.min(taxableGain, thr);
+      const highPart = Math.max(0, taxableGain - thr);
+      const fiTax = lowPart * (r.lower / 100) + highPart * (r.upper / 100);
+      taxBasic = fiTax; taxHigher = fiTax; // single estimate (not a band)
     } else {
       const rate = (r.flat != null ? r.flat : 30) / 100;
       taxBasic = taxableGain * rate;
@@ -2779,18 +2906,26 @@ async function renderCGTSummary() {
   let taxBasicTax = cgt.taxBasic, taxHigherTax = cgt.taxHigher;
   let fxIncomplete = false;
   if (!isUK) {
-    let g = 0, l = 0;
+    let g = 0, l = 0, includedTax = 0;
     cgt.disposals.forEach(d => {
       if (d.classification.taxable === false) return; // exempt (e.g. DE >1yr)
       const fx = cgt.taxFx[d.trade.id];
       const gt = fx ? fx.gainTax : null;
       if (gt == null) { fxIncomplete = true; return; }
       if (gt > 0) g += gt; else l += Math.abs(gt);
+      if (profile.perDisposalInclusion) {
+        const inc = (d.classification.inclusion != null) ? d.classification.inclusion : 1;
+        includedTax += gt > 0 ? gt * inc : gt; // AU: discount gains, losses in full
+      }
     });
     gainsTax = g; lossesTax = l; netTax = g - l;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
     allowanceUsedTax = _exemptionUsed(netTax, profile);
-    taxableGainTax = _applyExemption(netTax, profile) * incl;
+    if (profile.perDisposalInclusion) {
+      taxableGainTax = _applyExemption(Math.max(0, includedTax), profile);
+    } else {
+      taxableGainTax = _applyExemption(netTax, profile) * incl;
+    }
     // Re-derive the tax estimate in tax currency using the same band logic.
     const r = profile.rates || {};
     if (profile.code === 'US') {
@@ -2805,6 +2940,12 @@ async function renderCGTSummary() {
       const tShort = totNet > 0 ? taxableGainTax * (shortNet / totNet) : 0;
       taxBasicTax = tLong * (r.longLow / 100) + tShort * (r.shortLow / 100);
       taxHigherTax = tLong * (r.longHigh / 100) + tShort * (r.shortHigh / 100);
+    } else if (profile.code === 'FI') {
+      const thr = r.threshold || 30000;
+      const lowPart = Math.min(taxableGainTax, thr);
+      const highPart = Math.max(0, taxableGainTax - thr);
+      const fiTax = lowPart * (r.lower / 100) + highPart * (r.upper / 100);
+      taxBasicTax = fiTax; taxHigherTax = fiTax;
     } else {
       const rate = (r.flat != null ? r.flat : 30) / 100;
       taxBasicTax = taxableGainTax * rate; taxHigherTax = taxableGainTax * rate;
@@ -2905,6 +3046,10 @@ function _rateBandLabel(profile) {
   if (profile.code === 'UK') return r.basic + '% basic / ' + r.higher + '% higher';
   if (profile.code === 'US') return 'long ' + r.longLow + '–' + r.longHigh + '% / short ' + r.shortLow + '–' + r.shortHigh + '%';
   if (profile.code === 'CA') return '~' + r.flat + '% on 50% inclusion (indicative)';
+  if (profile.code === 'AU') return '~' + r.flat + '% marginal · 50% discount if held > 1yr (indicative)';
+  if (profile.code === 'FI') return r.lower + '% to \u20ac' + (r.threshold || 30000).toLocaleString() + ' / ' + r.upper + '% above';
+  if (profile.code === 'DK') return '~' + r.flat + '% (indicative — really marginal income up to ~52%)';
+  if (profile.code === 'NO') return r.flat + '% (general asset, no 1.72 share uplift)';
   return '~' + (r.flat != null ? r.flat : 30) + '% (indicative)';
 }
 
@@ -2940,7 +3085,7 @@ async function exportCGTReport() {
       feesT = cgt.totalFees, allowUsedT = cgt.allowanceUsed, taxableT = cgt.taxableGain,
       basicT = cgt.taxBasic, higherT = cgt.taxHigher;
   if (!isUK) {
-    let g = 0, l = 0, fees = 0;
+    let g = 0, l = 0, fees = 0, includedT = 0;
     cgt.disposals.forEach(d => {
       const fx = cgt.taxFx[d.trade.id] || {};
       if (fx.feeTax != null) fees += fx.feeTax;
@@ -2948,11 +3093,19 @@ async function exportCGTReport() {
       const gt = fx.gainTax;
       if (gt == null) return;
       if (gt > 0) g += gt; else l += Math.abs(gt);
+      if (profile.perDisposalInclusion) {
+        const inc = (d.classification.inclusion != null) ? d.classification.inclusion : 1;
+        includedT += gt > 0 ? gt * inc : gt;
+      }
     });
     gainsT = g; lossesT = l; netT = g - l; feesT = fees;
     const incl = profile.inclusionRate != null ? profile.inclusionRate : 1;
     allowUsedT = _exemptionUsed(netT, profile);
-    taxableT = _applyExemption(netT, profile) * incl;
+    if (profile.perDisposalInclusion) {
+      taxableT = _applyExemption(Math.max(0, includedT), profile);
+    } else {
+      taxableT = _applyExemption(netT, profile) * incl;
+    }
     const r = profile.rates || {};
     const rate = (r.flat != null ? r.flat : 30) / 100;
     basicT = taxableT * rate; higherT = taxableT * rate;
@@ -2968,6 +3121,12 @@ async function exportCGTReport() {
       const tS = tot > 0 ? taxableT * (shortNet / tot) : 0;
       basicT = tL * (r.longLow / 100) + tS * (r.shortLow / 100);
       higherT = tL * (r.longHigh / 100) + tS * (r.shortHigh / 100);
+    } else if (profile.code === 'FI') {
+      const thr = r.threshold || 30000;
+      const lowPart = Math.min(taxableT, thr);
+      const highPart = Math.max(0, taxableT - thr);
+      const fiTax = lowPart * (r.lower / 100) + highPart * (r.upper / 100);
+      basicT = fiTax; higherT = fiTax;
     }
   }
 
@@ -3016,7 +3175,7 @@ async function exportCGTReport() {
   rows.push(['DISPOSALS']);
 
   // Holding-period columns appear for profiles that classify by holding period.
-  const showHP = (profile.code === 'US' || profile.code === 'DE');
+  const showHP = (profile.code === 'US' || profile.code === 'DE' || profile.code === 'AU');
   const header = ['Date', 'Item', 'Type', 'Qty', 'Platform',
     `Cost Basis (${cs})`, `Gross Proceeds (${cs})`, 'Platform Fee %', `Fee Amount (${cs})`, `Net Realised (${cs})`, `Gain/Loss (${cs})`];
   if (showHP) header.push('Acq. Date', 'Holding', 'Classification');
