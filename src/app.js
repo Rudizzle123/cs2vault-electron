@@ -2181,7 +2181,7 @@ function renderHoldings() {
     }
 
     return `<tr data-id="${item.id}" ${target && best && best >= target ? 'style="border-left:3px solid var(--green);"' : ''}>
-      <td style="text-align:center;"><input type="checkbox" class="bulk-cb" ${_bulkSel.has(item.id) ? 'checked' : ''} onclick="bulkToggleOne('${item.id}', this.checked)"></td>
+      <td class="bulk-col" style="text-align:center;"><input type="checkbox" class="bulk-cb" ${_bulkSel.has(item.id) ? 'checked' : ''} onclick="bulkToggleOne('${item.id}', this.checked)"></td>
       <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
       <td><span class="type-badge ${typeBadge[item.type]}">${typeLabels[item.type]}</span></td>
       <td class="mono">${item.qty}</td>
@@ -4100,6 +4100,20 @@ function deleteItem(id) {
 // BULK SELECT / EDIT / DELETE (v2.8.0)
 // ========================
 const _bulkSel = new Set();
+let _bulkMode = false;
+
+function toggleBulkMode(force) {
+  _bulkMode = (typeof force === 'boolean') ? force : !_bulkMode;
+  const table = document.getElementById('holdingsTable');
+  const btn = document.getElementById('bulkModeToggleBtn');
+  if (table) table.classList.toggle('bulk-mode', _bulkMode);
+  if (btn) {
+    btn.classList.toggle('btn-primary', _bulkMode);
+    btn.classList.toggle('btn-secondary', !_bulkMode);
+    btn.textContent = _bulkMode ? '✕ Done' : '☑ Select';
+  }
+  if (!_bulkMode) bulkClearSelection();
+}
 
 function bulkToggleOne(id, checked) {
   if (checked) _bulkSel.add(id); else _bulkSel.delete(id);

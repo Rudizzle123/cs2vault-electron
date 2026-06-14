@@ -247,6 +247,11 @@ tr:hover .row-actions{opacity:1;}
 .buff-ok{background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.25);}
 .buff-bad{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25);}
 
+/* ===== BULK SELECT COLUMN (hidden unless select mode is on) ===== */
+#holdingsTable .bulk-col{display:none;width:0;padding:0 !important;border:none !important;}
+#holdingsTable.bulk-mode .bulk-col{display:table-cell;width:28px;padding:7px 10px;}
+#holdingsTable thead .bulk-col{text-align:center;}
+
 /* ===== MULTI-PLATFORM COMPARE ===== */
 .plat-header{font-size:11px !important;letter-spacing:0.5px;white-space:nowrap;}
 .plat-cell{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:90px;}
@@ -498,6 +503,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     </div>
     <div class="toolbar" style="margin-bottom:8px;margin-top:-4px;">
       <button class="btn btn-secondary btn-sm" onclick="toggleHeatmap()" id="heatmapToggleBtn">⊞ Show Heatmap</button>
+      <button class="btn btn-secondary btn-sm" onclick="toggleBulkMode()" id="bulkModeToggleBtn">☑ Select</button>
       <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="priceChangeNote"></span>
     </div>
     <!-- Bulk action bar (v2.8.0) — appears when rows are selected -->
@@ -509,7 +515,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
     </div>
     <div class="table-wrap">
       <table id="holdingsTable"><thead><tr>
-        <th style="width:28px;text-align:center;"><input type="checkbox" id="bulkAllCb" onclick="bulkToggleAll(this.checked)" title="Select all visible rows"></th>
+        <th class="bulk-col" style="width:28px;text-align:center;"><input type="checkbox" id="bulkAllCb" onclick="bulkToggleAll(this.checked)" title="Select all visible rows"></th>
         <th onclick="sortTable('name')">Item ↕</th><th onclick="sortTable('type')">Type ↕</th>
         <th onclick="sortTable('qty')">Qty ↕</th><th onclick="sortTable('buyPrice')">Buy Price ↕</th>
         <th onclick="sortTable('buyDate')">Date ↕</th><th onclick="sortTable('totalInvested')">Total Invested ↕</th><th class="plat-header">🟠 CSFloat</th><th class="plat-header">🟦 Steam</th>
