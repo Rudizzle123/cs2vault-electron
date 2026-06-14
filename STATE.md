@@ -1,10 +1,17 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v3.3.3
+Last updated: June 2026 | Current version: v3.3.4
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.3.4 — Holdings checkbox hidden behind a Select toggle (UI) ✅
+The bulk-select checkbox column on the Holdings table was always visible, cluttering every row. It's now hidden by default and revealed only when bulk-selecting.
+
+- New **☑ Select** button in the Holdings toolbar (next to *Show Heatmap*) toggles a `.bulk-mode` class on `#holdingsTable`. Off by default → the checkbox column (header `bulkAllCb` + per-row `.bulk-cb`, both now tagged `.bulk-col`) is collapsed via CSS (`display:none`, zero width/padding). On → checkboxes appear and the button flips to **✕ Done**
+- Exiting select mode calls `bulkClearSelection()`, so leaving the mode drops any selection and hides the bulk action bar. Selecting rows / select-all / Bulk Edit / Delete / Clear are otherwise unchanged
+- Pure UI: no data-model, pricing, or tax-engine changes. `_bulkMode` state lives in app.js alongside the existing `_bulkSel`. `node -c src/app.js` clean
 
 ### v3.3.3 — Finland Proceeds-Cliff Fix + PL/US Disclaimer Corrections (tax-engine correctness) ✅
 Acts on the primary-source verification pass (`09-tax-rules-verification.md`, 14 Jun 2026), which checked all 10 jurisdictions against the actual government tax authorities. **Engine + disclaimers only — the gating layer (`FEATURES`/`isPro()`) and the payments layer (v3.3.0) are untouched.** Back-compat return shape of `calculateCGT()` preserved. The verification found exactly **one genuine under-statement bug (Finland)**; the rest were wording/scope, and two flagged "criticals" (Norway 22% no-1.72-uplift, Canada 50% inclusion) were confirmed **already correct** in the code.
