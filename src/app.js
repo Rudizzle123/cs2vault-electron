@@ -97,6 +97,221 @@ function loadHistory() { try { return JSON.parse(window._store[HISTORY_KEY]) || 
 function saveHistory(d) { window._storeSet(HISTORY_KEY, JSON.stringify(d)); }
 
 // ========================
+// ACTIVITY LOG (v3.4.0)
+// A record of manual entries — add / edit / delete on holdings + play skins —
+// so a fat-fingered price or qty can be spotted after the fact. Read-only,
+// newest-first, capped + pruned. Sells are NOT logged (Trade History covers them).
+// ========================
+const ACTIVITY_LOG_KEY = 'cs2vault_activity_log';
+const ACTIVITY_LOG_MAX = 500;
+
+function loadActivityLog() { try { return JSON.parse(window._store[ACTIVITY_LOG_KEY]) || []; } catch { return []; } }
+function saveActivityLog(d) { window._storeSet(ACTIVITY_LOG_KEY, JSON.stringify(d)); }
+
+// Snapshot just the user-meaningful fields of a holding/skin for the log.
+function _logSnapshot(o) {
+  if (!o) return {};
+  return {
+    name: o.name, type: o.type, qty: o.qty,
+    buyPrice: o.buyPrice,
+    origCurrency: o.origCurrency || 'GBP',
+    origAmount: (o.origAmount != null ? o.origAmount : o.buyPrice),
+    buyDate: o.buyDate || '',
+    marketHash: o.marketHash || ''
+  };
+}
+
+// Compute a human-readable before -> after diff for an edit.
+function _logDiff(before, after) {
+  const fields = [
+    ['name', 'Name'], ['type', 'Type'], ['qty', 'Qty'],
+    ['origAmount', 'Buy price'], ['origCurrency', 'Currency'],
+    ['buyDate', 'Buy date'], ['marketHash', 'Market hash']
+  ];
+  const out = [];
+  fields.forEach(([k, label]) => {
+    const b = before ? before[k] : undefined;
+    const a = after ? after[k] : undefined;
+    if (String(b == null ? '' : b) !== String(a == null ? '' : a)) {
+      out.push({ field: label, from: (b == null ? '' : b), to: (a == null ? '' : a) });
+    }
+  });
+  return out;
+}
+
+// action: 'add' | 'edit' | 'delete'; scope: 'holding' | 'skin'
+function logActivity(action, scope, snapshot, diff) {
+  try {
+    const log = loadActivityLog();
+    log.push({
+      id: uid(),
+      ts: Date.now(),
+      action: action,
+      scope: scope,
+      item: snapshot || {},
+      diff: diff || null
+    });
+    // Newest-first storage; prune to cap.
+    log.sort((a, b) => b.ts - a.ts);
+    if (log.length > ACTIVITY_LOG_MAX) log.length = ACTIVITY_LOG_MAX;
+    saveActivityLog(log);
+  } catch (e) { console.error('[ActivityLog] write failed', e); }
+}
+
+let _activityFilter = '';
+function openActivityLog() {
+  _activityFilter = '';
+  const search = document.getElementById('activitySearch');
+  if (search) search.value = '';
+  renderActivityLog();
+  openModal('activityLogModal');
+}
+
+function _fmtActivityTime(ts) {
+  const d = new Date(ts);
+  const pad = n => (n < 10 ? '0' + n : '' + n);
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function _activityMoney(it) {
+  // Show the originally-entered amount + currency (that's what a manual-entry
+  // mistake actually looks like), falling back to the GBP buyPrice.
+  const ccy = it.origCurrency || 'GBP';
+  const amt = (it.origAmount != null ? it.origAmount : it.buyPrice);
+  if (amt == null) return '';
+  const sym = ccy === 'GBP' ? '£' : '';
+  return sym + Number(amt).toFixed(2) + (ccy === 'GBP' ? '' : ' ' + ccy);
+}
+
+function renderActivityLog() {
+  const body = document.getElementById('activityLogBody');
+  const empty = document.getElementById('activityLogEmpty');
+  if (!body) return;
+  body.textContent = '';
+  let log = loadActivityLog();
+  const q = (_activityFilter || '').toLowerCase();
+  if (q) log = log.filter(e => {
+    const it = e.item || {};
+    return (it.name || '').toLowerCase().includes(q) ||
+           (it.marketHash || '').toLowerCase().includes(q) ||
+           (e.action || '').toLowerCase().includes(q) ||
+           (e.scope || '').toLowerCase().includes(q);
+  });
+  if (!log.length) {
+    if (empty) {
+      empty.style.display = 'block';
+      empty.textContent = _activityFilter
+        ? 'No log entries match "' + _activityFilter + '".'
+        : 'No activity logged yet. Adds, edits and deletes will appear here from now on.';
+    }
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const ACTION_META = {
+    add:    { label: 'ADDED',   color: 'var(--green, #22c55e)' },
+    edit:   { label: 'EDITED',  color: '#3b82f6' },
+    delete: { label: 'DELETED', color: 'var(--red, #ef4444)' }
+  };
+
+  log.forEach(e => {
+    const it = e.item || {};
+    const meta = ACTION_META[e.action] || { label: (e.action || '').toUpperCase(), color: 'var(--text3)' };
+
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;';
+
+    // Left: action badge + scope
+    const left = document.createElement('div');
+    left.style.cssText = 'flex:0 0 88px;display:flex;flex-direction:column;gap:3px;';
+    const badge = document.createElement('span');
+    badge.textContent = meta.label;
+    badge.style.cssText = 'font-family:\'Share Tech Mono\',monospace;font-size:10px;font-weight:700;letter-spacing:1px;color:' + meta.color + ';';
+    const scope = document.createElement('span');
+    scope.textContent = e.scope === 'skin' ? 'Play Skin' : 'Holding';
+    scope.style.cssText = 'font-size:10px;color:var(--text3);';
+    left.appendChild(badge); left.appendChild(scope);
+
+    // Middle: name + details
+    const mid = document.createElement('div');
+    mid.style.cssText = 'flex:1;min-width:0;';
+    const nameEl = document.createElement('div');
+    nameEl.textContent = it.name || '(unnamed)';
+    nameEl.style.cssText = 'font-weight:600;font-size:13px;margin-bottom:2px;word-break:break-word;';
+    mid.appendChild(nameEl);
+
+    const detail = document.createElement('div');
+    detail.style.cssText = 'font-family:\'Share Tech Mono\',monospace;font-size:11px;color:var(--text2,#9ca3af);';
+    const bits = [];
+    if (it.qty != null) bits.push('Qty ' + it.qty);
+    const money = _activityMoney(it);
+    if (money) bits.push('@ ' + money);
+    if (it.type) bits.push(it.type);
+    if (it.buyDate) bits.push(it.buyDate);
+    detail.textContent = bits.join('  ·  ');
+    mid.appendChild(detail);
+
+    // Edit diff lines
+    if (e.action === 'edit' && e.diff && e.diff.length) {
+      e.diff.forEach(d => {
+        const dl = document.createElement('div');
+        dl.style.cssText = 'font-family:\'Share Tech Mono\',monospace;font-size:11px;color:var(--text3);margin-top:2px;';
+        const fromTxt = (d.from === '' || d.from == null) ? '(empty)' : String(d.from);
+        const toTxt = (d.to === '' || d.to == null) ? '(empty)' : String(d.to);
+        dl.textContent = d.field + ':  ' + fromTxt + '  →  ' + toTxt;
+        mid.appendChild(dl);
+      });
+    }
+
+    // Right: timestamp
+    const right = document.createElement('div');
+    right.style.cssText = 'flex:0 0 auto;font-family:\'Share Tech Mono\',monospace;font-size:10px;color:var(--text3);white-space:nowrap;text-align:right;';
+    right.textContent = _fmtActivityTime(e.ts);
+
+    row.appendChild(left); row.appendChild(mid); row.appendChild(right);
+    body.appendChild(row);
+  });
+}
+
+function filterActivityLog(v) {
+  _activityFilter = (v || '').trim();
+  renderActivityLog();
+}
+
+function clearActivityLog() {
+  const log = loadActivityLog();
+  if (!log.length) { toast('Log is already empty', 'info'); return; }
+  if (!confirm('Clear the entire activity log (' + log.length + ' entries)?\n\nThis only erases the log — it does NOT touch your holdings or play skins.')) return;
+  saveActivityLog([]);
+  renderActivityLog();
+  toast('Activity log cleared', 'info');
+}
+
+async function exportActivityLog() {
+  const log = loadActivityLog();
+  if (!log.length) { toast('Nothing to export', 'info'); return; }
+  const rows = [['When', 'Action', 'Scope', 'Name', 'Type', 'Qty', 'Buy Price', 'Currency', 'Buy Date', 'Market Hash', 'Changes']];
+  log.forEach(e => {
+    const it = e.item || {};
+    const changes = (e.action === 'edit' && e.diff && e.diff.length)
+      ? e.diff.map(d => d.field + ': ' + (d.from === '' ? '(empty)' : d.from) + ' -> ' + (d.to === '' ? '(empty)' : d.to)).join('; ')
+      : '';
+    rows.push([
+      _fmtActivityTime(e.ts), e.action, e.scope,
+      it.name || '', it.type || '', (it.qty != null ? it.qty : ''),
+      (it.origAmount != null ? it.origAmount : (it.buyPrice != null ? it.buyPrice : '')),
+      it.origCurrency || 'GBP', it.buyDate || '', it.marketHash || '', changes
+    ]);
+  });
+  const csvStr = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  if (typeof window.cs2vault !== 'undefined') {
+    const result = await window.cs2vault.exportSave('cs2vault_activity_log.csv', csvStr);
+    if (result && result.saved) toast('Saved to ' + result.filePath, 'success');
+  }
+}
+
+// ========================
 // PRICE HISTORY LOG
 // ========================
 const PRICE_LOG_KEY = 'cs2vault_price_log';
@@ -4073,15 +4288,20 @@ async function saveItem() {
   if (editId) {
     const item = holdings.find(h => h.id === editId);
     if (item) {
+      const before = _logSnapshot(item);
       Object.assign(item, obj);
       // Editing a holding rewrites it to a single lot at the entered cost
       // (an explicit manual correction collapses prior lot structure).
       item.lots = [ makeLot(obj.qty, obj.buyPrice, buyDate, ccy, fx.fxRate, buyPriceEntered) ];
+      const after = _logSnapshot(item);
+      const diff = _logDiff(before, after);
+      if (diff.length) logActivity('edit', 'holding', after, diff);
     }
   } else {
     const newItem = { id: uid(), ...obj, prices: null };
     newItem.lots = [ makeLot(obj.qty, obj.buyPrice, buyDate, ccy, fx.fxRate, buyPriceEntered) ];
     holdings.push(newItem);
+    logActivity('add', 'holding', _logSnapshot(newItem), null);
   }
   saveData(holdings); renderHoldings(); updateStats(); closeModal('itemModal');
   toast(editId ? 'Item updated' : 'Item added!', 'success');
@@ -4090,8 +4310,10 @@ function deleteItem(id) {
   if (!confirm('Delete this holding?')) return;
   // Atomic: re-read storage before mutating (v2.4.3 pattern)
   const fresh = loadData();
+  const removed = fresh.find(h => h.id === id);
   holdings = fresh.filter(h => h.id !== id);
   saveData(holdings);
+  if (removed) logActivity('delete', 'holding', _logSnapshot(removed), null);
   _bulkSel.delete(id);
   renderHoldings(); updateStats(); updateBulkBar(); toast('Removed', 'info');
 }
@@ -4166,8 +4388,10 @@ function bulkDeleteSelected() {
   if (!confirm('Delete ' + n + ' holding' + (n !== 1 ? 's' : '') + ' (' + fmtMoney(invested, 2) + ' invested)?\n\n' + preview + '\n\nThis does NOT record any sales — records are simply removed.')) return;
   // Atomic: re-read storage, filter, write back
   const fresh = loadData();
+  const removed = fresh.filter(h => _bulkSel.has(h.id));
   holdings = fresh.filter(h => !_bulkSel.has(h.id));
   saveData(holdings);
+  removed.forEach(h => logActivity('delete', 'holding', _logSnapshot(h), null));
   _bulkSel.clear();
   renderHoldings(); updateStats(); updateBulkBar();
   toast(n + ' holdings deleted', 'info');
@@ -4193,9 +4417,15 @@ function saveBulkEdit() {
   let touched = 0;
   fresh.forEach(h => {
     if (!_bulkSel.has(h.id)) return;
+    const before = _logSnapshot(h);
+    const beforeTuf = !!h.isTuf, beforeCat = h.category || '';
     if (type) h.type = type;
     if (tuf) h.isTuf = (tuf === 'yes');
     if (cat) { if (cat === '__clear__') delete h.category; else h.category = cat; }
+    const diff = _logDiff(before, _logSnapshot(h));
+    if (tuf && beforeTuf !== !!h.isTuf) diff.push({ field: 'TUF', from: beforeTuf ? 'yes' : 'no', to: h.isTuf ? 'yes' : 'no' });
+    if (cat && beforeCat !== (h.category || '')) diff.push({ field: 'Category', from: beforeCat || '(none)', to: h.category || '(none)' });
+    if (diff.length) logActivity('edit', 'holding', _logSnapshot(h), diff);
     touched++;
   });
   saveData(fresh);
@@ -5102,9 +5332,15 @@ async function saveSkin() {
   // Re-read storage to stay safe against a concurrent price refresh.
   const live = loadSkins() || skins;
   if (editId) {
+    const before = _logSnapshot(live.find(s => s.id === editId));
     skins = live.map(s => s.id === editId ? { ...s, ...obj } : s);
+    const after = _logSnapshot(skins.find(s => s.id === editId));
+    const diff = _logDiff(before, after);
+    if (diff.length) logActivity('edit', 'skin', after, diff);
   } else {
-    skins = [...live, { id: uid(), ...obj, prices: null }];
+    const newSkin = { id: uid(), ...obj, prices: null };
+    skins = [...live, newSkin];
+    logActivity('add', 'skin', _logSnapshot(newSkin), null);
   }
   saveSkins(skins); renderSkins(); updateStats(); closeModal('skinModal');
   toast(editId ? 'Play skin updated' : 'Play skin added!', 'success');
@@ -5115,8 +5351,10 @@ function deleteSkin(id) {
   if (!skin) return;
   if (!confirm(`Delete "${skin.name}" from Play Skins? This does not record a sale.`)) return;
   const live = loadSkins() || skins;
+  const removed = live.find(s => s.id === id);
   skins = live.filter(s => s.id !== id);
   saveSkins(skins); renderSkins(); updateStats();
+  if (removed) logActivity('delete', 'skin', _logSnapshot(removed), null);
   toast('Play skin deleted', 'success');
 }
 
@@ -6376,6 +6614,7 @@ async function exportAllData() {
     licence:         window._store['cs2vault_licence'] || null,
     licenceState:    window._store['cs2vault_licence_state'] || null,
     trialStart:      window._store['cs2vault_trial_start'] || null,
+    activityLog:     window._store['cs2vault_activity_log'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -6390,7 +6629,7 @@ function clearAllData() {
   // deliberately NOT cleared here — wiping a paid licence on "clear data" would
   // lock a paying customer out of a purchase they made. Use Settings → Remove
   // licence to sign out of Pro on this machine.
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
