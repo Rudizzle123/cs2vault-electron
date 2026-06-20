@@ -4249,6 +4249,7 @@ async function saveTopup() {
   // The derived buyPrice/qty are recomputed from all lots so the UI is identical,
   // but the lot history is preserved for accurate Section 104 pooling.
   ensureLots(target);
+  const _topupBefore = _logSnapshot(target);
   target.lots.push(makeLot(addQty, addPrice, date, ccy, fx.fxRate, addPriceEntered));
   recalcHoldingFromLots(target);
   const newAvg = target.buyPrice;
@@ -4260,9 +4261,10 @@ async function saveTopup() {
 
   holdings = fresh;
   saveData(holdings);
+  const _topupDiff = _logDiff(_topupBefore, _logSnapshot(target));
+  logActivity('edit', 'holding', _logSnapshot(target),
+    _topupDiff.length ? _topupDiff : [{ field: 'Top-up', from: '', to: '+' + addQty + ' @ ' + fmtMoney(addPrice, 3) }]);
   renderHoldings();
-  updateStats();
-  closeModal('topupModal');
   toast(`Added ${addQty.toLocaleString()} × ${target.name} @ ${fmtMoney(addPrice, 3)} — new avg ${fmtMoney(newAvg, 3)}`, 'success');
 }
 
@@ -7198,8 +7200,10 @@ async function importCSV() {
       marketHash: hashIdx >= 0 ? (row[hashIdx] || '') : '',
       notes: notesIdx >= 0 ? (row[notesIdx] || '') : 'Imported from CSV',
       category: catIdx >= 0 ? (row[catIdx] || '') : '',
+      origCurrency: 'GBP', origAmount: buyPrice, fxRate: 1,
       prices: null,
     };
+    item.lots = [ makeLot(item.qty, item.buyPrice, item.buyDate, 'GBP', 1, item.buyPrice) ];
     // Check for duplicates
     if (!holdings.some(h => h.name === item.name && h.buyPrice === item.buyPrice && h.qty === item.qty)) {
       items.push(item);
@@ -7217,6 +7221,7 @@ async function importCSV() {
 
   holdings.push(...items);
   saveData(holdings);
+  items.forEach(it => logActivity('add', 'holding', _logSnapshot(it), null));
   renderHoldings();
   updateStats();
   toast(`Imported ${items.length} item(s)!`, 'success');
