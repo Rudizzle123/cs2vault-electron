@@ -4760,6 +4760,18 @@ function _valueRangeSlice(hist) {
   return sliced;
 }
 
+// Build the "Invested £X · Unrealised P&L £Y" line shown under the value header.
+// P&L is colour-coded (green up / red down) with a ▲/▼ arrow.
+function _valueSplitHtml(invested, value) {
+  const pnl = (value || 0) - (invested || 0);
+  const pos = pnl >= 0;
+  const pnlCol = pos ? 'var(--green)' : 'var(--red)';
+  const arrow = pos ? '\u25B2' : '\u25BC';
+  return '<span class="vc-split-invested">Invested ' + fmtMoneyLoc(invested || 0, 0) + '</span>'
+    + '&nbsp;&nbsp;&middot;&nbsp;&nbsp;'
+    + '<span class="vc-split-pnl" style="color:' + pnlCol + ';">' + arrow + ' Unrealised P&amp;L ' + (pos ? '+' : '\u2212') + fmtMoneyLoc(Math.abs(pnl), 0) + '</span>';
+}
+
 function renderValueChart() {
   const hist = loadValueHistory().sort((a, b) => a.date.localeCompare(b.date));
   const headEl   = document.getElementById('valueChartTotal');
@@ -4772,10 +4784,10 @@ function renderValueChart() {
   if (hist.length < 2) {
     // Not enough points yet — show a friendly note, still display current value.
     if (valueChart) { valueChart.destroy(); valueChart = null; }
-    const split = holdings.length ? computeValueSplit() : { value: 0, steam: 0, csfloat: 0 };
+    const split = holdings.length ? computeValueSplit() : { value: 0, steam: 0, csfloat: 0, invested: 0 };
     if (headEl)  headEl.textContent = fmtMoneyLoc(split.value, 0);
     if (deltaEl) { deltaEl.textContent = ''; }
-    if (splitEl) splitEl.innerHTML = '<span class="vc-split-steam">&#9632; Steam ' + fmtMoneyLoc(split.steam, 0) + '</span>&nbsp;&nbsp;<span class="vc-split-csfloat">&#9632; CSFloat ' + fmtMoneyLoc(split.csfloat, 0) + '</span>';
+    if (splitEl) splitEl.innerHTML = _valueSplitHtml(split.invested || 0, split.value || 0);
     if (emptyEl) emptyEl.style.display = 'block';
     canvas.style.display = 'none';
     return;
@@ -4801,7 +4813,7 @@ function renderValueChart() {
     deltaEl.style.color = up ? 'var(--green)' : 'var(--red)';
   }
   if (splitEl) {
-    splitEl.innerHTML = '<span class="vc-split-steam">&#9632; Steam ' + fmtMoneyLoc(latest.steam || 0, 0) + '</span>&nbsp;&nbsp;<span class="vc-split-csfloat">&#9632; CSFloat ' + fmtMoneyLoc(latest.csfloat || 0, 0) + '</span>';
+    splitEl.innerHTML = _valueSplitHtml(latest.invested || 0, latest.value || 0);
   }
 
   const ctx = canvas.getContext('2d');
