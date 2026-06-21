@@ -1839,32 +1839,57 @@ async function fetchSteamPrices(marketHashName) {
   const encoded = encodeURIComponent(marketHashName);
   const gbpRate = await getGBPRate();
 
-  // Try priceoverview first (currency=2 = GBP, no conversion needed)
+  // Try priceoverview first (currency=2 = GBP, no conversion needed).
+  // priceoverview is the RELIABLE path for cheap high-volume stickers (Elemental Craft
+  // pack etc.) — their listing-HTML pages are huge and don't embed the var line1 history
+  // block the HTML parser needs, so for them the HTML fallback returns "no price history"
+  // and is NOT a real safety net. On a bulk refresh Steam rate-limits (429) the most-
+  // requested cheap items first, so we retry priceoverview with backoff before giving up,
+  // and on a PERSISTENT 429 we return null (no HTML attempt) so the bulk lane's adaptive
+  // backoff widens the gap and the item gets a clean shot on the next pass.
+  let overview429 = false;
   try {
     const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=2&market_hash_name=${encoded}`;
-    const res = await window.cs2vault.fetch(url);
-    res.json = () => Promise.resolve(JSON.parse(res.body)); res.ok = res.status >= 200 && res.status < 300;
-    console.log(`[Steam] priceoverview ${res.status} for ${marketHashName}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success) {
-        const parseGBP = s => {
-          if (!s) return null;
-          const cleaned = s.replace(/[^0-9.]/g, '');
-          const val = parseFloat(cleaned);
-          return isNaN(val) ? null : val;
-        };
-        const lowest   = parseGBP(data.lowest_price);
-        const lastSold = parseGBP(data.median_price);
-        console.log(`[Steam] priceoverview lowest=£${lowest?.toFixed(4)}, median=£${lastSold?.toFixed(4)}`);
-        if (lowest != null || lastSold != null) {
-          return { lowest, lastSold, avg7d: null, source: 'steam' };
-        }
-        console.log(`[Steam] priceoverview no prices for ${marketHashName}, trying HTML fallback`);
+    const parseGBP = s => {
+      if (!s) return null;
+      const cleaned = s.replace(/[^0-9.]/g, '');
+      const val = parseFloat(cleaned);
+      return isNaN(val) ? null : val;
+    };
+    const STEAM_429_BACKOFF = [4000, 8000];   // waits before retry attempt 2 and 3
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        console.warn(`[Steam] priceoverview rate limited for ${marketHashName}, waiting ${STEAM_429_BACKOFF[attempt-1]}ms (retry ${attempt})...`);
+        await sleep(STEAM_429_BACKOFF[attempt - 1]);
       }
+      const res = await window.cs2vault.fetch(url);
+      res.json = () => Promise.resolve(JSON.parse(res.body)); res.ok = res.status >= 200 && res.status < 300;
+      console.log(`[Steam] priceoverview ${res.status} for ${marketHashName}${attempt ? ` (attempt ${attempt+1})` : ''}`);
+      if (res.status === 429) { overview429 = true; _steamRateLimited = true; continue; }
+      overview429 = false;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          const lowest   = parseGBP(data.lowest_price);
+          const lastSold = parseGBP(data.median_price);
+          console.log(`[Steam] priceoverview lowest=£${lowest?.toFixed(4)}, median=£${lastSold?.toFixed(4)}`);
+          if (lowest != null || lastSold != null) {
+            return { lowest, lastSold, avg7d: null, source: 'steam' };
+          }
+          console.log(`[Steam] priceoverview no prices for ${marketHashName}, trying HTML fallback`);
+        }
+      }
+      break;   // non-429, non-success → fall through to HTML fallback below
     }
   } catch(e) {
     console.warn(`[Steam] priceoverview failed for ${marketHashName}:`, e.message);
+  }
+
+  // Persistent 429 on priceoverview → don't burn the (throttled, unreliable-for-these-items)
+  // HTML path; return null so the bulk lane backs off and retries cleanly next pass.
+  if (overview429) {
+    console.warn(`[Steam] priceoverview still rate limited for ${marketHashName} after retries — skipping HTML, will retry next refresh`);
+    return null;
   }
 
   // Fallback: parse the Steam market listing HTML page.
@@ -1929,9 +1954,12 @@ async function fetchSteamLane(item) {
     // Fix known capitalisation mismatches between CSFloat and Steam naming
     steamHash = steamHash.replace('From the Deep', 'From The Deep');
     steamHash = steamHash.replace('| Axia', '| AXIA');
+    _steamRateLimited = false;
     let stm = await fetchSteamPrices(steamHash);
-    // If no result and the hash ends with a variant suffix, try stripping it
-    if (!stm && item.type === 'sticker') {
+    // If no result and the hash ends with a variant suffix, try stripping it —
+    // but NOT if the null came from a 429 (the stripped hash would just trigger
+    // another rate-limit storm; the original hash is fine, Steam is just throttling).
+    if (!stm && !_steamRateLimited && item.type === 'sticker') {
       const stripped = steamHash.replace(/\s*\((Holo|Glitter|Foil|Lenticular)\)\s*$/, '').trim();
       if (stripped !== steamHash) {
         console.log(`[MultiPrice] Retrying Steam with stripped hash: ${stripped}`);
@@ -2017,6 +2045,7 @@ function updateRefreshScopeLabel() {
 const FRESH_TTL_MS = 30 * 60 * 1000;   // prices younger than this are skipped on refresh
 const CSFLOAT_CONCURRENCY = 6;          // parallel CSFloat requests
 const STEAM_BASE_DELAY_MS = 1500;       // between Steam items; doubles on failure up to 6s
+let _steamRateLimited = false;          // set by fetchSteamPrices on a 429; lane widens its delay
 let _refreshBusy = false;               // guards manual vs auto refresh collisions
 
 function isPriceFresh(item) {
@@ -2082,10 +2111,14 @@ async function runTwoLaneRefresh(items, opts = {}) {
     for (let i = 0; i < work.length; i++) {
       const it = work[i];
       const st = state.get(it.id);
+      _steamRateLimited = false;
       try { st.steam = await fetchSteamLane(it); } catch(e) { /* lane already logs */ }
       st.stDone = true;
       finalize(st);
-      delay = st.steam ? (opts.steamDelayMs || STEAM_BASE_DELAY_MS) : Math.min(delay * 2, 6000);
+      // Back off on a failed lookup OR a detected 429 (even if the retry rescued it) —
+      // a 429 means Steam is throttling, so widen the gap before the next item.
+      const ok = st.steam && !_steamRateLimited;
+      delay = ok ? (opts.steamDelayMs || STEAM_BASE_DELAY_MS) : Math.min(delay * 2, 6000);
       if (i < work.length - 1) await sleep(delay);
     }
   })();
