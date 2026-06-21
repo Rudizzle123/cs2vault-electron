@@ -2250,6 +2250,9 @@ async function refreshAllPrices() {
   captureHeatmapSnapshot();
   if (heatmapVisible) renderHeatmap();
   updateStats();
+  // Refresh updated today's prices — re-record today's value point so the value
+  // chart reflects the latest figures (deduped per day, latest write wins).
+  if (res.updated > 0) { try { recordValueSnapshot(); } catch(e) {} }
   const failed = res.failed + res.noHash;
   if (res.updated > 0) {
     const skipNote = skippedFresh > 0 ? ` (${skippedFresh} skipped, <30m fresh)` : '';
@@ -4664,6 +4667,219 @@ function saveManualPrice() {
 
 // ========================
 // ========================
+// PORTFOLIO VALUE HISTORY (Skin Ledger-style value-over-time chart)
+// ========================
+// Daily value-only points so the value chart looks dense like Skin Ledger,
+// rather than the monthly category snapshots used below for benchmarking.
+// One point per calendar day (last write of the day wins), capped + pruned.
+const VALUE_HISTORY_KEY = 'cs2vault_value_history';
+const VALUE_HISTORY_MAX = 730;          // ~2 years of daily points
+let valueChart = null;
+let currentValueRange = 365;            // default range in days; 0 = All
+
+function loadValueHistory() { try { return JSON.parse(window._store[VALUE_HISTORY_KEY]) || []; } catch { return []; } }
+function saveValueHistory(d) { window._storeSet(VALUE_HISTORY_KEY, JSON.stringify(d)); }
+
+// Compute today's portfolio value split by the platform that drives each item's
+// P&L price (Steam-priced items vs CSFloat-priced items), matching the
+// Steam / CSFloat split shown under the value header.
+function computeValueSplit() {
+  let steam = 0, csfloat = 0, invested = 0;
+  holdings.forEach(h => {
+    invested += (h.buyPrice || 0) * (h.qty || 0);
+    const best = getBestPrice(h);
+    if (best == null) return;
+    const v = best * (h.qty || 0);
+    if (getPricingPlatform(h) === 'steam') steam += v; else csfloat += v;
+  });
+  return { steam: +steam.toFixed(2), csfloat: +csfloat.toFixed(2), value: +(steam + csfloat).toFixed(2), invested: +invested.toFixed(2) };
+}
+
+// Record one daily value point. Dedupes per calendar day (latest write wins),
+// only writes when at least one holding has a live price (avoids logging a £0
+// point before prices have loaded on launch).
+function recordValueSnapshot() {
+  if (!holdings.length) return;
+  const split = computeValueSplit();
+  if (split.value <= 0) return;
+  const hist = loadValueHistory();
+  const today = todayStr();
+  const existing = hist.find(p => p.date === today);
+  const point = { date: today, steam: split.steam, csfloat: split.csfloat, value: split.value, invested: split.invested };
+  if (existing) { Object.assign(existing, point); }
+  else { hist.push(point); }
+  hist.sort((a, b) => a.date.localeCompare(b.date));
+  if (hist.length > VALUE_HISTORY_MAX) hist.splice(0, hist.length - VALUE_HISTORY_MAX);
+  saveValueHistory(hist);
+}
+
+// Seed the value series from existing monthly category snapshots so the long
+// ranges aren't empty on first run. Each historical/auto/manual snapshot's total
+// value becomes a value point (no platform split available for those — all
+// attributed to value only). Runs once; never overwrites real daily points.
+function seedValueHistoryFromSnapshots() {
+  const hist = loadValueHistory();
+  if (hist.some(p => p.seeded)) return;             // already seeded
+  const haveDates = new Set(hist.map(p => p.date));
+  const snaps = loadSnapshots();
+  if (!snaps.length) return;
+  let added = 0;
+  snaps.forEach(s => {
+    if (haveDates.has(s.date)) return;
+    const cats = s.categories || {};
+    const value = Object.values(cats).reduce((a, v) => a + (v.value || 0), 0);
+    const invested = Object.values(cats).reduce((a, v) => a + (v.invested || 0), 0);
+    if (value <= 0) return;
+    hist.push({ date: s.date, steam: 0, csfloat: 0, value: +value.toFixed(2), invested: +invested.toFixed(2), seeded: true });
+    added++;
+  });
+  if (added) { hist.sort((a, b) => a.date.localeCompare(b.date)); saveValueHistory(hist); }
+}
+
+function pruneValueHistory() {
+  const hist = loadValueHistory();
+  if (hist.length > VALUE_HISTORY_MAX) { hist.splice(0, hist.length - VALUE_HISTORY_MAX); saveValueHistory(hist); }
+}
+
+function setValueRange(days, btn) {
+  currentValueRange = days;
+  document.querySelectorAll('.value-range-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderValueChart();
+}
+
+// Slice the value history to the active range (in days; 0 = all).
+function _valueRangeSlice(hist) {
+  if (!currentValueRange || currentValueRange <= 0) return hist;
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - currentValueRange);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+  const sliced = hist.filter(p => p.date >= cutoffStr);
+  // If the range is so short nothing falls in it but we have data, show the last
+  // 2 points so the chart isn't blank.
+  if (sliced.length < 2 && hist.length >= 2) return hist.slice(-2);
+  return sliced;
+}
+
+function renderValueChart() {
+  const hist = loadValueHistory().sort((a, b) => a.date.localeCompare(b.date));
+  const headEl   = document.getElementById('valueChartTotal');
+  const deltaEl  = document.getElementById('valueChartDelta');
+  const splitEl  = document.getElementById('valueChartSplit');
+  const emptyEl  = document.getElementById('valueChartEmpty');
+  const canvas   = document.getElementById('valueChart');
+  if (!canvas) return;
+
+  if (hist.length < 2) {
+    // Not enough points yet — show a friendly note, still display current value.
+    if (valueChart) { valueChart.destroy(); valueChart = null; }
+    const split = holdings.length ? computeValueSplit() : { value: 0, steam: 0, csfloat: 0 };
+    if (headEl)  headEl.textContent = fmtMoneyLoc(split.value, 0);
+    if (deltaEl) { deltaEl.textContent = ''; }
+    if (splitEl) splitEl.innerHTML = '<span class="vc-split-steam">&#9632; Steam ' + fmtMoneyLoc(split.steam, 0) + '</span>&nbsp;&nbsp;<span class="vc-split-csfloat">&#9632; CSFloat ' + fmtMoneyLoc(split.csfloat, 0) + '</span>';
+    if (emptyEl) emptyEl.style.display = 'block';
+    canvas.style.display = 'none';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+  canvas.style.display = 'block';
+
+  const slice = _valueRangeSlice(hist);
+  const labels = slice.map(p => p.date);
+  const values = slice.map(p => +(p.value || 0).toFixed(2));
+
+  // Header: current (latest overall) value + delta over the visible range
+  const latest = hist[hist.length - 1];
+  const rangeStartVal = slice[0].value || 0;
+  const rangeEndVal   = slice[slice.length - 1].value || 0;
+  const delta = rangeEndVal - rangeStartVal;
+  const deltaPct = rangeStartVal > 0 ? (delta / rangeStartVal * 100) : 0;
+  const up = delta >= 0;
+
+  if (headEl) headEl.textContent = fmtMoneyLoc(latest.value, 0);
+  if (deltaEl) {
+    deltaEl.textContent = (up ? '+' : '−') + fmtMoneyLoc(Math.abs(delta), 0) + ' (' + (up ? '+' : '−') + Math.abs(deltaPct).toFixed(1) + '%)';
+    deltaEl.style.color = up ? 'var(--green)' : 'var(--red)';
+  }
+  if (splitEl) {
+    splitEl.innerHTML = '<span class="vc-split-steam">&#9632; Steam ' + fmtMoneyLoc(latest.steam || 0, 0) + '</span>&nbsp;&nbsp;<span class="vc-split-csfloat">&#9632; CSFloat ' + fmtMoneyLoc(latest.csfloat || 0, 0) + '</span>';
+  }
+
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 320);
+  if (up) {
+    grad.addColorStop(0, 'rgba(34,197,94,0.28)');
+    grad.addColorStop(0.55, 'rgba(34,197,94,0.07)');
+    grad.addColorStop(1, 'rgba(34,197,94,0.0)');
+  } else {
+    grad.addColorStop(0, 'rgba(239,68,68,0.22)');
+    grad.addColorStop(0.55, 'rgba(239,68,68,0.06)');
+    grad.addColorStop(1, 'rgba(239,68,68,0.0)');
+  }
+  const lineCol = up ? '#22c55e' : '#ef4444';
+
+  if (valueChart) valueChart.destroy();
+  valueChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Portfolio Value',
+        data: values,
+        borderColor: lineCol,
+        backgroundColor: grad,
+        borderWidth: 2,
+        tension: 0.3,
+        fill: true,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointBackgroundColor: lineCol,
+        pointHoverBackgroundColor: '#fff',
+        pointHoverBorderColor: lineCol,
+        pointHoverBorderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        annotation: {},
+        tooltip: {
+          backgroundColor: 'rgba(8,12,8,0.96)',
+          borderColor: 'rgba(30,61,45,0.6)',
+          borderWidth: 1,
+          padding: 10,
+          cornerRadius: 8,
+          titleFont: { family: "'Share Tech Mono', monospace", size: 11 },
+          bodyFont: { family: "'Share Tech Mono', monospace", size: 13 },
+          titleColor: 'rgba(255,255,255,0.6)',
+          bodyColor: '#e2e8f0',
+          displayColors: false,
+          callbacks: {
+            label: c => fmtMoneyLoc(Number(c.raw), 0),
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: 'rgba(255,255,255,0.35)', font: { family: "'Share Tech Mono', monospace", size: 10 }, maxRotation: 0, maxTicksLimit: 7, autoSkip: true },
+          grid: { display: false },
+          border: { color: 'rgba(30,61,45,0.4)' },
+        },
+        y: {
+          position: 'left',
+          ticks: { color: 'rgba(255,255,255,0.4)', callback: v => fmtMoneyLoc(Number(v), 0), font: { family: "'Share Tech Mono', monospace", size: 11 }, maxTicksLimit: 6 },
+          grid: { color: 'rgba(30,61,45,0.22)', drawBorder: false },
+          border: { display: false },
+        },
+      },
+    },
+  });
+}
+
+// ========================
+// ========================
 // PORTFOLIO HISTORY
 // ========================
 const SNAPSHOT_KEY = 'cs2vault_snapshots';
@@ -4867,6 +5083,7 @@ function interpolateBenchmark(benchKey, dateStr) {
 }
 
 function renderPortfolio() {
+  try { renderValueChart(); } catch (e) { console.warn('[renderValueChart]', e); }
   const snaps = loadSnapshots().sort((a,b) => a.date.localeCompare(b.date));
   if (!snaps.length) return;
 
@@ -6650,6 +6867,7 @@ async function exportAllData() {
     licenceState:    window._store['cs2vault_licence_state'] || null,
     trialStart:      window._store['cs2vault_trial_start'] || null,
     activityLog:     window._store['cs2vault_activity_log'] || null,
+    valueHistory:    window._store['cs2vault_value_history'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -6664,7 +6882,7 @@ function clearAllData() {
   // deliberately NOT cleared here — wiping a paid licence on "clear data" would
   // lock a paying customer out of a purchase they made. Use Settings → Remove
   // licence to sign out of Pro on this machine.
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log','cs2vault_value_history'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -7576,6 +7794,9 @@ function initApp() {
   try { checkApiStatus(); }               catch(e) { console.warn('[initApp] checkApiStatus:', e); }
   try { checkTargetsOnLoad(); }           catch(e) { console.warn('[initApp] checkTargetsOnLoad:', e); }
   try { checkAutoSnapshot(); }            catch(e) { console.warn('[initApp] checkAutoSnapshot:', e); }
+  try { seedValueHistoryFromSnapshots(); } catch(e) { console.warn('[initApp] seedValueHistory:', e); }
+  try { recordValueSnapshot(); }          catch(e) { console.warn('[initApp] recordValueSnapshot:', e); }
+  try { pruneValueHistory(); }            catch(e) { console.warn('[initApp] pruneValueHistory:', e); }
   try { prunePriceLog(); }                catch(e) { console.warn('[initApp] prunePriceLog:', e); }
   try { pruneCaseSupply(); }              catch(e) { console.warn('[initApp] pruneCaseSupply:', e); }
   try { initSteamAutocomplete(); }        catch(e) { console.warn('[initApp] initSteamAutocomplete:', e); }

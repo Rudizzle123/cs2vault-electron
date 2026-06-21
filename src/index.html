@@ -403,6 +403,21 @@ tr:hover .row-actions{opacity:1;}
 .bench-card-val{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;line-height:1;}
 .bench-card-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:4px;}
 .bench-winner{border-color:rgba(34,197,94,.3);}
+/* ── Portfolio value-over-time chart (Skin Ledger-style) ── */
+.value-chart-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px 8px;}
+.value-chart-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:10px;}
+.value-chart-total{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:34px;line-height:1;letter-spacing:1px;}
+.value-chart-delta{font-family:'Share Tech Mono',monospace;font-size:14px;font-weight:600;margin-top:6px;color:var(--green);}
+.value-chart-split{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);margin-top:8px;}
+.vc-split-steam{color:#8b9dc3;}
+.vc-split-csfloat{color:var(--green);}
+.value-range-row{display:flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:4px;flex-wrap:wrap;}
+.value-range-btn{background:transparent;border:none;color:var(--text3);font-family:'Share Tech Mono',monospace;font-size:11px;padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .12s;}
+.value-range-btn:hover{color:var(--text);background:var(--surface3);}
+.value-range-btn.active{background:var(--surface3);color:var(--green);border:1px solid var(--border2);}
+.value-range-label{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);padding:0 6px 0 4px;letter-spacing:1px;}
+.value-chart-body{position:relative;min-height:320px;padding-top:6px;}
+.value-chart-empty{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);line-height:1.6;padding:40px 20px;text-align:center;max-width:480px;margin:0 auto;}
 .bench-winner::before{background:linear-gradient(90deg,var(--green),transparent);}
 @media(max-width:900px){.bench-cards-grid{grid-template-columns:repeat(2,1fr);}}
 
@@ -629,6 +644,39 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       </div>
     </div>
     <div style="border-top:1px solid var(--border);margin:30px 0 22px;"></div>
+
+    <!-- ── Portfolio value over time (Skin Ledger-style) ─────────────────── -->
+    <div style="margin-bottom:14px;">
+      <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">Portfolio Value</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Daily value over time — captured automatically each time you open the app</div>
+    </div>
+    <div class="value-chart-card">
+      <div class="value-chart-head">
+        <div>
+          <div class="value-chart-total" id="valueChartTotal">—</div>
+          <div class="value-chart-delta" id="valueChartDelta"></div>
+          <div class="value-chart-split" id="valueChartSplit"></div>
+        </div>
+        <div class="value-range-row">
+          <button class="value-range-btn" onclick="setValueRange(1,this)">1</button>
+          <button class="value-range-btn" onclick="setValueRange(7,this)">7</button>
+          <button class="value-range-btn" onclick="setValueRange(30,this)">30</button>
+          <button class="value-range-btn" onclick="setValueRange(90,this)">90</button>
+          <button class="value-range-btn" onclick="setValueRange(180,this)">180</button>
+          <button class="value-range-btn active" onclick="setValueRange(365,this)">365</button>
+          <button class="value-range-btn" onclick="setValueRange(0,this)">All</button>
+          <span class="value-range-label">Days</span>
+        </div>
+      </div>
+      <div class="value-chart-body">
+        <div id="valueChartEmpty" class="value-chart-empty" style="display:none;">
+          Building your value history — the chart fills in as you open the app over the coming days. Existing monthly snapshots are shown where available.
+        </div>
+        <canvas id="valueChart" style="width:100%;height:320px;"></canvas>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin:28px 0 22px;"></div>
     <div style="margin-bottom:16px;">
       <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;">Portfolio History</div>
       <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);">Monthly snapshots, benchmark comparison and CS2 event overlays</div>
@@ -1414,6 +1462,8 @@ const STORE_KEYS = [
   'cs2vault_trial_start',
   // --- v3.4.0: manual-entry activity log ---
   'cs2vault_activity_log',
+  // --- v3.5.0: daily portfolio value history (value-over-time chart) ---
+  'cs2vault_value_history',
 ];
 
 window._store = {};
