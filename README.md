@@ -37,6 +37,8 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - `cs2vault_licence` — Vault Pro licence key (paste from purchase email)
 - `cs2vault_licence_state` — cached licence-validation result (status, checkedAt, plan)
 - `cs2vault_trial_start` — ISO date the 14-day no-card Pro trial began
+- `cs2vault_activity_log` — manual-entry activity log (add/edit/delete on holdings + play skins, newest-first, capped at 500)
+- `cs2vault_value_history` — daily portfolio value points (value-over-time chart; `{date,steam,csfloat,value,invested}`, capped at 730)
 
 **External APIs used:**
 - frankfurter.app (no auth, ECB rates) — FX conversion, live + historical; open.er-api.com as fallback
@@ -57,7 +59,7 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 
 ---
 
-## Features (current as of v3.3.0)
+## Features (current as of v3.5.1)
 
 ### Vault Pro — Payments, Licensing & Trial (v3.3.0 — Phase 4b)
 - **Paddle checkout** (merchant of record — handles global VAT/sales tax for a solo dev). Settings → Vault Pro shows Monthly/Annual buttons that open Paddle's hosted checkout in the browser. The price shown is a display string in `PRO_CONFIG`; the real charge is set on the Paddle price IDs (no amount is hardcoded in the app)
@@ -119,6 +121,8 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - CSV export (with per-platform prices, TUF flag) and CSV import
 - Bulk sell modal
 - **Bulk edit/delete (v2.8.0)** — checkbox per row + select-all (visible rows); action bar shows selection count/units/£ invested with Bulk Edit (Type / TUF / Category — untouched fields stay as-is), Delete Selected (does not record sales), and Clear. All writes atomic against concurrent refreshes
+- **Select toggle (v3.3.4)** — the bulk-select checkbox column is hidden by default; a **☑ Select** toolbar button reveals it (flips to **✕ Done**), keeping rows uncluttered when not bulk-editing
+- **Activity Log (v3.4.0)** — a 📋 Log button opens a read-only record of every manual add/edit/delete on holdings and play skins, newest-first, so a mistyped price or quantity is easy to spot. Edits show a before→after field diff; searchable; CSV export; last 500 events kept (sells live in Trade History, not here). Wired into CSV import + top-up paths too (v3.4.1). Not retroactive — records from v3.4.0 onward
 
 ### Price Refreshing (v2.7.0)
 - **Two-lane engine** — bulk refreshes run CSFloat (6 parallel requests) and Steam (sequential, adaptive 1.5–6s delay) as independent lanes; each row updates the moment both lanes finish for that item. Roughly halves full-refresh time vs the old single sequential chain
@@ -153,10 +157,16 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - Top/Bottom 5 performers
 - Monthly P&L summary
 
+### Portfolio Value over time (section of Analytics, v3.5.0)
+- **Skin Ledger-style value-over-time area chart** — daily portfolio value, captured automatically each app launch and after every full price refresh (`cs2vault_value_history`, one point per day, capped at 730)
+- Big value header with period delta (green up / red down), and a **1 / 7 / 30 / 90 / 180 / 365 / All** day range toggle; delta recalculates per visible range
+- Sub-line shows **Invested vs Unrealised P&L** (v3.5.1 — replaced the original Steam/CSFloat pricing-source split, which read as misleading)
+- Seeded from existing monthly snapshots so the long ranges aren't empty on first run; short ranges fill in densely over the first weeks of use. Free tier
+
 ### Portfolio History (section of Analytics)
 - Monthly portfolio snapshots with chart
-- Benchmark comparison (indexed to 100)
-- Auto-snapshot on the 3rd of each month
+- Benchmark comparison vs S&P 500 / Bitcoin / Gold (indexed to 100)
+- CS2 event overlays; auto-snapshot on the 3rd of each month
 
 ### Play Skins Tab
 - Separate tracking for skins you use (not investment holdings)

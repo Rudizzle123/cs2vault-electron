@@ -1,10 +1,44 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v3.3.4
+Last updated: June 2026 | Current version: v3.5.1
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.5.1 — Value chart split: Steam/CSFloat → Invested vs Unrealised P&L ✅
+The line under the Portfolio Value header originally showed a **Steam £X / CSFloat £Y** split. This was misleading: it was a *pricing-source* breakdown (which platform drives each item's P&L price — Steam for cases/stickers/TUF/agents, CSFloat for everything else), not a cross-platform value comparison. For a case/sticker-heavy portfolio it dumped ~98% of value into the "Steam" bucket, reading like the CSFloat value was wrong. Replaced with the more useful **Invested £X · ▲ Unrealised P&L ±£Y** line.
+
+- New shared helper **`_valueSplitHtml(invested, value)`** renders the line: muted-grey "Invested" figure + a colour-coded (green ▲ up / red ▼ down) "Unrealised P&L" figure. Called from both `renderValueChart()` branches (the <2-points empty state via live `computeValueSplit()`, and the main chart via the latest stored point)
+- **No data migration** — every value-history point has stored `invested` since v3.5.0, so the P&L line works on existing daily points and the seeded monthly points immediately
+- CSS: `.vc-split-steam`/`.vc-split-csfloat` replaced by `.vc-split-invested` (grey) + `.vc-split-pnl` (P&L colour set inline). `node -c src/app.js` clean
+
+### v3.5.0 — Portfolio Value over-time chart (Skin Ledger-style) ✅
+A clean, dense **value-over-time area chart** at the top of the Analytics tab (replacing the top of the old Portfolio History section), modelled on Skin Ledger's portfolio view. **Free-tier feature — no `isPro()` gate** (matches Skin Ledger, where this is free; the moat stays the tax engine). No tax-engine, pricing, or payments changes.
+
+- **New daily value-history series** (`cs2vault_value_history` key) — one value-only point per calendar day: `{ date, steam, csfloat, value, invested }`. Captured automatically on every app launch (`recordValueSnapshot()` in initApp) and again after any full price refresh, so the point reflects the latest prices. Deduped per day (latest write wins), capped at **730 days** (`VALUE_HISTORY_MAX`), pruned on launch
+- **Big value header + range toggle** — current value in large type, period delta colour-coded (green up / red down) with %, and a **1 / 7 / 30 / 90 / 180 / 365 / All** day range toggle (`setValueRange()`, default 365). Delta is computed over the *visible range*, not all-time
+- **Filled green area line** (Chart.js) in the app's colourway — gradient fill, green when up / red when down over the range, hover tooltip showing value at each date
+- **Seeded from existing monthly snapshots** (`seedValueHistoryFromSnapshots()`, runs once, idempotent via a `seeded` flag) so the 365/All ranges aren't empty on first run — the developer's historical case figures populate immediately. Short ranges (1/7/30) fill in densely over the first weeks of real use (it does NOT fabricate daily points it never recorded)
+- **Helpers**: `loadValueHistory`/`saveValueHistory`, `computeValueSplit()` (value by pricing platform + invested), `recordValueSnapshot()`, `seedValueHistoryFromSnapshots()`, `pruneValueHistory()`, `setValueRange()`, `_valueRangeSlice()`, `renderValueChart()`. New `valueChart` Chart.js instance + `currentValueRange` state
+- **Kept the old Portfolio History below it** — monthly snapshots, benchmark comparison (S&P/BTC/Gold indexed), CS2 event overlays, and the snapshot table are untouched (they do a different job: indexed apples-to-apples benchmarking). Only the section header/order changed
+- Registered `cs2vault_value_history` in `STORE_KEYS` (index.html, 22 keys now), `exportAllData` backup, and `clearAllData`. `node -c src/app.js` clean
+- ⚠ **Note (v3.5.0 only, superseded by v3.5.1):** the header sub-line originally showed a Steam/CSFloat pricing-source split, which read as misleading — replaced with Invested vs Unrealised P&L in v3.5.1 (see above)
+
+### v3.4.2 — Steam priceoverview 429 retry + backoff (blank cheap-sticker prices) ✅
+Cheap, high-volume stickers intermittently showed no Steam price (— in the Steam column). Root cause: Steam's `priceoverview` endpoint returns HTTP 429 (rate limited) under bulk refresh, and the HTML-listing-page fallback is unreliable for these items, so a transient 429 left the price blank. Fix: `priceoverview` lookups now **retry with backoff on 429**, and the broken HTML fallback is **skipped on persistent 429** rather than attempted (it was returning bad data and burning request budget). No data-model change; pricing path only. `node -c src/app.js` clean.
+
+### v3.4.1 — Activity log wired into CSV import + top-up (were unlogged) ✅
+Two data-entry paths were bypassing the v3.4.0 activity log: items added via **"Add to Position"** (the top-up modal) and via **CSV import**. Both now log correctly. `saveTopup` records an **edit** with a before→after diff; `importCSV` records an **add** per imported item, and also writes full **FX provenance** (`origCurrency`/`origAmount`/`fxRate`) + lot data on imported items so they match manually-added items. `node -c src/app.js` clean.
+
+### v3.4.0 — Activity Log for manual entries (Holdings + Play Skins) ✅
+A persistent, read-only record of manual data entry so a fat-fingered price/qty/name can be spotted after the fact. **Free-tier tracker feature — no `isPro()` gate. No tax-engine, pricing, or payments changes.**
+
+- New **📋 Log** button in the Holdings toolbar (next to ☑ Select) opens `activityLogModal` — entries newest-first, with a search box (matches name / market hash / action / scope), **Export CSV**, and **Clear Log** (wipes only the log, never holdings/skins; double-confirmed)
+- **Logged events**: add / edit / delete on **holdings** *and* **play skins**. Edits record a field-level **before→after diff** (name, type, qty, buy price, currency, buy date, market hash) — the diff is where mistypes show up (e.g. `Buy price: 12.5 → 1.25`). Wired into `saveItem`, `deleteItem`, `bulkDeleteSelected`, `saveBulkEdit` (logs Type/TUF/Category changes), `saveSkin`, `deleteSkin`. **Sells are NOT logged** — Trade History already covers disposals
+- **Storage**: new `cs2vault_activity_log` key, stored newest-first, **capped at 500 events** and pruned on each write. Snapshot stores the user-meaningful fields only. Added to `STORE_KEYS`, the backup export (`exportAllData`), and `clearAllData`
+- Helpers: `logActivity(action, scope, snapshot, diff)`, `_logSnapshot()`, `_logDiff()`, `loadActivityLog()`/`saveActivityLog()`, plus modal fns `openActivityLog` / `renderActivityLog` / `filterActivityLog` / `clearActivityLog` / `exportActivityLog`. Log rows built with `createElement`/`textContent` (no innerHTML) so item names with quotes/`<` are injection-safe
+- **Not retroactive** — only records events from v3.4.0 onward. `node -c src/app.js` clean
 
 ### v3.3.4 — Holdings checkbox hidden behind a Select toggle (UI) ✅
 The bulk-select checkbox column on the Holdings table was always visible, cluttering every row. It's now hidden by default and revealed only when bulk-selecting.
@@ -450,6 +484,15 @@ Focused correctness fixes to the v3.0.0 multi-jurisdiction tax engine, flagged b
 ---
 
 ## Technical Notes
+
+### Portfolio Value History / Value-Over-Time Chart (v3.5.0; split changed v3.5.1)
+- **`cs2vault_value_history`** key — array of daily points `{ date, steam, csfloat, value, invested }`, one per calendar day, sorted ascending, capped at `VALUE_HISTORY_MAX` (730). Separate from `cs2vault_snapshots` (monthly category snapshots, used for benchmarking) — this series is value-only and daily, so the chart looks dense like Skin Ledger
+- **Capture**: `recordValueSnapshot()` runs in initApp (after holdings load) and again after a full bulk refresh (`refreshAllPrices`, only when `res.updated > 0`). Dedupes per `todayStr()` (latest write wins); skips if no holdings or computed value ≤ 0 (avoids logging a £0 point before prices load). `computeValueSplit()` sums `getBestPrice(h) × qty` per holding, bucketed by `getPricingPlatform(h)` (steam vs csfloat), plus `invested`
+- **Seeding**: `seedValueHistoryFromSnapshots()` (initApp, once — idempotent via a `seeded:true` flag on seeded points) backfills value points from existing monthly snapshots' total value/invested so the 365/All ranges aren't empty on first run. Seeded points have `steam:0, csfloat:0` (no platform split available historically). Never overwrites a real daily point for the same date
+- **Pruning**: `pruneValueHistory()` (initApp) trims to the most recent `VALUE_HISTORY_MAX` points
+- **Render**: `renderValueChart()` (called at the top of `renderPortfolio()`, so it draws when the Analytics tab opens). `currentValueRange` (days; 0 = All, default 365); `setValueRange(days, btn)` re-renders. `_valueRangeSlice(hist)` filters to the range, falling back to the last 2 points if a short range would leave <2 (so the chart never blanks). Header shows latest value + delta over the *visible* range (green up / red down). `valueChart` is the Chart.js line instance (filled area, gradient green/red by range direction)
+- **Sub-line (`_valueSplitHtml(invested, value)`, v3.5.1)** — shows **Invested £X · ▲/▼ Unrealised P&L ±£Y** (P&L colour-coded). Replaced the v3.5.0 Steam/CSFloat *pricing-source* split, which read as a misleading cross-platform value comparison (cases/stickers price off Steam, so a case-heavy portfolio dumped ~98% into the "Steam" bucket). `.vc-split-invested` (grey) + `.vc-split-pnl` (inline colour) in index.html
+- **Free-tier, not gated.** Registered in `STORE_KEYS` (index.html), `exportAllData`, `clearAllData`
 
 ### FX Layer (v2.9.0)
 - `getRate(from, to, date?)` — no date or today = live rate; past date = historical. Primary frankfurter.app (ECB, no key), fallback open.er-api.com. Historical rates cached permanently in `cs2vault_fx_cache` (`"YYYY-MM-DD|FROM|TO": rate`); in-flight promise memo per key
