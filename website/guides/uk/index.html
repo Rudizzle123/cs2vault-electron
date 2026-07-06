@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Do You Pay Tax on CS2 Skins in the UK? CGT Guide 2026/27 — CS2 Vault</title>
+<meta name="description" content="Yes — gains on CS2 skins are subject to UK Capital Gains Tax. The £3,000 allowance, 18%/24% rates, Section 104 pooling, the Steam Wallet question, and a worked example for 2026/27.">
+<meta property="og:title" content="Do You Pay Tax on CS2 Skins in the UK? (2026/27)">
+<meta property="og:description" content="The £3,000 CGT allowance, 18%/24% rates, Section 104 pooling and the Steam Wallet question — a plain-English guide for skin investors.">
+<link rel="icon" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Exo+2:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<div class="page">
+
+<header>
+  <a class="logo" href="/">
+    <img src="/assets/logo.png" alt="">
+    <span class="logo-text">CS2 <span>Vault</span></span>
+  </a>
+  <nav class="nav">
+    <a href="/#tax-engine">Tax Engine</a>
+    <a href="/guides/">Tax Guides</a>
+    <a href="/pricing/">Pricing</a>
+    <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+  </nav>
+</header>
+
+<main class="prose">
+  <h1>Do You Pay Tax on CS2 Skins in the UK?</h1>
+  <div class="meta">United Kingdom · Capital Gains Tax · Tax year 2026/27 · Last verified July 2026</div>
+
+  <div class="box warn">
+    <strong>Estimates, not tax advice.</strong> This guide explains the UK rules as we've verified them against HMRC and GOV.UK sources, but it can't account for your personal circumstances, and rates and allowances change. Confirm your position with a qualified, digital-asset-literate accountant before filing anything.
+  </div>
+
+  <p><strong>Short answer: yes.</strong> If you sell CS2 skins for more than they cost you, the profit is a capital gain, and gains above your annual allowance are subject to UK Capital Gains Tax. It doesn't matter that skins are digital, that they live in a Steam account, or that most people around you have never declared a penny — HMRC's capital gains rules apply to disposals of assets generally, and there's no carve-out for virtual items. HMRC has spent years building out its position on cryptoassets on exactly this logic, and skins sit in the same conceptual bucket: intangible things you own, that have a market value, that you can sell at a profit.</p>
+
+  <p>The good news is that the rules are entirely workable once you understand three things: the annual allowance, what counts as a "disposal", and how your cost basis is calculated when you've bought the same item multiple times. This guide walks through all three, with a worked example at the end.</p>
+
+  <h2>The headline numbers for 2026/27</h2>
+  <p>The UK tax year runs from <strong>6 April 2026 to 5 April 2027</strong>. For that year:</p>
+  <ul>
+    <li><strong>Annual exempt amount: £3,000.</strong> Your first £3,000 of net gains each tax year is tax-free. This used to be £12,300 as recently as 2022/23 — it has been cut hard, which is precisely why skin sellers who never used to owe anything are now in scope. The allowance is use-it-or-lose-it: it doesn't carry forward.</li>
+    <li><strong>Rates: 18% or 24%.</strong> Since 30 October 2024, all chargeable assets use the same two rates. Your gains stack on top of your taxable income: whatever fits inside your remaining basic-rate band (income up to £50,270) is taxed at 18%, and anything above that at 24%.</li>
+    <li><strong>Reporting deadline: 31 January 2028</strong> for the 2026/27 tax year, via Self Assessment. If your gains exceed the allowance — or your total disposal proceeds exceed £50,000 even with no tax due — you need to report.</li>
+  </ul>
+
+  <h2>What counts as a "disposal"? The Steam Wallet question</h2>
+  <p>This is the question that fills every trading subreddit, so let's take it seriously.</p>
+  <p>A disposal for CGT purposes isn't just "selling for cash into your bank account". Under general CGT principles, exchanging one asset for another is also a disposal — this is exactly how HMRC treats crypto token-to-token swaps, where trading ETH for BTC crystallises a gain even though no pounds ever moved. Applied strictly to skins, that reading means selling a knife on the Steam Community Market — even though the proceeds are locked in Steam Wallet funds you can never withdraw — is arguably a disposal at market value.</p>
+  <p>There is a genuine counter-argument: Steam Wallet funds aren't money, can't be withdrawn, and what you "receive" is a licence credit inside Valve's ecosystem. Plenty of holders take the position that only <strong>real-money cashouts</strong> — selling on a third-party marketplace like CSFloat and withdrawing to a bank — are true disposals. That position is defensible, but you should understand it's a <em>position</em>, not settled law. The locked nature of Steam Wallet more plausibly affects the <em>valuation</em> of what you received than whether a disposal happened at all.</p>
+  <p>Our practical suggestion: whichever view you take, <strong>record everything on both bases</strong>. If you know your gains both including and excluding Steam-Market sales, you can have an informed conversation with an accountant and adapt if HMRC's guidance firms up — instead of trying to reconstruct five years of trades from memory. (This dual view is built into CS2 Vault's UK profile: the CGT summary shows the cashout-only figure and an "incl. Steam" figure side by side.)</p>
+
+  <h2>How your cost basis works: Section 104, same-day and 30-day rules</h2>
+  <p>If you bought one skin once and sold it once, the gain is simple: proceeds minus cost. But skin investors rarely do that — you buy 50 cases in March, 100 more in August at a different price, then sell 70 next year. Which ones did you sell? UK rules answer this with a specific matching order:</p>
+  <ul>
+    <li><strong>Same-day rule:</strong> disposals are first matched against acquisitions of the same asset on the same day.</li>
+    <li><strong>30-day ("bed and breakfast") rule:</strong> next, against acquisitions in the 30 days <em>after</em> the disposal. This exists to stop people selling to realise a loss and instantly rebuying — if you sell 100 cases today and buy 100 back next week, your "loss" is calculated against the rebuy price, not your old pooled cost.</li>
+    <li><strong>Section 104 pool:</strong> everything else goes into a single pool per asset, holding total quantity and total cost. Each disposal uses the pool's <em>average</em> cost per unit.</li>
+  </ul>
+  <p>This matters enormously for cases and stickers, where you accumulate identical items across dozens of purchases at wildly different prices. Your gain is not "sell price minus what I paid for the cheapest ones" — it's sell price minus the pooled average, adjusted by the same-day and 30-day rules. Getting this wrong is the single most common error in DIY skin-tax spreadsheets.</p>
+
+  <h2>What you can deduct — and one exemption that doesn't apply</h2>
+  <p><strong>Platform fees are allowable costs.</strong> Steam's ~15% cut, CSFloat's ~2%, and withdrawal fees on a cashout all reduce your gain. Over a high-volume year these deductions are substantial — another reason per-trade records beat year-end guesswork.</p>
+  <p><strong>Losses offset gains.</strong> Sold your Paris 2023 stickers at a loss? That loss nets against your gains in the same tax year, and unused losses can be carried forward indefinitely if you report them to HMRC within four years. In a portfolio with winners and losers, realised losses are one of the few levers you control.</p>
+  <p><strong>The chattels exemption does not apply.</strong> You may have heard that personal possessions sold for under £6,000 are CGT-free. That exemption covers <em>tangible moveable property</em> — physical things. Skins are intangible, so it doesn't help you. Don't let a forum post persuade you otherwise.</p>
+
+  <h2>A worked example</h2>
+  <p>Meet Sam, a higher-rate taxpayer (salary £60,000). During 2026/27 Sam cashes out via a third-party marketplace:</p>
+  <table>
+    <tr><th>Disposal</th><th>Proceeds (after fees)</th><th>Pooled cost</th><th>Gain / loss</th></tr>
+    <tr><td>Butterfly Knife | Doppler</td><td class="num">£1,850</td><td class="num">£1,100</td><td class="num">+£750</td></tr>
+    <tr><td>240 × Fracture Case</td><td class="num">£2,400</td><td class="num">£310</td><td class="num">+£2,090</td></tr>
+    <tr><td>AWP | Gungnir (BS)</td><td class="num">£3,900</td><td class="num">£2,650</td><td class="num">+£1,250</td></tr>
+    <tr><td>Katowice 2019 stickers</td><td class="num">£420</td><td class="num">£640</td><td class="num">−£220</td></tr>
+  </table>
+  <p>Net gain: £750 + £2,090 + £1,250 − £220 = <strong>£3,870</strong>. Subtract the £3,000 annual exempt amount: <strong>£870 taxable</strong>. Sam is a higher-rate taxpayer, so the whole £870 is taxed at 24%: <strong>£208.80 owed</strong>.</p>
+  <p>Notice what did the heavy lifting there: the allowance wiped out most of the bill, the sticker loss trimmed it further, and the fees were already deducted from proceeds. Now imagine Sam had also sold £8,000 of items on the Steam Market that year. On the strict disposal reading, those gains stack on top — which is exactly why you want both figures in front of you before you file.</p>
+
+  <h2>When you actually have to report</h2>
+  <p>You need to report via Self Assessment if your net gains exceed £3,000, or if your total proceeds exceed £50,000 (even with no tax due), or if you want to register losses to carry forward. The deadline for online filing is <strong>31 January following the end of the tax year</strong> — so 31 January 2027 for the 2025/26 year, 31 January 2028 for 2026/27. If you've never filed before, you must register for Self Assessment by 5 October after the tax year ends; registration takes time, so don't leave it until January.</p>
+  <p>If your gains are comfortably under the allowance and proceeds under £50,000, there's generally nothing to file — but keep the records anyway. HMRC can ask you to prove a gain was within the allowance, and "I'm pretty sure it was" is not a record.</p>
+
+  <h2>The records that save you</h2>
+  <p>For every acquisition: date, item, quantity, unit price, currency, and the exchange rate that day if you bought in USD or EUR. For every disposal: date, platform, gross proceeds, fees, and net received. That's the complete dataset HMRC could ask for, and it's also exactly what you need to run the Section 104 maths correctly. Reconstructing it retroactively from Steam's purchase history is miserable; capturing it as you go is trivial.</p>
+
+  <div class="cta-panel">
+    <h2>Or let CS2 Vault do the maths</h2>
+    <p>CS2 Vault is a local-first Windows desktop tracker built for exactly this. Every buy is stored as a dated lot; the UK tax profile applies Section 104 pooling with the same-day and 30-day rules automatically, deducts platform fees, tracks your £3,000 allowance in real time, and shows the Steam-included and cashout-only views side by side. The tracker — and the on-screen UK CGT summary — are <strong>free</strong>. The full tax engine, report export and Cash Out Calculator are in Vault Pro at <strong>$6.99/month or $49/year</strong>, with a 14-day trial and no card required. Your data never leaves your machine.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+      <a class="btn btn-ghost" href="/pricing/">See Vault Pro →</a>
+    </div>
+    <p class="hero-note">Free tracker forever · UK CGT summary included free · Local-only data</p>
+  </div>
+
+  <hr>
+  <p style="font-size:13px;color:var(--text3);">Figures verified July 2026 against GOV.UK (Capital Gains Tax rates and allowances) for the 2026/27 tax year. Rules and rates change — this page is refreshed alongside our annual re-verification, but always check current HMRC guidance and speak to a professional before filing. This is not tax advice.</p>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-copy">© 2026 CS2 Vault</div>
+    <div class="foot-links">
+      <a href="/guides/">Tax Guides</a>
+      <a href="/pricing/">Pricing</a>
+      <a href="/terms/">Terms</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/refund/">Refunds</a>
+      <a href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
