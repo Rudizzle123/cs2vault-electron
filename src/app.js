@@ -2581,8 +2581,6 @@ function allocFilterClick(filter) {
 //                                        sale PROCEEDS, not gains. Below the threshold of
 //                                        proceeds the whole gain is tax-free; at/above it the
 //                                        whole gain is taxable. Caller passes proceedsTotal.)
-//   pupFloor                            (CA: personal-use-property $1,000 floor — both cost
-//                                        and proceeds deemed >= this per disposal)
 //   rates { ...bands }                  (for the estimate)
 //   disposalCounts(trade) -> bool       (disposal definition — UK excludes Steam Wallet)
 //   classifyGain(disp)    -> { bucket, taxable, label, flagged }
@@ -2728,14 +2726,19 @@ const TAX_PROFILES = {
     taxYearLabel(now) { return String((now || new Date()).getFullYear()); },
     allowance: 0,                    // no separate annual capital-gains exemption for this asset class
     inclusionRate: 0.5,              // only 50% of a net capital gain is taxable
-    pupFloor: 1000,                  // personal-use-property rule: cost AND proceeds each
-                                     // deemed to be at least CAD $1,000 per disposal
+                                     // Classification (v3.6.1): skins held for investment are
+                                     // ORDINARY CAPITAL PROPERTY (ITA s.54 PUP is a use test -
+                                     // "primarily for personal use or enjoyment" - which
+                                     // investment holdings fail). So NO $1,000 PUP floor
+                                     // (s.46(1)) and losses ARE deductible (s.40(2)(g)(iii)
+                                     // loss denial doesn't engage). The alternative PUP
+                                     // reading is disclosed in the disclaimer/knownLimits.
     rates: { flat: 25 },             // indicative marginal rate applied to the taxable (50%) portion
     feeDeductible: true,
     disposalCounts() { return true; },
     classifyGain() { return { bucket: 'capital', taxable: true, label: '', flagged: false }; },
-    disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). Personal-use property: both the cost and the proceeds of each disposal are deemed to be at least CAD $1,000, so a cheap-bought item sold cheaply shows little or no gain \u2014 this app applies that $1,000 floor automatically. Limit: listed personal property (LPP \u2014 art, jewellery, rare coins/stamps/books) losses can only offset LPP gains, not ordinary capital gains; the app pools all gains and losses together and does NOT ring-fence LPP losses, so if you hold LPP items review them separately with an accountant. The estimate applies an indicative marginal rate to the taxable (50%) portion. Consult a qualified Canadian tax professional.',
-    knownLimits: 'LPP (listed personal property) loss ring-fencing is not modelled \u2014 the app pools all gains/losses; LPP losses can only offset LPP gains, so review LPP items separately. The CAD $1,000 personal-use-property floor IS applied per disposal.',
+    disclaimer: 'Estimated only and not tax advice. Canada uses the adjusted cost base (ACB / pooling) and includes 50% of a net capital gain in taxable income (the inclusion rate). This app treats skins held for investment as ordinary capital property: gains and losses are computed on real cost and proceeds, and capital losses are deductible against capital gains in the normal way. Alternative reading: if you hold skins primarily for personal use or enjoyment rather than investment, the CRA personal-use-property (PUP) rules apply instead \u2014 cost and proceeds are each deemed to be at least CAD $1,000 per disposal, losses are generally denied (deemed nil), and listed-personal-property (LPP) losses can only offset LPP gains; this app does NOT apply those rules. Note also that frequent, business-like flipping can be assessed as business income (100% taxable) rather than capital gains. The estimate applies an indicative marginal rate to the taxable (50%) portion. Consult a qualified Canadian tax professional.',
+    knownLimits: 'Skins are treated as investor-held ordinary capital property: losses deductible, no CAD $1,000 personal-use-property floor. If your skins are genuinely personal-use property (held for enjoyment, not investment), the $1,000 floor and denied-loss / LPP ring-fencing rules apply instead \u2014 review with an accountant. Business-like trading may be taxed as income, not capital gains.',
   },
   SE: {
     code: 'SE', name: 'Sweden', taxCurrency: 'SEK',
@@ -3428,28 +3431,21 @@ async function calculateCGTWithTaxCurrency() {
     return { val: (r != null) ? gbp * r : null, rate: r };
   };
 
-  const pupFloor = cgt.profile.pupFloor || 0; // CA personal-use-property $1,000 floor (in tax ccy)
-
   for (const d of cgt.allDisposals) {
     const t = d.trade;
     // Sell-side figures at the SELL-date rate.
     const sellRate = await getRate('GBP', ccy, t.sellDate || todayStr());
     // Cost basis at the ACQUISITION-date rate (falls back to sell date if unknown).
     const buyRate = await getRate('GBP', ccy, d.acqDate || t.sellDate || todayStr());
-    let grossTax = (sellRate != null) ? d.gross * sellRate : null;
+    const grossTax = (sellRate != null) ? d.gross * sellRate : null;
     const feeTax = (sellRate != null) ? d.fee * sellRate : null;
-    let costBasisTax = (buyRate != null) ? d.costBasis * buyRate : null;
-    let pupApplied = false;
-    // Personal-use-property floor (CA): both cost and proceeds are deemed to be at
-    // least the floor per disposal. Done in tax currency so the CAD $1,000 figure is
-    // applied as-is (not an FX-shifted GBP equivalent).
-    if (pupFloor > 0) {
-      if (grossTax != null && grossTax < pupFloor) { grossTax = pupFloor; pupApplied = true; }
-      if (costBasisTax != null && costBasisTax < pupFloor) { costBasisTax = pupFloor; pupApplied = true; }
-    }
+    const costBasisTax = (buyRate != null) ? d.costBasis * buyRate : null;
+    // v3.6.1: the CA $1,000 PUP floor was REMOVED here - skins held for investment
+    // are ordinary capital property (not personal-use property), so real cost and
+    // proceeds are used and losses stay deductible. See the CA profile disclaimer.
     const gainTax = (grossTax != null && feeTax != null && costBasisTax != null)
       ? grossTax - feeTax - costBasisTax : null;
-    cgt.taxFx[t.id] = { grossTax, feeTax, costBasisTax, gainTax, sellRate, buyRate, pupApplied };
+    cgt.taxFx[t.id] = { grossTax, feeTax, costBasisTax, gainTax, sellRate, buyRate };
   }
   return cgt;
 }
@@ -3543,11 +3539,6 @@ async function renderCGTSummary() {
   const usBreakdown = (profile.code === 'US');
   const flagged = cgt.flaggedCount || 0;
   const exemptCount = cgt.exemptCount || 0;
-  // CA: how many disposals had the $1,000 personal-use-property floor applied.
-  let pupAppliedCount = 0;
-  if (profile.code === 'CA' && cgt.taxFx) {
-    cgt.disposals.forEach(d => { const fx = cgt.taxFx[d.trade.id]; if (fx && fx.pupApplied) pupAppliedCount++; });
-  }
 
   const allowanceCardLabel = profile.code === 'DE' ? 'Freigrenze'
                            : profile.code === 'FI' ? 'Small-Sales Exemption (proceeds)'
@@ -3618,7 +3609,6 @@ async function renderCGTSummary() {
       Cost basis: ${costBasisMethodLabel(cgt.method)}${cgt.method === 'pooling' && isUK ? ' · same-day + 30-day rules applied' : ''}${!isUK ? ' · figures in ' + ccy + ' at transaction-date FX' : ''}<br>
       ${usBreakdown ? _usBucketChips(cgt, f) : ''}
       ${exemptCount > 0 ? `<span style="color:var(--green);">${exemptCount} disposal${exemptCount !== 1 ? 's' : ''} exempt (held &gt; 1 year)</span> · ` : ''}
-      ${pupAppliedCount > 0 ? `<span style="color:var(--text2);">$1,000 PUP floor applied to ${pupAppliedCount} disposal${pupAppliedCount !== 1 ? 's' : ''}</span><br>` : ''}
       ${flagged > 0 ? `<span style="color:var(--accent);">⚠ ${flagged} disposal${flagged !== 1 ? 's' : ''} with unknown acquisition date (treated conservatively)</span><br>` : ''}
       ${fxIncomplete ? `<span style="color:var(--accent);">⚠ Some FX rates unavailable — totals may be incomplete</span><br>` : ''}
       ${profile.knownLimits ? `<span style="color:var(--text3);">ⓘ Known limit: ${profile.knownLimits}</span><br>` : ''}
@@ -3749,9 +3739,6 @@ async function exportCGTReport() {
   }
   if (profile.inclusionRate != null) {
     rows.push([`Inclusion Rate,${Math.round(profile.inclusionRate * 100)}%`]);
-  }
-  if (profile.pupFloor) {
-    rows.push([`Personal-Use-Property Floor (${cs}),${f(profile.pupFloor)} (cost and proceeds deemed >= this per disposal)`]);
   }
   rows.push([`Taxable Gain (${cs}),${f(taxableT)}`]);
   if (profile.code === 'UK') {

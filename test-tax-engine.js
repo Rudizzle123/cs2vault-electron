@@ -1,6 +1,8 @@
 /* Offline test harness — v3.2.0 (six new jurisdictions: SE, PL, AU, NO, DK, FI).
  * Extracts the real helpers + TAX_PROFILES from src/app.js (no DOM), then asserts:
- *   - v3.1.1 regressions stay green (DE cliff, UK deductible allowance, CA floor)
+ *   - v3.1.1 regressions stay green (DE cliff, UK deductible allowance)
+ *   - CA v3.6.1: investor ordinary-capital-property classification (NO $1,000
+ *     PUP floor, losses deductible, 50% inclusion; PUP alternative disclosed)
  *   - new profiles: rates, holding-period classification, AU 50% discount,
  *     FI two-tier 30/34% + €1,000 cliff, NO 22% (no share uplift), DK indicative,
  *     SE 30%, PL 19%, AU tax-year boundary.
@@ -63,8 +65,32 @@ check('DE €1000 -> 1000', _applyExemption(1000, P.DE), 1000);
 check('UK £3500 -> 500 (deductible)', _applyExemption(3500, P.UK), 500);
 checkBool('UK basic 18', P.UK.rates.basic === 18, true);
 checkBool('UK higher 24', P.UK.rates.higher === 24, true);
-checkBool('CA pupFloor 1000', P.CA.pupFloor === 1000, true);
 check('CA inclusion 0.5', P.CA.inclusionRate, 0.5);
+
+console.log('\n=== Canada (v3.6.1: ordinary capital property — NO PUP floor, losses deductible) ===');
+checkBool('CA currency CAD', P.CA.taxCurrency === 'CAD', true);
+checkBool('CA pupFloor REMOVED', P.CA.pupFloor == null, true);
+check('CA no allowance (gain passes through)', _applyExemption(4000, P.CA), 4000);
+checkBool('CA classify always taxable capital', P.CA.classifyGain({}).taxable === true && P.CA.classifyGain({}).bucket === 'capital', true);
+// Real figures, no floor: a cheap disposal keeps its true gain/loss.
+// cost $200, proceeds $150 -> real -$50 loss (old floor deemed both $1,000 -> $0).
+const caCheapLoss = 150 - 200;
+check('CA cheap disposal keeps real -$50 loss (no floor)', caCheapLoss, -50);
+// cost $300, proceeds $700 -> real +$400 gain (old floor deemed both $1,000 -> $0 gain).
+check('CA cheap disposal keeps real +$400 gain (no floor)', 700 - 300, 400);
+// Pooled deductible losses then 50% inclusion: +$1,000 gain, -$300 loss -> net $700 -> $350 taxable.
+const caNet = Math.max(0, 1000 + (-300));
+check('CA loss offsets gain, 50% incl -> $350 taxable', _applyExemption(caNet, P.CA) * P.CA.inclusionRate, 350);
+// Net loss year -> nothing taxable (loss stays available, not deemed nil).
+check('CA net loss year -> 0 taxable', _applyExemption(Math.max(0, 200 - 500), P.CA) * P.CA.inclusionRate, 0);
+// Classification + alternative reading must be disclosed.
+checkBool('CA disclaimer: ordinary capital property basis', /ordinary capital property/i.test(P.CA.disclaimer), true);
+checkBool('CA disclaimer: losses deductible', /losses are deductible|capital losses are deductible/i.test(P.CA.disclaimer), true);
+checkBool('CA disclaimer: PUP alternative disclosed', /personal-use-property|PUP/i.test(P.CA.disclaimer) && /\$1,000/.test(P.CA.disclaimer), true);
+checkBool('CA disclaimer: LPP ring-fencing disclosed', /LPP/.test(P.CA.disclaimer), true);
+checkBool('CA disclaimer: business-income risk disclosed', /business income/i.test(P.CA.disclaimer), true);
+checkBool('CA knownLimits: no floor + PUP alternative', /no CAD \$1,000/i.test(P.CA.knownLimits) && /personal-use property/i.test(P.CA.knownLimits), true);
+checkBool('CA disclaimer: not tax advice', /not tax advice/i.test(P.CA.disclaimer), true);
 
 console.log('\n=== Sweden (flat 30%, no allowance) ===');
 checkBool('SE currency SEK', P.SE.taxCurrency === 'SEK', true);
