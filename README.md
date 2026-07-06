@@ -39,11 +39,13 @@ Professional CS2 investment portfolio tracker built with Electron. Track holding
 - `cs2vault_trial_start` — ISO date the 14-day no-card Pro trial began
 - `cs2vault_activity_log` — manual-entry activity log (add/edit/delete on holdings + play skins, newest-first, capped at 500)
 - `cs2vault_value_history` — daily portfolio value points (value-over-time chart; `{date,steam,csfloat,value,invested}`, capped at 730)
+- `cs2vault_steam_id` — last-used SteamID/profile URL for the Steam inventory import
 
 **External APIs used:**
 - frankfurter.app (no auth, ECB rates) — FX conversion, live + historical; open.er-api.com as fallback
 - CSFloat API (requires API key) — primary pricing for skins/knives/armory/charms
 - Steam Market (no auth) — pricing for cases, stickers, and TUF-tagged skins
+- Steam Community inventory endpoint `/inventory/{steamId64}/730/2` (no auth) — Steam inventory import; vanity names resolved via the profile `?xml=1` endpoint. **Limit:** items inside Storage Units are not returned
 - Pricempire API (free Trader tier, 30k calls/month) — CSFloat historical prices
 - SteamAPIs (no auth) — item images via CDN
 

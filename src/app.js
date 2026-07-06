@@ -1554,7 +1554,7 @@ function curSymOf(code) {
 // Fill all currency <select>s (entry selects show codes; settings shows full labels)
 function populateCcySelects() {
   const entryUnlocked = featureUnlocked('multiCurrencyEntry');
-  ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy'].forEach(id => {
+  ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy','steamImportCcy'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     // Rebuild each time so toggling the Pro override re-locks/unlocks entry.
@@ -6880,6 +6880,7 @@ async function exportAllData() {
     trialStart:      window._store['cs2vault_trial_start'] || null,
     activityLog:     window._store['cs2vault_activity_log'] || null,
     valueHistory:    window._store['cs2vault_value_history'] || null,
+    steamId:         window._store['cs2vault_steam_id'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
   const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -6894,7 +6895,7 @@ function clearAllData() {
   // deliberately NOT cleared here — wiping a paid licence on "clear data" would
   // lock a paying customer out of a purchase they made. Use Settings → Remove
   // licence to sign out of Pro on this machine.
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log','cs2vault_value_history'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log','cs2vault_value_history','cs2vault_steam_id'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -7488,6 +7489,381 @@ async function importCSV() {
   renderHoldings();
   updateStats();
   toast(`Imported ${items.length} item(s)!`, 'success');
+}
+
+// ============================================================
+// STEAM INVENTORY IMPORT (Phase 5, v3.6.0) — free tier
+// ============================================================
+// Pulls the user's PUBLIC floating CS2 inventory via Steam's community
+// endpoint /inventory/{steamId64}/730/2 (no auth, no API key) and merges it
+// into Holdings with a dedupe preview. Steam doesn't know buy prices, so the
+// user supplies a default price/date (editable per row) before anything is
+// saved. KNOWN LIMIT (documented in the modal): items inside STORAGE UNITS
+// are invisible to this endpoint — only the floating inventory is returned.
+// All traffic goes through window.cs2vault.fetch (main-process IPC).
+
+const STEAM_ID_KEY = 'cs2vault_steam_id';
+const STEAM_INV_PAGE_SIZE = 2000;   // max Steam honours per request
+const STEAM_INV_MAX_PAGES = 10;     // 20k items — safety cap
+const STEAM_INV_PAGE_DELAY = 1500;  // ms between pages (be polite, avoid 429)
+
+let _steamImportRows = [];          // preview rows (module state, not persisted)
+let _steamImportBusy = false;
+
+// ── Input parsing ───────────────────────────────────────────
+// Accepts: bare SteamID64, /profiles/<id64> URL, /id/<vanity> URL, or a bare
+// vanity name. Returns { kind:'id64'|'vanity', value } or null.
+function parseSteamIdInput(raw) {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  let m = s.match(/steamcommunity\.com\/profiles\/(\d{17})/i);
+  if (m) return { kind: 'id64', value: m[1] };
+  m = s.match(/steamcommunity\.com\/id\/([^\/\s?#]+)/i);
+  if (m) return { kind: 'vanity', value: m[1] };
+  if (/^\d{17}$/.test(s) && s.indexOf('7656') === 0) return { kind: 'id64', value: s };
+  if (/^[A-Za-z0-9_-]{2,64}$/.test(s)) return { kind: 'vanity', value: s };
+  return null;
+}
+
+// Vanity → SteamID64 via the profile XML endpoint (no API key needed).
+async function resolveSteamVanity(vanity) {
+  const url = 'https://steamcommunity.com/id/' + encodeURIComponent(vanity) + '/?xml=1';
+  let res;
+  try { res = await window.cs2vault.fetch(url); } catch (e) { return { error: 'network' }; }
+  if (!res || !res.ok) return { error: res && res.status === 429 ? 'ratelimit' : 'network' };
+  const m = (res.body || '').match(/<steamID64>(\d{17})<\/steamID64>/);
+  if (m) return { id64: m[1] };
+  if ((res.body || '').indexOf('could not be found') !== -1) return { error: 'notfound' };
+  return { error: 'notfound' };
+}
+
+// ── Inventory fetch (paginated) ─────────────────────────────
+// Returns { items:[{hash, qty, steamType}], skippedNonMarket, truncated }
+// or { error: 'private' | 'ratelimit' | 'network' | 'empty' }.
+async function fetchSteamInventory(id64) {
+  const byHash = {};           // market_hash_name -> { hash, qty, steamType }
+  let skippedNonMarket = 0;
+  let truncated = false;
+  let startAssetId = null;
+
+  for (let page = 0; page < STEAM_INV_MAX_PAGES; page++) {
+    let url = 'https://steamcommunity.com/inventory/' + id64 + '/730/2?l=english&count=' + STEAM_INV_PAGE_SIZE;
+    if (startAssetId) url += '&start_assetid=' + encodeURIComponent(startAssetId);
+
+    let res;
+    try { res = await window.cs2vault.fetch(url); } catch (e) { return { error: 'network' }; }
+    if (!res) return { error: 'network' };
+    if (res.status === 429) return { error: 'ratelimit' };
+    if (res.status === 403) return { error: 'private' };
+    if (!res.ok) return { error: 'network' };
+
+    // Steam returns the literal string "null" for private/empty inventories.
+    const bodyStr = (res.body || '').trim();
+    if (!bodyStr || bodyStr === 'null') return { error: page === 0 ? 'private' : 'network' };
+
+    let data;
+    try { data = JSON.parse(bodyStr); } catch (e) { return { error: 'network' }; }
+    if (!data || data.success !== 1) return { error: 'network' };
+
+    const assets = Array.isArray(data.assets) ? data.assets : [];
+    const descs = Array.isArray(data.descriptions) ? data.descriptions : [];
+    if (page === 0 && assets.length === 0) return { error: 'empty' };
+
+    // Descriptions are keyed by classid_instanceid
+    const descMap = {};
+    descs.forEach(function(d) { descMap[d.classid + '_' + d.instanceid] = d; });
+
+    assets.forEach(function(a) {
+      const d = descMap[a.classid + '_' + a.instanceid];
+      if (!d || !d.market_hash_name) { skippedNonMarket++; return; }
+      // Skip non-marketable clutter (medals, coins, storage units themselves…)
+      if (d.marketable !== 1) { skippedNonMarket++; return; }
+      const hash = d.market_hash_name;
+      const amount = parseInt(a.amount) || 1;
+      if (!byHash[hash]) byHash[hash] = { hash: hash, qty: 0, steamType: d.type || '' };
+      byHash[hash].qty += amount;
+    });
+
+    if (data.more_items && data.last_assetid) {
+      startAssetId = data.last_assetid;
+      if (page === STEAM_INV_MAX_PAGES - 1) { truncated = true; break; }
+      await sleep(STEAM_INV_PAGE_DELAY);
+    } else {
+      break;
+    }
+  }
+
+  const items = Object.keys(byHash).map(function(k) { return byHash[k]; });
+  items.sort(function(a, b) { return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0; });
+  return { items: items, skippedNonMarket: skippedNonMarket, truncated: truncated };
+}
+
+// ── Modal flow ──────────────────────────────────────────────
+function openSteamImport() {
+  _steamImportRows = [];
+  const idInput = document.getElementById('steamImportId');
+  if (idInput) idInput.value = window._store[STEAM_ID_KEY] || '';
+  const status = document.getElementById('steamImportStatus');
+  if (status) status.textContent = '';
+  _steamImportShowStep(1);
+  const dateEl = document.getElementById('steamImportDate');
+  if (dateEl && !dateEl.value) dateEl.value = todayStr();
+  try { populateCcySelects(); } catch (e) {}
+  openModal('steamImportModal');
+}
+
+// Toggle between the two modal steps (footer Back/Import only apply to step 2)
+function _steamImportShowStep(n) {
+  document.getElementById('steamImportStep1').style.display = n === 1 ? '' : 'none';
+  document.getElementById('steamImportStep2').style.display = n === 2 ? '' : 'none';
+  const back = document.getElementById('steamImportBackBtn');
+  const conf = document.getElementById('steamImportConfirmBtn');
+  if (back) back.style.display = n === 2 ? '' : 'none';
+  if (conf) conf.style.display = n === 2 ? '' : 'none';
+}
+
+function _steamImportStatus(msg) {
+  const el = document.getElementById('steamImportStatus');
+  if (el) el.textContent = msg || '';
+}
+
+async function startSteamImport() {
+  if (_steamImportBusy) return;
+  const raw = (document.getElementById('steamImportId') || {}).value || '';
+  const parsed = parseSteamIdInput(raw);
+  if (!parsed) { toast('Enter a SteamID64, profile URL, or vanity name', 'error'); return; }
+
+  _steamImportBusy = true;
+  const btn = document.getElementById('steamImportFetchBtn');
+  if (btn) btn.disabled = true;
+  try {
+    let id64 = parsed.value;
+    if (parsed.kind === 'vanity') {
+      _steamImportStatus('Resolving vanity name…');
+      const r = await resolveSteamVanity(parsed.value);
+      if (r.error === 'notfound') { toast('No Steam profile found for "' + parsed.value + '"', 'error'); _steamImportStatus(''); return; }
+      if (r.error === 'ratelimit') { toast('Steam is rate-limiting requests — wait a minute and try again', 'error'); _steamImportStatus(''); return; }
+      if (r.error) { toast('Could not reach Steam — check your connection', 'error'); _steamImportStatus(''); return; }
+      id64 = r.id64;
+    }
+
+    _steamImportStatus('Fetching inventory… (large inventories take a few pages)');
+    const inv = await fetchSteamInventory(id64);
+    if (inv.error === 'private') { toast('That inventory is private — set it to Public in Steam privacy settings', 'error'); _steamImportStatus('Inventory is private or unavailable.'); return; }
+    if (inv.error === 'ratelimit') { toast('Steam is rate-limiting inventory requests — wait a minute and try again', 'error'); _steamImportStatus(''); return; }
+    if (inv.error === 'empty') { toast('That inventory has no items', 'info'); _steamImportStatus('No items found.'); return; }
+    if (inv.error) { toast('Could not fetch the inventory — Steam may be down or blocking requests', 'error'); _steamImportStatus(''); return; }
+
+    // Remember the ID for next time (only once a fetch succeeds)
+    window._storeSet(STEAM_ID_KEY, raw.trim());
+
+    // Build preview rows against CURRENT holdings (fresh read)
+    const existingArr = loadData();
+    const findExisting = function(hash) {
+      const h = hash.toLowerCase();
+      return existingArr.find(function(x) {
+        return (x.marketHash || '').toLowerCase() === h || (x.name || '').toLowerCase() === h;
+      }) || null;
+    };
+
+    _steamImportRows = inv.items.map(function(it) {
+      const ex = findExisting(it.hash);
+      const inferred = inferTypeFromSteamResult({ steamType: it.steamType, hash: it.hash }, 'holding');
+      let importQty = it.qty, include = true, status = 'new';
+      if (ex) {
+        const diff = it.qty - (ex.qty || 0);
+        if (diff > 0) { importQty = diff; status = 'more'; }
+        else { importQty = it.qty; include = false; status = 'tracked'; }
+      }
+      return {
+        hash: it.hash, steamQty: it.qty, type: inferred,
+        existingId: ex ? ex.id : null, existingQty: ex ? ex.qty : 0,
+        importQty: importQty, include: include, status: status, price: ''
+      };
+    });
+
+    let note = inv.items.length + ' marketable item type(s) found';
+    if (inv.skippedNonMarket) note += ' · ' + inv.skippedNonMarket + ' non-marketable item(s) skipped';
+    if (inv.truncated) note += ' · ⚠ inventory larger than ' + (STEAM_INV_MAX_PAGES * STEAM_INV_PAGE_SIZE) + ' items — list truncated';
+    _steamImportStatus(note);
+
+    _steamImportShowStep(2);
+    renderSteamImportPreview();
+  } finally {
+    _steamImportBusy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function steamImportBack() {
+  _steamImportShowStep(1);
+}
+
+function steamImportToggleAll(checked) {
+  _steamImportRows.forEach(function(r) { r.include = !!checked; });
+  renderSteamImportPreview();
+}
+
+// Preview table — built with createElement/textContent (injection-safe: item
+// names can contain quotes and angle brackets).
+function renderSteamImportPreview() {
+  const body = document.getElementById('steamImportRows');
+  if (!body) return;
+  body.innerHTML = '';
+  const TYPES = ['skin', 'case', 'sticker', 'armory', 'knife'];
+
+  _steamImportRows.forEach(function(r, idx) {
+    const tr = document.createElement('tr');
+    if (!r.include) tr.style.opacity = '0.45';
+
+    // include checkbox
+    let td = document.createElement('td');
+    td.style.textAlign = 'center';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = r.include;
+    cb.addEventListener('change', function() { r.include = cb.checked; tr.style.opacity = cb.checked ? '1' : '0.45'; updateSteamImportCount(); });
+    td.appendChild(cb); tr.appendChild(td);
+
+    // name
+    td = document.createElement('td');
+    td.textContent = r.hash; td.title = r.hash;
+    td.style.maxWidth = '260px'; td.style.overflow = 'hidden'; td.style.textOverflow = 'ellipsis'; td.style.whiteSpace = 'nowrap';
+    tr.appendChild(td);
+
+    // status badge
+    td = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.style.fontFamily = "'Share Tech Mono',monospace"; badge.style.fontSize = '10px';
+    badge.style.padding = '2px 6px'; badge.style.borderRadius = '4px'; badge.style.whiteSpace = 'nowrap';
+    if (r.status === 'new') { badge.textContent = 'NEW'; badge.style.background = 'rgba(34,197,94,0.12)'; badge.style.color = 'var(--green,#22c55e)'; }
+    else if (r.status === 'more') { badge.textContent = '+' + (r.steamQty - r.existingQty) + ' MORE'; badge.title = 'You track ' + r.existingQty + ', Steam shows ' + r.steamQty + ' — importing the difference as a new lot'; badge.style.background = 'rgba(234,179,8,0.12)'; badge.style.color = '#eab308'; }
+    else { badge.textContent = 'TRACKED'; badge.title = 'Already in holdings (' + r.existingQty + ' tracked, ' + r.steamQty + ' on Steam)'; badge.style.background = 'rgba(148,163,184,0.12)'; badge.style.color = 'var(--text3)'; }
+    td.appendChild(badge); tr.appendChild(td);
+
+    // type select
+    td = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.style.fontSize = '11px'; sel.style.padding = '2px 4px';
+    TYPES.forEach(function(t) {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+      sel.appendChild(o);
+    });
+    sel.value = r.type;
+    sel.addEventListener('change', function() { r.type = sel.value; });
+    tr.appendChild(td); td.appendChild(sel);
+
+    // qty
+    td = document.createElement('td');
+    const qtyIn = document.createElement('input');
+    qtyIn.type = 'number'; qtyIn.min = '1'; qtyIn.step = '1'; qtyIn.value = r.importQty;
+    qtyIn.style.width = '64px'; qtyIn.style.fontSize = '11px'; qtyIn.style.padding = '2px 4px';
+    qtyIn.title = 'Steam shows ' + r.steamQty;
+    qtyIn.addEventListener('input', function() { r.importQty = parseInt(qtyIn.value) || 0; });
+    td.appendChild(qtyIn); tr.appendChild(td);
+
+    // per-row buy price override (blank = use default)
+    td = document.createElement('td');
+    const prIn = document.createElement('input');
+    prIn.type = 'number'; prIn.min = '0'; prIn.step = '0.01'; prIn.placeholder = 'default';
+    prIn.value = r.price;
+    prIn.style.width = '80px'; prIn.style.fontSize = '11px'; prIn.style.padding = '2px 4px';
+    prIn.title = 'Buy price per unit — leave blank to use the default above';
+    prIn.addEventListener('input', function() { r.price = prIn.value; });
+    td.appendChild(prIn); tr.appendChild(td);
+
+    body.appendChild(tr);
+  });
+  updateSteamImportCount();
+}
+
+function updateSteamImportCount() {
+  const el = document.getElementById('steamImportCount');
+  if (!el) return;
+  const inc = _steamImportRows.filter(function(r) { return r.include && r.importQty > 0; });
+  const units = inc.reduce(function(s, r) { return s + r.importQty; }, 0);
+  el.textContent = inc.length + ' item type(s) · ' + units + ' unit(s) selected';
+}
+
+// ── Commit ──────────────────────────────────────────────────
+async function confirmSteamImport() {
+  if (_steamImportBusy) return;
+  const rows = _steamImportRows.filter(function(r) { return r.include && r.importQty > 0; });
+  if (!rows.length) { toast('Nothing selected to import', 'info'); return; }
+
+  const defPriceRaw = (document.getElementById('steamImportPrice') || {}).value;
+  const defPrice = parseFloat(defPriceRaw);
+  const ccy = (document.getElementById('steamImportCcy') || {}).value || 'GBP';
+  const date = (document.getElementById('steamImportDate') || {}).value || todayStr();
+
+  // Every row needs a price — its own override, or the default.
+  const missing = rows.filter(function(r) { return !(parseFloat(r.price) > 0) && !(defPrice > 0); });
+  if (missing.length) { toast('Set a default buy price (or fill in every selected row)', 'error'); return; }
+
+  _steamImportBusy = true;
+  const btn = document.getElementById('steamImportConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    // One FX rate covers all rows (single currency + date). toBaseGBP caches
+    // historical rates permanently, so per-row calls are effectively free.
+    const probe = await toBaseGBP(1, ccy, date);
+    if (!probe) { toast('FX rate unavailable for ' + ccy + ' — nothing imported', 'error'); return; }
+    const fxRate = probe.fxRate;
+
+    // ATOMIC WRITE: re-read storage immediately before mutating (v2.4.3 pattern)
+    const fresh = loadData();
+    let added = 0, merged = 0;
+
+    rows.forEach(function(r) {
+      const perUnitEntered = (parseFloat(r.price) > 0) ? parseFloat(r.price) : defPrice;
+      const baseGBP = +(perUnitEntered * fxRate).toFixed(6);
+      const target = r.existingId ? fresh.find(function(h) { return h.id === r.existingId; }) : null;
+
+      if (target) {
+        // MERGE: append a lot to the existing holding (same pattern as top-up)
+        const before = _logSnapshot(target);
+        ensureLots(target);
+        target.lots.push(makeLot(r.importQty, baseGBP, date, ccy, fxRate, perUnitEntered));
+        recalcHoldingFromLots(target);
+        const mergeNote = '+' + r.importQty + ' via Steam import on ' + date;
+        target.notes = target.notes ? target.notes + ' | ' + mergeNote : mergeNote;
+        const diff = _logDiff(before, _logSnapshot(target));
+        logActivity('edit', 'holding', _logSnapshot(target),
+          diff.length ? diff : [{ field: 'Steam import', from: '', to: '+' + r.importQty }]);
+        merged++;
+      } else {
+        // NEW holding — full lot data + FX provenance (matches importCSV v3.4.1)
+        const item = {
+          id: uid(),
+          name: r.hash,
+          type: r.type,
+          qty: r.importQty,
+          buyPrice: baseGBP,
+          buyDate: date,
+          marketHash: r.hash,
+          notes: 'Imported from Steam inventory',
+          origCurrency: ccy, origAmount: perUnitEntered, fxRate: fxRate,
+          prices: null
+        };
+        item.lots = [ makeLot(item.qty, item.buyPrice, date, ccy, fxRate, perUnitEntered) ];
+        fresh.push(item);
+        logActivity('add', 'holding', _logSnapshot(item), null);
+        added++;
+      }
+    });
+
+    saveData(fresh);
+    holdings = fresh;
+    renderHoldings();
+    updateStats();
+    closeModal('steamImportModal');
+    let msg = 'Steam import complete — ' + added + ' new item(s)';
+    if (merged) msg += ', ' + merged + ' merged into existing holdings';
+    toast(msg, 'success');
+  } finally {
+    _steamImportBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Selected'; }
+  }
 }
 
 // ========================

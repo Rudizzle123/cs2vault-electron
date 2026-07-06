@@ -1,10 +1,29 @@
 # CS2 Vault — Project State
 
-Last updated: June 2026 | Current version: v3.5.1
+Last updated: July 2026 | Current version: v3.6.0
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.6.0 — Steam floating-inventory import (Phase 5) ✅
+**Pre-launch acquisition feature per LAUNCH-PLAN.md — free tier, no `isPro()` gate.** Pulls the user's public floating CS2 inventory via Steam's community endpoint and merges it into Holdings with a dedupe/merge preview. No tax-engine, pricing-logic, or payments changes.
+
+- **New "⇩ Steam Import" button** on the Holdings toolbar (next to Import CSV) opens `steamImportModal` — a two-step flow:
+  - **Step 1 — identify the account.** Accepts a bare SteamID64, a `/profiles/…` URL, a `/id/…` URL, or a bare vanity name (`parseSteamIdInput`). Vanity names resolve to SteamID64 via the no-key profile XML endpoint (`https://steamcommunity.com/id/{vanity}/?xml=1`, `resolveSteamVanity`). Last-used input is remembered in the new **`cs2vault_steam_id`** key and prefilled next time
+  - **Step 2 — dedupe/merge preview** (nothing saved until Import Selected). Per-row: include checkbox, item name, status badge (**NEW** / **+N MORE** / **TRACKED**), editable type select, editable qty, per-row buy-price override. A defaults bar sets **default buy price + currency + buy date** applied to every row without an override (Steam doesn't know buy prices). Currency select is registered in `populateCcySelects` so the free-tier GBP lock applies (multi-currency entry stays Pro)
+- **Inventory fetch** (`fetchSteamInventory`): public endpoint `/inventory/{steamId64}/730/2?l=english&count=2000` via `window.cs2vault.fetch` (never browser fetch), **paginated** with `more_items`/`last_assetid` (`start_assetid` param), 1.5s delay between pages, capped at 10 pages (20k items, `truncated` flagged). **Errors surfaced as clear toasts**: 403 or literal `"null"` body → "inventory is private" (with the fix: set inventory privacy to Public), 429 → rate-limited/try again, parse/network → generic failure. Items grouped by `market_hash_name` with summed quantities; **non-marketable items skipped** (medals, coins, storage-unit containers themselves) and counted in the status line
+- **Type inference reuses `inferTypeFromSteamResult(item, 'holding')`** — each description's Steam `type` string + hash maps to case/sticker/skin/knife/armory, editable per row in the preview
+- **Dedupe/merge semantics** (matched by `marketHash` or exact name, case-insensitive, against a fresh `loadData()` read):
+  - No match → **NEW**, ticked, full Steam qty
+  - Match with Steam qty > tracked qty → **+N MORE**, ticked, qty prefilled to the *difference*; on import the units are **merged into the existing holding as a new lot** (`ensureLots` → `makeLot` push → `recalcHoldingFromLots`, same pattern as top-up), with a note appended and an **edit** logged with a before→after diff
+  - Match fully covered → **TRACKED**, unticked by default (still importable manually)
+- **Full lot data + FX provenance on every import** — per-unit entered price converts to base GBP at the chosen buy date via `toBaseGBP` (one rate for the whole batch — single currency+date, historical rates cached permanently); items carry `origCurrency`/`origAmount`/`fxRate` + `lots[]` exactly like the v3.4.1 `importCSV` path. New items log an **add** to the activity log; merges log an **edit**
+- **Atomic write**: `loadData()` re-read immediately before mutating, single `saveData()` at the end (v2.4.3 pattern)
+- **Known limit documented in-app (step 1 of the modal): items inside Storage Units are invisible to this endpoint** — only the floating inventory imports. Storage-unit import is Phase 6 (Pro, GC session)
+- Preview rows built with `createElement`/`textContent` (injection-safe — hash names can contain quotes/`<`)
+- `cs2vault_steam_id` registered in **`STORE_KEYS`** (index.html, 23 keys now), `exportAllData` backup, and `clearAllData`
+- Offline harness (`/tmp` scratch, 21/21): input parsing (ID64/URLs/vanity/garbage), vanity resolution + not-found, private (403 and `"null"` body), 429, two-page pagination with cross-page quantity grouping, non-marketable skip, type inference, and merge maths (lot append → weighted-average recalc). Tax-engine harness still **73/73**. `node -c src/app.js` clean
 
 ### v3.5.1 — Value chart split: Steam/CSFloat → Invested vs Unrealised P&L ✅
 The line under the Portfolio Value header originally showed a **Steam £X / CSFloat £Y** split. This was misleading: it was a *pricing-source* breakdown (which platform drives each item's P&L price — Steam for cases/stickers/TUF/agents, CSFloat for everything else), not a cross-platform value comparison. For a case/sticker-heavy portfolio it dumped ~98% of value into the "Steam" bucket, reading like the CSFloat value was wrong. Replaced with the more useful **Invested £X · ▲ Unrealised P&L ±£Y** line.
@@ -474,7 +493,7 @@ Focused correctness fixes to the v3.0.0 multi-jurisdiction tax engine, flagged b
 
 ### Medium-term
 - **£41k full-cashout tax modelling** — Rudi wants to model his actual CGT position if he sold his entire ~£41k portfolio and realised it to his bank: the real taxable gain after deducting acquisition costs, and spreading disposals across tax years to use multiple £3,000 allowances. Needs his rough total acquisition cost as input. Revisit in a future session
-- **Phase 6 — Steam inventory import** — limited usefulness for users with storage units (items in storage units are invisible to Steam's inventory API). Worth building for floating inventory items only
+- **Steam storage-unit import (TRANSITION-PLAN Phase 6)** — floating-inventory import shipped in v3.6.0; storage-unit contents remain invisible to the public endpoint and need a GC session (`steam-user` + `node-globaloffensive`). Pro tier, 2–3 sessions, post-launch
 
 ### Ideas (not yet scoped)
 - Case Intel squeeze score — composite chip combining the now-real supply trend + momentum + discontinued status (post-v2.5.0 the inputs all exist)
