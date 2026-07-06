@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — CS2 Vault</title>
+<meta name="description" content="CS2 Vault privacy policy. Local-first desktop app: your portfolio data stays on your own computer.">
+<link rel="icon" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Exo+2:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<div class="page">
+
+<header>
+  <a class="logo" href="/">
+    <img src="/assets/logo.png" alt="">
+    <span class="logo-text">CS2 <span>Vault</span></span>
+  </a>
+  <nav class="nav">
+    <a href="/#tax-engine">Tax Engine</a>
+    <a href="/pricing/">Pricing</a>
+    <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+  </nav>
+</header>
+
+<main class="prose">
+  <h1>Privacy Policy</h1>
+  <div class="meta">CS2 Vault desktop application &amp; website · Last updated: July 2026</div>
+
+  <div class="box">
+    <strong>The short version:</strong> CS2 Vault is a local-first desktop app. Your portfolio data stays on your own computer. We don't run an analytics or tracking server, and we never sell your data.
+  </div>
+
+  <h2>1. Who we are</h2>
+  <p>CS2 Vault ("the app", "we") is a desktop portfolio-tracking and tax-estimation tool for CS2 items. This policy explains what data the app and this website handle and where it goes. <span class="action-required">[ACTION REQUIRED: replace with your legal/trading name and a contact email before your first paid sale.]</span></p>
+
+  <h2>2. Data stored on your device</h2>
+  <p>Everything you enter — holdings, trade history, play skins, watchlist, alerts, settings, API keys and FX cache — is stored <strong>locally</strong> in the app's own database on your machine (under your user data folder). It is never transmitted to us. You can export or clear it at any time from Settings &rarr; Data Management.</p>
+
+  <h2>3. Data sent to third parties</h2>
+  <p>To function, the app makes direct requests from your computer to the following services. We don't proxy or log these — they go straight from your device to the provider:</p>
+  <ul>
+    <li><strong>CSFloat</strong> and <strong>Steam Community Market</strong> — for live item pricing. Your CSFloat API key is sent to CSFloat only.</li>
+    <li><strong>Pricempire</strong> — for historical pricing (only if you add a Pricempire API key).</li>
+    <li><strong>frankfurter.app / open.er-api.com</strong> — for foreign-exchange rates (no personal data sent).</li>
+    <li><strong>GitHub Releases</strong> — the auto-updater checks for new versions.</li>
+  </ul>
+
+  <h2>4. Payments &amp; licensing</h2>
+  <p>If you upgrade to Vault Pro, payment is handled entirely by <strong>Paddle</strong> (our merchant of record). We never see or store your card details — Paddle processes the transaction and is responsible for billing data under its own privacy policy. After purchase you receive a <strong>licence key</strong>. The app validates that key against our licence service (a Cloudflare Worker) by sending only the key itself and the product name — no portfolio data, no personal identifiers beyond what the key represents. The validation result is cached locally so the app keeps working offline.</p>
+
+  <h2>5. This website</h2>
+  <p>This site is a set of static pages hosted on Cloudflare Pages. We don't set our own tracking cookies and don't run our own analytics on it. Our hosting provider (Cloudflare) may process standard technical request data (such as IP addresses) to serve and secure the site, under its own privacy policy.</p>
+
+  <h2>6. What we do not collect</h2>
+  <ul>
+    <li>No telemetry, usage analytics, or crash reporting is sent to us from the app.</li>
+    <li>No advertising identifiers. The app contains no ads.</li>
+    <li>No account is required to use the free tier.</li>
+  </ul>
+
+  <h2>7. Your controls</h2>
+  <p>You can export a full JSON backup, clear all data, or remove your licence from a machine at any time in Settings. Removing the app from your computer removes the local database (your AppData folder may retain it until manually deleted — the uninstaller does not wipe user data by design, so an accidental reinstall doesn't lose your portfolio).</p>
+
+  <h2>8. Children</h2>
+  <p>The app is not directed to children and is intended for adult users managing their own assets.</p>
+
+  <h2>9. Changes</h2>
+  <p>We may update this policy as the product evolves. Material changes will be noted in the release notes and reflected on this page.</p>
+
+  <hr>
+  <p style="font-size:13px;color:var(--text3);">Questions about this policy? Contact <span class="action-required">[ACTION REQUIRED: contact email]</span>.</p>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-copy">© 2026 CS2 Vault</div>
+    <div class="foot-links">
+      <a href="/pricing/">Pricing</a>
+      <a href="/terms/">Terms</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/refund/">Refunds</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>

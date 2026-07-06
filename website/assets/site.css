@@ -1,0 +1,131 @@
+/* CS2 Vault website — shared styles. Tokens mirror src/index.html in the app. */
+:root{
+  --bg:#080c08;--surface:#0c1410;--surface2:#121e16;--surface3:#1a2c20;
+  --border:#1e3d2d;--border2:#245537;--accent:#e8993c;--accent2:#f0b060;
+  --green:#22c55e;--red:#ef4444;--blue:#38bdf8;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--gold:#fbbf24;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{font-family:'Exo 2',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.6;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(34,120,60,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(34,120,60,.04) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
+.page{position:relative;z-index:1;}
+a{color:var(--accent2);text-decoration:none;}
+a:hover{text-decoration:underline;}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px;}
+
+/* ── Header ─────────────────────────────────────────────── */
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 28px;border-bottom:1px solid var(--border);background:rgba(8,12,8,.92);backdrop-filter:blur(10px);position:sticky;top:0;z-index:100;flex-wrap:wrap;}
+.logo{display:flex;align-items:center;gap:11px;color:var(--text);}
+.logo:hover{text-decoration:none;}
+.logo img{width:32px;height:32px;object-fit:contain;}
+.logo-text{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:19px;letter-spacing:2px;text-transform:uppercase;}
+.logo-text span{color:var(--accent);}
+.nav{display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
+.nav a{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);}
+.nav a:hover{color:var(--text);text-decoration:none;}
+.nav .btn{font-size:12px;padding:8px 16px;}
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn{display:inline-block;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;font-size:14px;padding:12px 26px;border-radius:6px;border:1px solid var(--border2);color:var(--text);background:var(--surface2);cursor:pointer;transition:all .18s;}
+.btn:hover{text-decoration:none;border-color:var(--accent);color:var(--accent2);}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#141008;}
+.btn-primary:hover{background:var(--accent2);border-color:var(--accent2);color:#141008;}
+.btn-ghost{background:transparent;}
+
+/* ── Layout helpers ─────────────────────────────────────── */
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px;}
+.section{padding:72px 0;}
+.section+.section{border-top:1px solid var(--border);}
+.eyebrow{font-family:'Share Tech Mono',monospace;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:10px;}
+h1,h2,h3{font-family:'Rajdhani',sans-serif;letter-spacing:.5px;line-height:1.15;}
+h2.sec-title{font-size:32px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:14px;}
+.lead{color:var(--text2);font-size:17px;max-width:640px;}
+
+/* ── Hero ───────────────────────────────────────────────── */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;padding:84px 0 76px;}
+.hero h1{font-size:46px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:18px;}
+.hero h1 em{font-style:normal;color:var(--accent);}
+.hero .lead{margin-bottom:28px;}
+.hero-ctas{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
+.hero-note{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text3);margin-top:14px;}
+
+/* Signature element: mock CGT summary card */
+.tax-card{background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:22px 24px;font-family:'Share Tech Mono',monospace;font-size:13px;box-shadow:0 0 60px rgba(34,197,94,.07),0 20px 50px rgba(0,0,0,.5);}
+.tax-card-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px;}
+.tax-card-title{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:var(--text2);}
+.chip{font-size:11px;border:1px solid var(--border2);border-radius:4px;padding:3px 9px;color:var(--accent2);}
+.tax-row{display:flex;justify-content:space-between;padding:7px 0;color:var(--text2);}
+.tax-row b{color:var(--text);font-weight:400;}
+.tax-row .pos{color:var(--green);}
+.tax-row .neg{color:var(--red);}
+.tax-row.total{border-top:1px solid var(--border);margin-top:8px;padding-top:12px;}
+.tax-row.total b{color:var(--gold);font-size:15px;}
+.allow-label{display:flex;justify-content:space-between;color:var(--text3);font-size:11px;margin:14px 0 6px;}
+.allow-bar{height:8px;background:var(--surface3);border-radius:4px;overflow:hidden;}
+.allow-fill{height:100%;width:0;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:4px;animation:fill 1.2s .3s ease-out forwards;}
+@keyframes fill{to{width:71%;}}
+@media (prefers-reduced-motion:reduce){.allow-fill{animation:none;width:71%;}html{scroll-behavior:auto;}}
+
+/* ── Jurisdiction grid ──────────────────────────────────── */
+.juris-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:30px;}
+.juris{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}
+.juris .code{font-family:'Share Tech Mono',monospace;color:var(--accent);font-size:13px;letter-spacing:1px;}
+.juris .name{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:15px;margin:2px 0 4px;}
+.juris .rule{color:var(--text3);font-size:12.5px;line-height:1.45;}
+
+/* ── Feature grid ───────────────────────────────────────── */
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-top:32px;}
+.feat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:22px;}
+.feat h3{font-size:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;color:var(--text);}
+.feat h3 .mono{font-family:'Share Tech Mono',monospace;color:var(--accent);font-size:12px;display:block;margin-bottom:6px;letter-spacing:1.5px;}
+.feat p{color:var(--text2);font-size:14px;}
+
+/* ── Pricing ────────────────────────────────────────────── */
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:36px;align-items:stretch;}
+.plan{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 26px;display:flex;flex-direction:column;position:relative;}
+.plan.featured{border-color:var(--accent);box-shadow:0 0 44px rgba(232,153,60,.10);}
+.plan .badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--accent);color:#141008;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:3px 12px;border-radius:4px;white-space:nowrap;}
+.plan h3{font-size:18px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;}
+.plan .price{font-family:'Share Tech Mono',monospace;font-size:34px;color:var(--text);margin:14px 0 2px;}
+.plan .price small{font-size:14px;color:var(--text3);}
+.plan .price-sub{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--green);margin-bottom:18px;min-height:18px;}
+.plan ul{list-style:none;margin:0 0 24px;flex:1;}
+.plan li{padding:6px 0 6px 22px;position:relative;color:var(--text2);font-size:14px;}
+.plan li::before{content:'✓';position:absolute;left:0;color:var(--green);font-family:'Share Tech Mono',monospace;}
+.plan li.dim{color:var(--text3);}
+.plan li.dim::before{content:'—';color:var(--text3);}
+.plan .btn{width:100%;text-align:center;}
+
+/* ── Disclaimer band / boxes ────────────────────────────── */
+.band{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:16px 20px;font-size:14px;color:var(--text2);}
+.band strong{color:var(--text);}
+
+/* ── Legal / prose pages ────────────────────────────────── */
+.prose{max-width:760px;margin:0 auto;padding:56px 24px 90px;}
+.prose h1{font-size:30px;margin-bottom:4px;}
+.prose .meta{font-family:'Share Tech Mono',monospace;color:var(--text3);font-size:12px;margin-bottom:26px;}
+.prose h2{font-size:18px;margin:34px 0 8px;color:var(--green);font-weight:700;letter-spacing:.5px;}
+.prose p,.prose li{color:var(--text2);font-size:15px;}
+.prose ul{padding-left:22px;margin:8px 0;}
+.prose strong{color:var(--text);}
+.prose hr{border:0;border-top:1px solid var(--border);margin:34px 0;}
+.prose .box{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:8px;padding:14px 18px;margin:20px 0;font-size:14px;}
+.prose .box.warn{border-left-color:var(--red);}
+.action-required{background:rgba(239,68,68,.08);border:1px dashed var(--red);border-radius:6px;padding:2px 8px;color:#fca5a5;font-size:13px;}
+code{font-family:'Share Tech Mono',monospace;background:#101610;padding:1px 6px;border-radius:4px;color:var(--green);font-size:13px;}
+
+/* ── Footer ─────────────────────────────────────────────── */
+footer{border-top:1px solid var(--border);padding:34px 0 46px;margin-top:40px;}
+.foot-inner{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center;}
+.foot-links{display:flex;gap:20px;flex-wrap:wrap;}
+.foot-links a{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:13px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);}
+.foot-links a:hover{color:var(--text2);text-decoration:none;}
+.foot-copy{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text3);}
+
+@media (max-width:840px){
+  .hero{grid-template-columns:1fr;padding:52px 0 56px;gap:36px;}
+  .hero h1{font-size:34px;}
+  h2.sec-title{font-size:26px;}
+  .section{padding:52px 0;}
+}

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS2 Vault — Tax & Portfolio Tracking for CS2 Skin Investors</title>
+<meta name="description" content="CS2 Vault is a local-first desktop tracker with a real multi-jurisdiction tax engine for CS2 skins — Section 104 pooling, FIFO, transaction-date FX, and export-ready capital gains reports for 10 countries.">
+<meta property="og:title" content="CS2 Vault — the tax-grade CS2 portfolio tracker">
+<meta property="og:description" content="Know exactly what you owe on your skins. Free tracker, Pro tax engine for 10 jurisdictions.">
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Exo+2:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="page">
+
+<header>
+  <a class="logo" href="/">
+    <img src="assets/logo.png" alt="">
+    <span class="logo-text">CS2 <span>Vault</span></span>
+  </a>
+  <nav class="nav">
+    <a href="#tax-engine">Tax Engine</a>
+    <a href="#features">Features</a>
+    <a href="/pricing/">Pricing</a>
+    <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <!-- ── Hero ─────────────────────────────────────────── -->
+  <section class="hero">
+    <div>
+      <div class="eyebrow">// LOCAL-FIRST DESKTOP APP FOR WINDOWS</div>
+      <h1>You owe tax on your skins.<br><em>Know exactly how much.</em></h1>
+      <p class="lead">CS2 Vault is the accounting-grade portfolio tracker for serious CS2 investors — lot-level cost basis, transaction-date FX, and a real capital-gains engine covering <strong>10 tax jurisdictions</strong>. Think Koinly, for skins.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+        <a class="btn btn-ghost" href="/pricing/">See Vault Pro →</a>
+      </div>
+      <p class="hero-note">Free tracker forever · 14-day Pro trial, no card · Your data never leaves your machine</p>
+    </div>
+
+    <div class="tax-card" aria-label="Example capital gains summary from the app">
+      <div class="tax-card-head">
+        <span class="tax-card-title">CGT Summary</span>
+        <span class="chip">UK · 2026/27</span>
+      </div>
+      <div class="tax-row"><span>Realised gains</span><b class="pos">+£4,812.40</b></div>
+      <div class="tax-row"><span>Realised losses</span><b class="neg">−£1,296.10</b></div>
+      <div class="tax-row"><span>Net gain (Section 104 pooled)</span><b>£3,516.30</b></div>
+      <div class="tax-row"><span>Disposals this tax year</span><b>27</b></div>
+      <div class="allow-label"><span>Annual exempt amount</span><span>£2,130 / £3,000</span></div>
+      <div class="allow-bar"><div class="allow-fill"></div></div>
+      <div class="tax-row total"><span>Est. tax owed</span><b>£123.91</b></div>
+    </div>
+  </section>
+
+  <!-- ── The problem ──────────────────────────────────── -->
+  <section class="section">
+    <div class="eyebrow">// THE PART EVERYONE IGNORES</div>
+    <h2 class="sec-title">Skins are taxable assets</h2>
+    <p class="lead">HMRC, the IRS and most EU tax authorities treat gains on virtual items as taxable — in many places even when you never cash out of Steam Wallet. Marketplaces can report your <strong>gross</strong> proceeds; your per-item cost-basis records are your defence. Guessing at year end, or hoping a spreadsheet holds up, is how five-figure portfolios turn into problems.</p>
+    <div class="feat-grid">
+      <div class="feat">
+        <h3><span class="mono">01 · RECORD</span>Every buy is a lot</h3>
+        <p>Each purchase is stored as a dated lot — quantity, unit cost, currency, and the exchange rate on that exact day. Sell years later and the acquisition side of the calculation is already done.</p>
+      </div>
+      <div class="feat">
+        <h3><span class="mono">02 · MATCH</span>The right cost basis</h3>
+        <p>Disposals are matched to lots using your jurisdiction's actual rules — UK Section 104 pooling with same-day and 30-day matching, FIFO, average cost, or specific identification.</p>
+      </div>
+      <div class="feat">
+        <h3><span class="mono">03 · REPORT</span>File with confidence</h3>
+        <p>A per-jurisdiction capital-gains report with the full disposal schedule, holding periods, allowance usage and estimated tax — in your tax authority's currency, ready for your accountant.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Tax engine / jurisdictions ───────────────────── -->
+  <section class="section" id="tax-engine">
+    <div class="eyebrow">// THE TAX ENGINE</div>
+    <h2 class="sec-title">10 jurisdictions. Real rules, not a flat percentage.</h2>
+    <p class="lead">Every profile models the rules that actually change your bill — holding-period exemptions, all-or-nothing thresholds, inclusion rates, and each country's own tax year. Figures are checked against primary government sources.</p>
+    <div class="juris-grid">
+      <div class="juris"><div class="code">UK</div><div class="name">United Kingdom</div><div class="rule">£3,000 exempt amount, 18/24% bands, Section 104 pooling + same-day &amp; 30-day rules</div></div>
+      <div class="juris"><div class="code">US</div><div class="name">United States</div><div class="rule">Short vs long-term split per disposal, 0/15/20% long-term bands, FIFO or specific ID</div></div>
+      <div class="juris"><div class="code">DE</div><div class="name">Germany</div><div class="rule">§23 EStG — tax-free after a 1-year hold; €1,000 Freigrenze applied as the all-or-nothing cliff it really is</div></div>
+      <div class="juris"><div class="code">CA</div><div class="name">Canada</div><div class="rule">50% inclusion rate, ACB pooling, $1,000 personal-use-property floor per disposal</div></div>
+      <div class="juris"><div class="code">AU</div><div class="name">Australia</div><div class="rule">1 Jul–30 Jun tax year, 50% CGT discount applied per disposal for &gt;12-month holds</div></div>
+      <div class="juris"><div class="code">SE</div><div class="name">Sweden</div><div class="rule">Flat 30% on capital gains, average-cost method</div></div>
+      <div class="juris"><div class="code">FI</div><div class="name">Finland</div><div class="rule">30/34% two-tier rates; the €1,000 small-sales exemption modelled correctly on proceeds, not gains</div></div>
+      <div class="juris"><div class="code">NO</div><div class="name">Norway</div><div class="rule">Flat 22% as a general asset — without the share-uplift factor that doesn't apply</div></div>
+      <div class="juris"><div class="code">DK</div><div class="name">Denmark</div><div class="rule">Speculative gains as personal income — indicative rate with the marginal-rate reality disclosed</div></div>
+      <div class="juris"><div class="code">PL</div><div class="name">Poland</div><div class="rule">Flat 19%; the personal tax-free amount correctly not applied to capital gains</div></div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────── -->
+  <section class="section" id="features">
+    <div class="eyebrow">// BUILT LIKE AN ACCOUNTING TOOL</div>
+    <h2 class="sec-title">Everything a long-term holder needs</h2>
+    <div class="feat-grid">
+      <div class="feat"><h3><span class="mono">FREE</span>Full portfolio tracker</h3><p>Holdings, play skins, trade history, watchlist and price alerts, with live pricing from CSFloat and Steam Market side by side.</p></div>
+      <div class="feat"><h3><span class="mono">FREE</span>Value over time</h3><p>Daily portfolio value chart with invested vs unrealised P&amp;L, plus monthly snapshots benchmarked against the S&amp;P 500, Bitcoin and gold.</p></div>
+      <div class="feat"><h3><span class="mono">FREE</span>Activity log</h3><p>Every manual add, edit and delete is recorded with a before/after diff — a fat-fingered price is easy to spot and impossible to lose.</p></div>
+      <div class="feat"><h3><span class="mono">PRO</span>Multi-currency, done right</h3><p>Enter buys and sells in any of 12 currencies. Gains are computed at the exchange rate on the transaction date — never a blended year-end rate — so the FX component of your gain is real.</p></div>
+      <div class="feat"><h3><span class="mono">PRO</span>Cash Out Calculator</h3><p>The full chain from Steam sale to money in your bank — bridge skins, marketplace fees, withdrawal costs and the tax estimate on top.</p></div>
+      <div class="feat"><h3><span class="mono">ALWAYS</span>Local-first &amp; private</h3><p>Your portfolio lives in a database on your own machine. No account for the free tier, no telemetry, no ads — the app only talks to price and FX APIs.</p></div>
+    </div>
+  </section>
+
+  <!-- ── Pricing teaser ───────────────────────────────── -->
+  <section class="section">
+    <div class="eyebrow">// PRICING</div>
+    <h2 class="sec-title">Free tracker. Pro tax engine.</h2>
+    <p class="lead">The tracker is free forever. Vault Pro unlocks the full tax engine, report export, cost-basis methods and multi-currency — <strong>$6.99/month or $49/year</strong>, with a 14-day trial and no card required.</p>
+    <div class="hero-ctas" style="margin-top:26px;">
+      <a class="btn btn-primary" href="/pricing/">Compare plans</a>
+      <a class="btn btn-ghost" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+    </div>
+  </section>
+
+  <!-- ── Disclaimer ───────────────────────────────────── -->
+  <section class="section">
+    <div class="band"><strong>Estimates, not tax advice.</strong> CS2 Vault helps you organise your records and understand your position. Tax rules vary by country and change over time — always confirm your figures with a qualified, digital-asset-literate accountant before filing.</div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-copy">© 2026 CS2 Vault</div>
+    <div class="foot-links">
+      <a href="/pricing/">Pricing</a>
+      <a href="/terms/">Terms</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/refund/">Refunds</a>
+      <a href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
