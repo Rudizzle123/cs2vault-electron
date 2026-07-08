@@ -39,6 +39,18 @@ contextBridge.exposeInMainWorld('cs2vault', {
     onProgress: (cb) => ipcRenderer.on('updater:progress', (_e, pct) => cb(pct)),
   },
 
+  // ── Steam GC bridge (Vault Pro Phase 6: storage-unit import) ──────────────
+  gc: {
+    status:         ()                      => ipcRenderer.invoke('gc:status'),
+    login:          (accountName, password) => ipcRenderer.invoke('gc:login', accountName, password),
+    guard:          (code)                  => ipcRenderer.invoke('gc:guard', code),
+    loginToken:     ()                      => ipcRenderer.invoke('gc:loginToken'),
+    caskets:        ()                      => ipcRenderer.invoke('gc:caskets'),
+    casketContents: (casketId)              => ipcRenderer.invoke('gc:casketContents', casketId),
+    logout:         ()                      => ipcRenderer.invoke('gc:logout'),
+    clearToken:     ()                      => ipcRenderer.invoke('gc:clearToken'),
+  },
+
   // ── Platform detection ────────────────────────────────────────────────────
   platform: process.platform,
 

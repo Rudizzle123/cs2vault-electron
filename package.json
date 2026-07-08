@@ -1,7 +1,7 @@
 {
   "name": "cs2vault",
-  "version": "3.6.4",
-  "description": "CS2 Portfolio Tracker — Professional Investment Dashboard",
+  "version": "3.7.0",
+  "description": "CS2 Portfolio Tracker \u2014 Professional Investment Dashboard",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -55,7 +55,9 @@
   },
   "dependencies": {
     "electron-store": "^8.2.0",
-    "electron-updater": "^6.1.8"
+    "electron-updater": "^6.1.8",
+    "globaloffensive": "^3.3.0",
+    "steam-user": "^5.3.0"
   },
   "devDependencies": {
     "electron": "^29.1.0",

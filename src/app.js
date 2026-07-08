@@ -983,6 +983,8 @@ const FEATURES = {
                           blurb: 'View your whole portfolio, P&L and analytics in any of 12 currencies, converted at live ECB rates. The app is fully usable in GBP on the free tier.' },
   multiCurrencyEntry:   { tier: 'pro', label: 'Multi-currency entry',
                           blurb: 'Record buys, sells and top-ups in any currency, converted to your base at the transaction-date FX rate with full provenance.' },
+  storageUnitImport:    { tier: 'pro', label: 'Storage Unit import',
+                          blurb: 'Read the contents of your Steam Storage Units directly — items invisible to every public inventory tool. Read-only, token-based login, nothing stored but an encrypted session.' },
 };
 
 // isPro() — the ONE check. Reads the local override for now (Phase 4a).
@@ -1342,6 +1344,7 @@ function syncProButtons() {
     proBadgeExportHist: 'csvExport',
     proBadgeCashOut:    'cashOut',
     proBadgeCGTReport:  'taxReportExport',
+    proBadgeStorageUnits: 'storageUnitImport',
   };
   Object.keys(map).forEach(id => {
     const el = document.getElementById(id);
@@ -7181,6 +7184,8 @@ function clearAllData() {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
   });
+  // Also drop the encrypted Steam GC session token (main-process-only key)
+  try { if (window.cs2vault.gc) window.cs2vault.gc.clearToken(); } catch (e) {}
   holdings = []; tradeHistory = [];
   renderHoldings(); updateStats(); renderHistory(); renderAnalytics();
   toast('All data cleared', 'info');
@@ -8172,6 +8177,266 @@ async function confirmSteamImport() {
     _steamImportBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Import Selected'; }
   }
+}
+
+// ========================
+// STORAGE UNITS (Vault Pro Phase 6 — session 1: connect + enumerate)
+// ========================
+// Talks to the main-process GC bridge (src/steam-gc.js) via window.cs2vault.gc.
+// Session-1 scope: Steam login (password used once, encrypted token persisted),
+// GC connect, casket list, raw contents preview. Name mapping + merge-into-
+// holdings is session 2 — nothing here writes to holdings yet.
+
+let _suBusy = false;
+
+function _suEl(id) { return document.getElementById(id); }
+function _suStatus(msg, isErr) {
+  const el = _suEl('suStatus');
+  if (el) { el.textContent = msg || ''; el.style.color = isErr ? 'var(--red)' : 'var(--text3)'; }
+}
+
+function openStorageUnits() {
+  const lock = _suEl('suLockPanel');
+  const step1 = _suEl('suStep1');
+  const step2 = _suEl('suStep2');
+  if (!featureUnlocked('storageUnitImport')) {
+    if (lock) { lock.innerHTML = proLockPanel('storageUnitImport'); lock.style.display = ''; }
+    if (step1) step1.style.display = 'none';
+    if (step2) step2.style.display = 'none';
+    openModal('storageUnitModal');
+    return;
+  }
+  if (lock) lock.style.display = 'none';
+  if (step2) step2.style.display = 'none';
+  if (step1) step1.style.display = '';
+  const guardRow = _suEl('suGuardRow');
+  if (guardRow) guardRow.style.display = 'none';
+  _suStatus('');
+  openModal('storageUnitModal');
+  // If already connected from earlier in this app session, or a saved token
+  // exists, surface that instead of asking for a password again.
+  if (window.cs2vault.gc) {
+    window.cs2vault.gc.status().then(function (st) {
+      if (st && st.gc) { _suShowCaskets(st.account); return; }
+      const saved = _suEl('suSavedRow');
+      if (saved) saved.style.display = (st && st.hasToken) ? '' : 'none';
+    }).catch(function () {});
+  } else {
+    _suStatus('Update in progress — restart the app to enable Storage Units.', true);
+  }
+}
+
+function closeStorageUnits() {
+  closeModal('storageUnitModal');
+  // Leave the GC session up while the app runs — reopening the modal is
+  // instant and Steam logins are rate-limited. Disconnect is explicit.
+}
+
+async function suLogin() {
+  if (_suBusy) return;
+  const account = (_suEl('suAccount') || {}).value || '';
+  const password = (_suEl('suPassword') || {}).value || '';
+  if (!account.trim() || !password) { _suStatus('Enter your Steam account name and password.', true); return; }
+  _suBusy = true;
+  const btn = _suEl('suLoginBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  _suStatus('Signing in to Steam…');
+  try {
+    const res = await window.cs2vault.gc.login(account, password);
+    _suHandleLoginResult(res);
+  } catch (e) {
+    _suStatus('Login failed: ' + e.message, true);
+  } finally {
+    _suBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect to Steam'; }
+  }
+}
+
+async function suUseSaved() {
+  if (_suBusy) return;
+  _suBusy = true;
+  const btn = _suEl('suTokenBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  _suStatus('Connecting with saved session…');
+  try {
+    const res = await window.cs2vault.gc.loginToken();
+    _suHandleLoginResult(res);
+    if (res && res.status === 'error') {
+      // Expired/invalid token — fall back to fresh login
+      const saved = _suEl('suSavedRow');
+      if (saved) saved.style.display = 'none';
+    }
+  } catch (e) {
+    _suStatus('Saved session failed: ' + e.message, true);
+  } finally {
+    _suBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect with saved session'; }
+  }
+}
+
+function _suHandleLoginResult(res) {
+  if (!res) { _suStatus('No response from Steam — try again.', true); return; }
+  if (res.status === 'guard') {
+    const row = _suEl('suGuardRow');
+    const label = _suEl('suGuardLabel');
+    if (row) row.style.display = '';
+    if (label) label.textContent = res.domain ? ('Steam Guard code (emailed to ' + res.domain + ')') : 'Steam Guard code (mobile authenticator)';
+    const btn = _suEl('suLoginBtn');
+    if (btn) { btn.textContent = 'Submit code'; btn.onclick = suSubmitGuard; }
+    _suStatus(res.message || 'Enter your Steam Guard code to continue.');
+    const codeEl = _suEl('suGuardCode');
+    if (codeEl) codeEl.focus();
+    return;
+  }
+  if (res.status === 'ok') {
+    const pw = _suEl('suPassword');
+    if (pw) pw.value = '';
+    _suShowCaskets(res.account);
+    return;
+  }
+  if (res.status === 'ok-nogc') {
+    _suStatus(res.message || 'Logged in, but the CS2 Game Coordinator did not respond.', true);
+    return;
+  }
+  _suStatus(res.message || 'Steam login failed.', true);
+}
+
+async function suSubmitGuard() {
+  if (_suBusy) return;
+  const code = (_suEl('suGuardCode') || {}).value || '';
+  if (!code.trim()) { _suStatus('Enter the Steam Guard code.', true); return; }
+  _suBusy = true;
+  const btn = _suEl('suLoginBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+  _suStatus('Verifying code…');
+  try {
+    const res = await window.cs2vault.gc.guard(code);
+    _suHandleLoginResult(res);
+  } catch (e) {
+    _suStatus('Code check failed: ' + e.message, true);
+  } finally {
+    _suBusy = false;
+    if (btn && btn.textContent === 'Verifying…') { btn.disabled = false; btn.textContent = 'Submit code'; }
+    else if (btn) { btn.disabled = false; }
+  }
+}
+
+function _suShowCaskets(account) {
+  const step1 = _suEl('suStep1');
+  const step2 = _suEl('suStep2');
+  if (step1) step1.style.display = 'none';
+  if (step2) step2.style.display = '';
+  const who = _suEl('suConnectedAs');
+  if (who) who.textContent = 'Connected as ' + (account || 'Steam account') + ' — account shows "In-Game: CS2" while this session is open';
+  const panel = _suEl('suContentsPanel');
+  if (panel) panel.style.display = 'none';
+  suLoadCaskets();
+}
+
+async function suLoadCaskets() {
+  const rows = _suEl('suCasketRows');
+  const count = _suEl('suCasketCount');
+  if (rows) rows.innerHTML = '';
+  if (count) count.textContent = 'Reading storage units…';
+  try {
+    const res = await window.cs2vault.gc.caskets();
+    if (!res || res.status !== 'ok') {
+      if (count) count.textContent = (res && res.message) ? res.message : 'Could not read storage units.';
+      return;
+    }
+    if (!res.caskets.length) {
+      if (count) count.textContent = 'No storage units found on this account (GC inventory: ' + res.inventoryCount + ' items).';
+      return;
+    }
+    let total = 0;
+    res.caskets.forEach(function (c) {
+      total += c.count;
+      const tr = document.createElement('tr');
+      const tdName = document.createElement('td');
+      tdName.textContent = c.name;
+      const tdCount = document.createElement('td');
+      tdCount.style.fontFamily = "'Share Tech Mono',monospace";
+      tdCount.textContent = String(c.count);
+      const tdBtn = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-secondary';
+      btn.style.padding = '3px 10px';
+      btn.style.fontSize = '11px';
+      btn.textContent = 'View contents';
+      btn.onclick = function () { suViewCasket(c.id, c.name); };
+      tdBtn.appendChild(btn);
+      tr.appendChild(tdName); tr.appendChild(tdCount); tr.appendChild(tdBtn);
+      rows.appendChild(tr);
+    });
+    if (count) count.textContent = res.caskets.length + ' storage unit(s) · ' + total + ' item(s) inside — invisible to every public inventory tool';
+  } catch (e) {
+    if (count) count.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function suViewCasket(casketId, casketName) {
+  const panel = _suEl('suContentsPanel');
+  const title = _suEl('suContentsTitle');
+  const rows = _suEl('suContentsRows');
+  if (panel) panel.style.display = '';
+  if (title) title.textContent = 'Reading "' + (casketName || 'Storage Unit') + '"…';
+  if (rows) rows.innerHTML = '';
+  try {
+    const res = await window.cs2vault.gc.casketContents(casketId);
+    if (!res || res.status !== 'ok') {
+      if (title) title.textContent = (res && res.message) ? res.message : 'Could not read the storage unit.';
+      return;
+    }
+    // Session 1: group raw GC identities (defindex + paint + quality) with counts.
+    const groups = {};
+    res.items.forEach(function (it) {
+      const key = 'def ' + it.defIndex
+        + (it.paintIndex !== null ? ' · paint ' + it.paintIndex : '')
+        + (it.statTrak ? ' · StatTrak' : '')
+        + (it.customName ? ' · "' + it.customName + '"' : '');
+      groups[key] = (groups[key] || 0) + 1;
+    });
+    const entries = Object.keys(groups).map(function (k) { return { key: k, n: groups[k] }; });
+    entries.sort(function (a, b) { return b.n - a.n; });
+    entries.forEach(function (g) {
+      const tr = document.createElement('tr');
+      const tdK = document.createElement('td');
+      tdK.style.fontFamily = "'Share Tech Mono',monospace";
+      tdK.style.fontSize = '11px';
+      tdK.textContent = g.key;
+      const tdN = document.createElement('td');
+      tdN.style.fontFamily = "'Share Tech Mono',monospace";
+      tdN.textContent = String(g.n);
+      tr.appendChild(tdK); tr.appendChild(tdN);
+      rows.appendChild(tr);
+    });
+    if (title) title.textContent = '"' + (casketName || 'Storage Unit') + '" — ' + res.items.length + ' item(s), ' + entries.length + ' distinct';
+  } catch (e) {
+    if (title) title.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function suDisconnect() {
+  try { await window.cs2vault.gc.logout(); } catch (e) {}
+  const step1 = _suEl('suStep1');
+  const step2 = _suEl('suStep2');
+  if (step2) step2.style.display = 'none';
+  if (step1) step1.style.display = '';
+  _suStatus('Disconnected. Your saved session (if any) is kept — use "Forget session" to remove it.');
+  if (window.cs2vault.gc) {
+    window.cs2vault.gc.status().then(function (st) {
+      const saved = _suEl('suSavedRow');
+      if (saved) saved.style.display = (st && st.hasToken) ? '' : 'none';
+    }).catch(function () {});
+  }
+}
+
+async function suForgetSession() {
+  if (!confirm('Remove the saved Steam session from this machine? You will need your password next time.')) return;
+  try { await window.cs2vault.gc.clearToken(); } catch (e) {}
+  const saved = _suEl('suSavedRow');
+  if (saved) saved.style.display = 'none';
+  toast('Saved Steam session removed', 'info');
 }
 
 // ========================

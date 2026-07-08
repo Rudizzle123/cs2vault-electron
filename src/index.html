@@ -522,6 +522,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <button class="btn btn-secondary" onclick="exportCSV()">↓ Export CSV <span id="proBadgeExportCSV" class="pro-inline-badge" style="display:none;">PRO</span></button>
       <button class="btn btn-secondary" onclick="importCSV()">↑ Import CSV</button>
       <button class="btn btn-secondary" onclick="openSteamImport()">⇩ Steam Import</button>
+      <button class="btn btn-secondary" onclick="openStorageUnits()">🗄 Storage Units <span id="proBadgeStorageUnits" class="pro-inline-badge" style="display:none;">PRO</span></button>
       <button class="btn btn-secondary" onclick="openBulkSellModal()">⊞ Bulk Sell</button>
       <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
     </div>
@@ -1253,6 +1254,78 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <button class="btn btn-secondary" onclick="closeModal('steamImportModal')">Cancel</button>
         <button class="btn btn-primary" id="steamImportConfirmBtn" onclick="confirmSteamImport()">Import Selected</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Storage Units Modal (Vault Pro Phase 6 — session 1: connect + enumerate) -->
+<div class="modal-overlay" id="storageUnitModal">
+  <div class="modal" style="width:760px;">
+    <div class="modal-header"><div class="modal-title">Storage <span>Units</span></div><button class="modal-close" onclick="closeStorageUnits()">✕</button></div>
+    <div class="modal-body">
+      <div id="suLockPanel" style="display:none;"></div>
+      <!-- Step 1: connect to Steam -->
+      <div id="suStep1" style="display:none;">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:12px;">
+          Reads the contents of your <b>Storage Units</b> by opening a CS2 session with Steam's Game Coordinator — the same read-only protocol tools like Casemove use. No game install needed.
+          <br><br><b>How your login is handled:</b> your password is used once to sign in and is <b>never stored</b>. The app keeps only Steam's own session token, encrypted by Windows (DPAPI) on this machine. While connected, your account shows as "In-Game: CS2" — you can't sync while actually playing CS2.
+        </div>
+        <div id="suSavedRow" style="display:none;margin-bottom:12px;padding:10px;background:rgba(34,197,94,0.05);border:1px solid var(--border);border-radius:8px;">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <span style="font-size:11px;color:var(--text2);">A saved Steam session exists on this machine.</span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary" id="suTokenBtn" onclick="suUseSaved()">Connect with saved session</button>
+              <button class="btn btn-secondary" onclick="suForgetSession()">Forget session</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Steam account name</label>
+          <input type="text" id="suAccount" placeholder="Your Steam login name (not profile name)" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label>Password</label>
+          <input type="password" id="suPassword" placeholder="Used once — never stored" autocomplete="off">
+        </div>
+        <div class="form-row" id="suGuardRow" style="display:none;">
+          <label id="suGuardLabel">Steam Guard code</label>
+          <input type="text" id="suGuardCode" placeholder="5-digit code" maxlength="10" autocomplete="off">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+          <button class="btn btn-primary" id="suLoginBtn" onclick="suLogin()">Connect to Steam</button>
+          <span id="suStatus" style="font-size:11px;color:var(--text3);"></span>
+        </div>
+      </div>
+      <!-- Step 2: casket list -->
+      <div id="suStep2" style="display:none;">
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;">
+          <span style="font-size:11px;color:var(--text2);" id="suConnectedAs"></span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary" onclick="suLoadCaskets()">↻ Refresh</button>
+            <button class="btn btn-secondary" onclick="suDisconnect()">Disconnect</button>
+          </div>
+        </div>
+        <div style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+          <table style="width:100%;">
+            <thead><tr><th>Storage Unit</th><th style="width:110px;">Items</th><th style="width:130px;"></th></tr></thead>
+            <tbody id="suCasketRows"></tbody>
+          </table>
+        </div>
+        <div id="suCasketCount" style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text3);margin-top:8px;"></div>
+        <div id="suContentsPanel" style="display:none;margin-top:12px;">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px;" id="suContentsTitle"></div>
+          <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+            <table style="width:100%;">
+              <thead><tr><th>Item (raw GC identity)</th><th style="width:90px;">Qty</th></tr></thead>
+              <tbody id="suContentsRows"></tbody>
+            </table>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px;">Item-name mapping (defindex → market name) arrives in the next update — this preview proves the storage-unit read works end-to-end.</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeStorageUnits()">Close</button>
     </div>
   </div>
 </div>

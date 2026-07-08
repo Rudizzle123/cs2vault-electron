@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, Notification, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, shell, dialog, safeStorage } = require('electron');
+const steamGC = require('./steam-gc');
 const path  = require('path');
 const https = require('https');
 const http  = require('http');
@@ -145,6 +146,12 @@ function createWindow() {
 
 app.whenReady().then(() => {
   initDB();
+  steamGC.register(ipcMain, {
+    safeStorage: safeStorage,
+    getStore: () => store,
+    getUserDataPath: () => app.getPath('userData'),
+    log: (m) => console.log(m),
+  });
   createWindow();
   setupAutoUpdater();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
