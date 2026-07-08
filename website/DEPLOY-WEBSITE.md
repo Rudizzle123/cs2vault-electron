@@ -1,5 +1,11 @@
 # Deploying the CS2 Vault website (Cloudflare Pages, free)
 
+> **Status (Jul 2026): live.** Custom domain **https://cs2vault.app** is attached to the
+> Pages project and is the canonical domain (canonical/og:url tags, sitemap.xml and
+> robots.txt all use it). The `.pages.dev` URL still works as an alias but nothing
+> should link to it. Deploy = `git push` (Git-integrated). The steps below are the
+> original setup instructions, kept for reference.
+
 The `website/` folder is a complete static site — no build step.
 
 ## First deploy (drag & drop, ~2 minutes)
