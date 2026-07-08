@@ -1,6 +1,6 @@
 {
   "name": "cs2vault",
-  "version": "3.7.0",
+  "version": "3.7.1",
   "description": "CS2 Portfolio Tracker \u2014 Professional Investment Dashboard",
   "main": "src/main.js",
   "scripts": {
@@ -62,5 +62,10 @@
   "devDependencies": {
     "electron": "^29.1.0",
     "electron-builder": "^24.13.3"
+  },
+  "overrides": {
+    "steam-appticket": {
+      "protobufjs": "^7.6.5"
+    }
   }
 }
