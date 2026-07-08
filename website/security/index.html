@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security &amp; Open Source — CS2 Vault</title>
+<meta name="description" content="How CS2 Vault handles your data: local-first architecture, fully open-source code you can audit, and OS-level encryption for Steam credentials.">
+<link rel="canonical" href="https://cs2vault.app/security/">
+<meta property="og:url" content="https://cs2vault.app/security/">
+<link rel="icon" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Exo+2:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<div class="page">
+
+<header>
+  <a class="logo" href="/">
+    <img src="/assets/logo.png" alt="">
+    <span class="logo-text">CS2 <span>Vault</span></span>
+  </a>
+  <nav class="nav">
+    <a href="/#tax-engine">Tax Engine</a>
+    <a href="/guides/">Tax Guides</a>
+    <a href="/pricing/">Pricing</a>
+    <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+  </nav>
+</header>
+
+<main class="prose">
+  <h1>Security &amp; Open Source</h1>
+  <div class="meta">How CS2 Vault handles your data · Last updated: July 2026</div>
+
+  <div class="box">
+    <strong>The short version:</strong> CS2 Vault is a local-first desktop app and the entire codebase is public. Your portfolio never leaves your machine, and you don't have to take our word for it — <a href="https://github.com/Rudizzle123/cs2vault-electron">read the code yourself</a>.
+  </div>
+
+  <h2>1. Local-first: your data stays on your computer</h2>
+  <p>Everything you put into CS2 Vault — holdings, trade history, cost basis, tax settings, API keys — is stored in a local database on your own machine. There is no CS2 Vault account, no cloud sync, and no server of ours that ever receives your portfolio. If you unplug the network, the app keeps working with your data intact.</p>
+  <p>For a tool that knows what your portfolio is worth and estimates your tax position, we think this is the right default: the most secure server is the one that doesn't exist.</p>
+
+  <h2>2. Open source: audit it, don't trust it</h2>
+  <p>The full source code is public at <a href="https://github.com/Rudizzle123/cs2vault-electron">github.com/Rudizzle123/cs2vault-electron</a> — the app you download is built from that repository. That means anyone can verify the claims on this page:</p>
+  <ul>
+    <li><strong>What leaves your machine</strong> — every network call in the app goes through a single bridge in the Electron main process. You can search the code and see exactly which services are contacted and what is sent.</li>
+    <li><strong>How the tax engine works</strong> — every rate, allowance and calculation for all 10 jurisdictions is readable in plain JavaScript, not a black box.</li>
+    <li><strong>What gets stored</strong> — the local storage keys and their contents are defined in one place in the source.</li>
+  </ul>
+  <p>If you find a security issue, please open an issue on the repository (or report it privately via GitHub's security advisory feature).</p>
+
+  <h2>3. What the app connects to</h2>
+  <p>The app makes direct requests from your computer to a small set of third-party services — pricing (CSFloat, Steam Community Market, optionally Pricempire), foreign-exchange rates (frankfurter.app / open.er-api.com), and GitHub Releases for update checks. These go straight from your device to the provider; we don't proxy or log them. The full list and what each receives is in our <a href="/privacy/">Privacy Policy</a>.</p>
+
+  <h2>4. Steam credentials (upcoming storage-unit import)</h2>
+  <p>Today, inventory import uses only Steam's <strong>public</strong> inventory endpoint — no login, no credentials. A planned Vault Pro feature will import <strong>storage-unit contents</strong>, which Steam only exposes to a logged-in game session. When that ships, here is how credentials will be handled:</p>
+  <ul>
+    <li>You log in to Steam <strong>on your own machine</strong>, inside the app's main process — your credentials are used only to establish the Steam session and are never sent to us or any third party other than Steam itself.</li>
+    <li>Your <strong>password is never stored</strong>. Only the session refresh token is kept, so you don't have to log in every time.</li>
+    <li>That token is encrypted with Electron's <code>safeStorage</code>, which uses your operating system's own credential encryption (DPAPI on Windows). It is readable only by your OS user account on that machine.</li>
+    <li>Steam Guard stays fully in effect — the app can't and doesn't bypass it.</li>
+  </ul>
+  <p>Because the code is open source, this design will be verifiable in the repository when the feature ships, not just described here.</p>
+
+  <h2>5. Payments</h2>
+  <p>Vault Pro payments are handled entirely by <strong>Paddle</strong> as merchant of record. Your card details go to Paddle, never to us or through the app. The app itself only ever handles your licence key. Details are in the <a href="/privacy/">Privacy Policy</a>.</p>
+
+  <h2>6. Honest limits</h2>
+  <p>No software is "unhackable" and we won't claim otherwise. The local-first design means the main thing protecting your data is the security of your own computer and OS user account — the same boundary that protects your documents and browser profile. Keep your OS updated, use disk encryption if the machine is shared or portable, and treat exported JSON backups as sensitive files, because they contain your full portfolio in plain text.</p>
+  <p>CS2 Vault is developed by a solo developer. Open-sourcing the code is a deliberate part of the security posture: more eyes on the code than one person could ever provide.</p>
+
+  <hr>
+  <p style="font-size:13px;color:var(--text3);">This page describes the app's architecture in good faith as of the date above. It is not a warranty or a guarantee of security. See the <a href="/terms/">Terms</a> and <a href="/privacy/">Privacy Policy</a> for the legal terms that apply.</p>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-copy">© 2026 CS2 Vault</div>
+    <div class="foot-links">
+      <a href="/guides/">Tax Guides</a>
+      <a href="/pricing/">Pricing</a>
+      <a href="/terms/">Terms</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/refund/">Refunds</a>
+      <a href="/security/">Security</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
