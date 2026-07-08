@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Do You Pay Tax on CS2 Skins in Denmark? Speculation Tax Guide 2026 — CS2 Vault</title>
+<meta name="description" content="Yes — gains on CS2 skins are speculative gains in Denmark, taxed as personal income at your marginal rate (up to ~52%). The loss asymmetry, per-transaction rules, and a worked example for 2026.">
+<meta property="og:title" content="Do You Pay Tax on CS2 Skins in Denmark? (2026)">
+<meta property="og:description" content="Speculative gains taxed as personal income at marginal rates up to ~52% — and losses worth only ~26%. A plain-English guide for skin investors.">
+<link rel="icon" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Exo+2:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<div class="page">
+
+<header>
+  <a class="logo" href="/">
+    <img src="/assets/logo.png" alt="">
+    <span class="logo-text">CS2 <span>Vault</span></span>
+  </a>
+  <nav class="nav">
+    <a href="/#tax-engine">Tax Engine</a>
+    <a href="/guides/">Tax Guides</a>
+    <a href="/pricing/">Pricing</a>
+    <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+  </nav>
+</header>
+
+<main class="prose">
+  <h1>Do You Pay Tax on CS2 Skins in Denmark?</h1>
+  <div class="meta">Denmark · Speculation (spekulation) · Tax year 2026 · Last verified July 2026</div>
+
+  <div class="box warn">
+    <strong>Estimates, not tax advice.</strong> This guide explains the Danish rules as we've verified them against Skattestyrelsen sources and current case law, but it can't account for your personal circumstances, your municipality, or future changes. Confirm your position with an accountant who understands digital assets before filing anything.
+  </div>
+
+  <p><strong>Short answer: yes — and Denmark is the toughest jurisdiction in our ten-country series.</strong> If you buy CS2 skins expecting them to appreciate and later sell at a profit, that's <em>speculation</em> under the Danish State Tax Act, and the gain is taxed as <strong>personal income at your marginal rate — up to roughly 52%</strong>. It doesn't matter that skins are digital or that they live in a Steam account. Skattestyrelsen has spent a decade applying exactly this framework to cryptoassets, and the courts have backed it all the way up: the presumption that a volatile digital asset was bought with resale profit in mind is close to impossible to rebut in practice. Skins — bought through a portfolio tracker, held for appreciation — fit the speculation definition even more cleanly than a coin someone claims they bought "to use as payment".</p>
+
+  <p>Two features make Denmark uniquely punishing, and you need to understand both before you sell anything.</p>
+
+  <h2>Gains are personal income — the rate depends on your bracket</h2>
+  <p>Speculative gains aren't capital income with a tidy flat rate. They're added to your <strong>personal income</strong>, alongside your salary, and taxed at whatever marginal rate you're in. For 2026 that means roughly <strong>37–38%</strong> (municipal tax and related components) if your total income stays under the top-tax threshold of about <strong>611,800 kr.</strong>, and up to roughly <strong>52%</strong> on the portion above it. One mercy: labour-market contribution (AM-bidrag, 8%) is <em>not</em> charged on speculative gains, unlike on salary.</p>
+  <p>This is why no app can tell you your exact Danish tax bill without knowing your full income picture. <strong>CS2 Vault's Denmark profile shows an indicative 42%</strong> — a mid-range figure — and says so plainly in its disclaimer: your real rate depends on your marginal band, and a big gain can itself push you across the top-tax threshold, taxing the excess at the higher rate. Treat any single-rate estimate, ours included, as a planning figure, not a filing figure.</p>
+
+  <h2>The loss trap: gains taxed at up to ~52%, losses worth only ~26%</h2>
+  <p>Here is the feature that genuinely shocks people. Speculative <em>gains</em> go into personal income at your marginal rate. Speculative <em>losses</em> do not come off personal income — Denmark's Supreme Court confirmed in June 2025 that they're only a <strong>ligningsmæssigt fradrag</strong> (an assessed deduction), with a tax value of roughly <strong>26%</strong>.</p>
+  <p>The arithmetic is brutal. Suppose in 2026 you make a 10,000 kr. gain on one knife and a 10,000 kr. loss on another, and you're a top-rate taxpayer:</p>
+  <ul>
+    <li>Gain: 10,000 kr. × ~52% = <strong>5,200 kr. tax</strong></li>
+    <li>Loss: 10,000 kr. × ~26% = <strong>2,600 kr. of relief</strong></li>
+    <li>Net cash result of your trading: <strong>0 kr.</strong> Net tax bill: <strong>2,600 kr.</strong></li>
+  </ul>
+  <p>You can owe real money in a year you didn't make a krone. Netting between different holdings is generally not allowed — each disposal is assessed on its own, with offsetting accepted only within the same holding of an item bought together and sold in parts. Gains are declared in one box (box 20, other personal income) and losses in another (box 58), and they never meet. (CS2 Vault pools your gains and losses into one net figure for portfolio-tracking purposes and discloses this simplification in-app — for filing, the gross gains and gross losses in its per-disposal report are the numbers that matter, not the net.)</p>
+  <p>The practical consequence: in Denmark, <strong>realising a loss is worth only half as much as avoiding a gain of the same size</strong>. That inverts the loss-harvesting logic that works in most other countries, and it's the single most important thing a Danish skin investor should internalise.</p>
+
+  <h2>How your cost basis works: FIFO, per transaction</h2>
+  <p>Gains are computed per disposal as proceeds minus acquisition cost, using the <strong>FIFO principle</strong> — the units you bought first are treated as sold first, across your whole holding of that item. Fees on purchase and sale adjust the cost and proceeds. Foreign-currency trades convert to DKK at the transaction-date rate. And note that disposal is broader than cashing out: trading one skin for another is a taxable disposal of the skin you gave up, on the same logic Skattestyrelsen applies to crypto-to-crypto swaps. Documentation matters more here than anywhere — in assessed cases where taxpayers couldn't evidence acquisition costs, Skattestyrelsen has simply set the cost basis to zero and taxed the entire proceeds.</p>
+  <p>The Steam Community Market sits inside that same net. Selling a knife there — even though the proceeds are locked in wallet funds you can never withdraw — is, on the strict reading, a disposal at market value, just as a crypto-to-crypto swap is. There's a counter-argument that Steam Wallet credit isn't money and only real cashouts should count, but that's a <em>position</em>, not settled law — and given how consistently Danish practice has resolved classification questions against the taxpayer, it's not a position to hold casually. Record everything on both bases so you and your accountant can see the figures either way.</p>
+
+  <h2>What this means for how you trade</h2>
+  <p>The rate structure has a clear behavioural message: in Denmark, churning is expensive. Every round-trip crystallises a gain taxed at your marginal rate or a loss worth half as much, so a buy-and-hold investor keeps dramatically more of the same market performance than an active flipper. If you're deciding between realising now and holding, remember that a big gain can also push your <em>other</em> income across the top-tax threshold in the same year — spreading disposals across tax years, where it makes investment sense anyway, keeps more of each gain in the lower band. That's general arithmetic, not personal advice, but it's arithmetic worth running before you sell.</p>
+
+  <h2>A worked example</h2>
+  <p>Meet Freja, a top-rate taxpayer, who sells via a third-party marketplace during 2026:</p>
+  <table>
+    <tr><th>Disposal</th><th>Proceeds (after fees)</th><th>Cost (FIFO)</th><th>Gain / loss</th></tr>
+    <tr><td>Butterfly Knife | Doppler</td><td class="num">17,000 kr.</td><td class="num">11,000 kr.</td><td class="num">+6,000 kr.</td></tr>
+    <tr><td>300 × Fracture Case</td><td class="num">13,000 kr.</td><td class="num">4,000 kr.</td><td class="num">+9,000 kr.</td></tr>
+    <tr><td>Katowice 2019 stickers</td><td class="num">3,000 kr.</td><td class="num">7,000 kr.</td><td class="num">−4,000 kr.</td></tr>
+  </table>
+  <p>Gains of 15,000 kr. go in box 20 as personal income: at ~52%, that's <strong>7,800 kr. of tax</strong>. The 4,000 kr. sticker loss goes in box 58 as an assessed deduction worth ~26%: <strong>1,040 kr. of relief</strong>. Net bill: <strong>6,760 kr.</strong> — an effective 61% of the 11,000 kr. Freja actually cleared. If that number makes you wince, it should: it's why Danish crypto and skin investors plan disposals more carefully than anyone else in Europe.</p>
+
+  <h2>When and how to report</h2>
+  <p>Nothing is pre-filled — no marketplace reports skin sales to Skattestyrelsen (though EU crypto platforms now report under DAC8, a sign of the direction of travel). You declare gains in box 20 and losses in box 58 of your årsopgørelse in TastSelv, in the spring following the tax year — the deadline is 1 May 2027 for 2026 (1 July if you have foreign income). Correct earlier years too if you've sold before without declaring: Skattestyrelsen has an active crypto/digital-assets enforcement programme, and undeclared speculation income found in a review comes with interest and potential penalties.</p>
+
+  <h2>The records that save you</h2>
+  <p>For every acquisition: date, item, quantity, unit price, currency, and the DKK rate that day. For every disposal — including skin-for-skin trades: date, platform, gross proceeds or market value received, fees, and net received. In Denmark this isn't just good hygiene: a missing purchase record can mean a zero cost basis and tax on your full proceeds at your marginal rate.</p>
+
+  <div class="cta-panel">
+    <h2>Or let CS2 Vault keep the ledger</h2>
+    <p>CS2 Vault is a local-first Windows desktop tracker built for exactly this. Every buy is stored as a dated lot; the Denmark profile computes FIFO cost bases per disposal, shows an indicative-rate estimate with the marginal-rate reality disclosed up front, and gives you the per-disposal gain/loss breakdown you need for boxes 20 and 58. The tracker is <strong>free</strong>. The full tax engine, report export and Cash Out Calculator are in Vault Pro at <strong>$6.99/month or $49/year</strong>, with a 14-day trial and no card required. Your data never leaves your machine.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download Free</a>
+      <a class="btn btn-ghost" href="/pricing/">See Vault Pro →</a>
+    </div>
+    <p class="hero-note">Free tracker forever · Local-only data · Per-disposal FIFO records</p>
+  </div>
+
+  <hr>
+  <p style="font-size:13px;color:var(--text3);">Figures verified July 2026 against Skattestyrelsen guidance (speculation under the State Tax Act; FIFO; boxes 20/58) and the June 2025 Supreme Court ruling on the assessed-deduction treatment of speculative losses, with 2026 marginal-rate and top-tax-threshold figures from current Danish tax references. Rates depend on your municipality and income — this page is refreshed alongside our annual re-verification, but always check current Skattestyrelsen guidance and speak to a professional before filing. This is not tax advice.</p>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-copy">© 2026 CS2 Vault</div>
+    <div class="foot-links">
+      <a href="/guides/">Tax Guides</a>
+      <a href="/pricing/">Pricing</a>
+      <a href="/terms/">Terms</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/refund/">Refunds</a>
+      <a href="https://github.com/Rudizzle123/cs2vault-electron/releases/latest">Download</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
