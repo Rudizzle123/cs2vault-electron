@@ -1,10 +1,42 @@
 # CS2 Vault — Project State
 
-Last updated: July 2026 (website: all 10 guides live, Cloudflare Pages deployed) | Current version: v3.6.1
+Last updated: July 2026 (v3.6.3: analytics correctness pass — trending platform-routing, live benchmarks, snapshot backfill fix, storage batching, backup restore) | Current version: v3.6.3
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.6.3 — Analytics correctness pass: trending pricing, live benchmarks, snapshot integrity, storage batching, backup restore ✅
+One tag covering two work passes (v3.6.2 was folded in unpushed). Triggered by Rudi spotting wrong Trending figures and flat benchmark lines; a codebase audit followed. **No tax-engine changes** (harness still 87/87).
+
+**Trending / price-history platform routing (the v3.6.2 pass):**
+- `recordPrice()` stored `best = min(csfloat, steam)` — contradicted `getBestPrice` routing (cases/stickers/TUF/agents = Steam first, else CSFloat first). Now routes identically; signature changed to `recordPrice(item, prices)` (5 call sites)
+- `getPriceHistory()` silently swapped the whole series to Steam median-sale history whenever it had more points than the local log — after a "Fetch Steam History" run, ALL trends (including CSFloat-priced skins) ran on Steam medians. Now platform-aware: Steam-priced items use Steam history (correct platform, richer series wins); CSFloat-priced items use the local CSFloat series, falling back to Steam only when local has <2 points, flagged `source:'steam'` and badged **"Steam est."** in the UI. Old log entries fixed on read (best re-derived from stored per-platform prices — no migration)
+- `calculateTrends()`: current price = live `getBestPrice` so Trending matches Holdings; in Steam-estimate mode it stays entirely within the Steam series (never mixes platforms in one % figure)
+- Trending/analytics revamp: sparklines + was-price + clickable rows (→ price history modal) in trend rows, By Type proportion bars, allocation donut centre label (total invested), performer thumbnails, Monthly P&L moved full-width (killed the orphan grid cell)
+- ⚠ Behaviour change: trend %s visibly differ post-update — skins now trend on CSFloat data (correct, not a regression)
+
+**Benchmarks (Compare vs Market):**
+- `BENCHMARK_DATA` was a hardcoded table ending 2026-03-14 → flat lines after mid-March, and it was indexed to Sep 2025 regardless of chart range (the summary-card %s didn't measure the labelled range). Now fetched live from **stooq.com daily-close CSV** (no API key: `^spx`, `btcusd`, `xauusd`), cached 24h in new key **`cs2vault_benchmarks`** (in STORE_KEYS + clearAllData; NOT in backups — refetchable cache). All series re-indexed to 100 at the chart's first visible date at render time. Static table retained as offline fallback only; `benchmarkValueAt()` never mixes sources (base and value always from the same source). ⚠ stooq was unverifiable from the dev environment — if lines are flat with console warnings, swap sources (Yahoo `query1.finance.yahoo.com/v8/finance/chart/` is the fallback candidate)
+
+**Snapshot integrity (root cause of the sawtooth chart + diagonal annotation glitch):**
+- Old `checkAutoSnapshot()` "backfilled" missed months by writing TODAY'S portfolio values onto PAST dates, one fake per launch — interleaved with case-only historical seeds this produced the sawtooth; duplicate date labels made the chartjs annotation plugin draw event lines diagonally. Backfill removed: auto snapshots are only ever dated the day measured (window opens on the 3rd; fires if the month has no snapshot yet). New snapshots carry `createdAt`
+- One-shot `cleanupSnapshotArtifacts()` on init deletes fabricated autos (within 3 days of a historical point, no `createdAt`) and collapses duplicate dates (manual > auto > historical)
+- Unclassifiable pre-fix autos show an amber **AUTO ⚠** tag in Snapshot History with a hover explanation — ⚑ Rudi should manually review/delete suspicious rows (e.g. the May 2025 point)
+
+**Audit fixes:** £0-buy-price items no longer rank +Infinity% (performers/health/holdings displays guarded); `escHtml` added to 5 unescaped innerHTML sinks (health signal titles, sold-item options); NaN guard on health totals; **local dates everywhere** — `todayStr()` and new `localDateStr()` replace all `toISOString().split('T')[0]` sites (UTC meant midnight–1am BST stamped yesterday's date on snapshots/value points/prefilled dates)
+
+**Storage batching (electron-store rewrites the WHOLE file per set):**
+- Price log batch mode: bulk refresh loops wrap in `beginPriceLogBatch()`/`flushPriceLogBatch()` (in `finally`) — N per-item writes → 1. Single-item refreshes unchanged
+- `saveData(holdings)` in bulk loops throttled to every 10th item + guaranteed final save; play-skins bulk refresh defers to one `saveSkins` via new `mergeSkinPrices(skin, prices, deferSave)` param (atomic re-read merge unchanged)
+- **`cs2vault_steam_history` split into its own store file** (`cs2vault-history.json`) — main-process routing via `storeFor(key)`, one-shot migration on launch (console logs `[Store] Migrated cs2vault_steam_history`), renderer code untouched. `fetchAllSteamHistory` saves every 10 items instead of every item
+
+**Backups now complete + restorable:**
+- `exportAllData` adds `priceLog`, `steamHistory`, `caseSupply` (previously a restore silently lost all sparklines/trends). API keys deliberately never exported
+- New **`importAllData()`** + "↑ Restore From Backup" Settings button — the restore half never existed. Full-replace semantics: mapped keys overwritten, keys absent from the backup deleted, EXCEPT the licence trio (`cs2vault_licence`/`_licence_state`/`_trial_start`) which is never deleted (matches clearAllData convention — restoring a pre-purchase backup must not sign a paying user out of Pro). Validates file shape, shows a content summary before the final confirm, awaits all writes, then `location.reload()`. `import:open` IPC gained optional caller filters (backwards compatible with the CSV import caller)
+
+**Delivery note:** this zip included `src/main.js` + `src/preload.js` for the first time. Offline harnesses this session: routing 6/6, benchmark/cleanup 12/12, batching/restore 14/14; `node -c` clean on all three JS files.
+
 
 ### Website — all 10 jurisdiction tax guides live + Cloudflare Pages deployed ✅ (website-only, no version)
 The MARKETING.md Lane 3 content site is complete and **live at https://cs2vault.app/** (custom domain attached to the Cloudflare Pages project Jul 2026; `cs2vault-electron.pages.dev` remains as a working alias but nothing links to it). Git-integrated: every push to `main` auto-deploys the `website/` output directory — deploy = push.
