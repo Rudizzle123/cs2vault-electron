@@ -326,11 +326,11 @@ function savePriceLog(log) {
   window._storeSet(PRICE_LOG_KEY, JSON.stringify(log));
 }
 
-function recordPrice(itemId, prices) {
-  if (!prices || !itemId) return;
+function recordPrice(item, prices) {
+  if (!prices || !item || !item.id) return;
   const log = loadPriceLog();
   const entry = {
-    id: itemId,
+    id: item.id,
     ts: Date.now(),
     best: null,
     cf: null,  // csfloat
@@ -340,9 +340,15 @@ function recordPrice(itemId, prices) {
     entry.cf  = prices.platforms.csfloat?.lowest || null;
     entry.stm = prices.platforms.steam?.lowest || null;
   }
-  // Best price = lowest across platforms, fallback to top-level
-  const candidates = [entry.cf, entry.stm].filter(v => v != null && v > 0);
-  entry.best = candidates.length ? Math.min(...candidates) : (prices.lowest || prices.avg7d || null);
+  // Best price MUST follow the same platform routing as getBestPrice:
+  // cases/stickers/TUF/agents = Steam first, everything else = CSFloat first.
+  // (Previously this took min(cf, stm), which disagreed with P&L pricing.)
+  const steamFirst = item.type === 'case' || item.type === 'sticker' || item.isTuf || item.type === 'agent';
+  const primary = steamFirst ? entry.stm : entry.cf;
+  const secondary = steamFirst ? entry.cf : entry.stm;
+  if (primary != null && primary > 0) entry.best = primary;
+  else if (secondary != null && secondary > 0) entry.best = secondary;
+  else entry.best = prices.lowest || prices.avg7d || null;
 
   if (entry.best === null) return; // Don't log if no price at all
 
@@ -544,27 +550,34 @@ function getSteamHistoryForChart(marketHash, days) {
 function getPriceHistory(itemId, days) {
   const log = loadPriceLog();
   const cutoff = days ? Date.now() - (days * 24 * 60 * 60 * 1000) : 0;
-  const localData = log.filter(e => e.id === itemId && e.ts > cutoff).sort((a, b) => a.ts - b.ts);
-
-  // Also try Steam historical data if local data is sparse
   const item = holdings.find(h => h.id === itemId) || (skins ? skins.find(s => s.id === itemId) : null);
-  if (item?.marketHash) {
-    const steamData = getSteamHistoryForChart(item.marketHash, days);
-    if (steamData.length > localData.length) {
-      // Convert Steam data to same format as local price log
-      // Steam prices are in the user's currency (GBP for UK accounts)
-      return steamData.map(p => ({
-        id: itemId,
-        ts: p.ts,
-        best: p.price,
-        cf: null,
-        stm: p.price,
-        sp: null,
-      }));
-    }
-  }
+  // Same platform routing as getBestPrice: Steam drives cases/stickers/TUF/agents,
+  // CSFloat drives everything else.
+  const steamPriced = !!(item && (item.type === 'case' || item.type === 'sticker' || item.isTuf || item.type === 'agent'));
 
-  return localData;
+  // Local refresh log — re-derive "best" per entry from the correct platform so
+  // trends match P&L pricing (old entries stored min(cf, stm), which could mix platforms)
+  const localData = log.filter(e => e.id === itemId && e.ts > cutoff).sort((a, b) => a.ts - b.ts).map(e => {
+    let best = e.best;
+    if (steamPriced && e.stm != null && e.stm > 0) best = e.stm;
+    else if (!steamPriced && e.cf != null && e.cf > 0) best = e.cf;
+    return { id: e.id, ts: e.ts, best, cf: e.cf, stm: e.stm, sp: e.sp || null, source: 'local' };
+  });
+
+  const steamData = item?.marketHash ? getSteamHistoryForChart(item.marketHash, days) : [];
+  const steamSeries = steamData.map(p => ({
+    id: itemId, ts: p.ts, best: p.price, cf: null, stm: p.price, sp: null, source: 'steam',
+  }));
+
+  if (steamPriced) {
+    // Steam IS the pricing platform for these — use whichever series is richer
+    return steamSeries.length > localData.length ? steamSeries : localData;
+  }
+  // CSFloat-priced items: the local CSFloat series is the correct platform.
+  // Only fall back to Steam medians when local data is too sparse to trend
+  // (flagged via source:'steam' so the UI can show it as an estimate).
+  if (localData.length >= 2) return localData;
+  return steamSeries.length >= 2 ? steamSeries : localData;
 }
 
 // Build sparkline SVG (inline, tiny, clickable)
@@ -2174,7 +2187,7 @@ async function runAutoRefresh() {
       const r = await runTwoLaneRefresh(staleHoldings, {
         onProgress: (done, total) => { if (btn) { btn.innerHTML = `<span class="loading-spinner"></span> Auto ${done}/${total}`; btn.disabled = true; } },
         onItemDone: (item, prices) => {
-          if (prices) { item.prices = prices; recordPrice(item.id, prices); }
+          if (prices) { item.prices = prices; recordPrice(item, prices); }
           saveData(holdings);
           renderHoldings();
         },
@@ -2237,7 +2250,7 @@ async function refreshAllPrices() {
     res = await runTwoLaneRefresh(work, {
       onProgress: (done, total) => { btn.innerHTML = `<span class="loading-spinner"></span> ${done}/${total} ${scopeLabel}`; },
       onItemDone: (item, prices) => {
-        if (prices) { item.prices = prices; recordPrice(item.id, prices); }
+        if (prices) { item.prices = prices; recordPrice(item, prices); }
         saveData(holdings);
         renderHoldings();
       },
@@ -2270,7 +2283,7 @@ async function refreshSingleItem(id) {
   if (!item.marketHash) { openPriceModal(id); return; }
   updateRowPriceLoading(id);
   const prices = await fetchPrices(item);
-  if (prices) { item.prices = { ...prices, fetchedAt: Date.now() }; recordPrice(item.id, prices); toast(`Updated: ${item.name}`, 'success'); }
+  if (prices) { item.prices = { ...prices, fetchedAt: Date.now() }; recordPrice(item, prices); toast(`Updated: ${item.name}`, 'success'); }
   else toast(`Failed to fetch ${item.name}`, 'error');
   saveData(holdings);
   renderHoldings();
@@ -3988,11 +4001,19 @@ function renderAnalytics() {
     const best = getBestPrice(h);
     if (best) typeData[h.type].value += best * h.qty;
   });
-  document.getElementById('analyticsType').innerHTML = Object.entries(typeData).map(([type, d]) => {
+  const _typeColors = { case:'#22c55e', sticker:'#a78bfa', skin:'#e8993c', armory:'#38bdf8', knife:'#fbbf24', charm:'#f472b6' };
+  const _typeTotalInv = Object.values(typeData).reduce((s, d) => s + d.invested, 0);
+  document.getElementById('analyticsType').innerHTML = Object.entries(typeData).sort((a, b) => b[1].invested - a[1].invested).map(([type, d]) => {
     const pnl = d.value - d.invested;
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
-      <div><span class="type-badge ${typeBadge[type]}">${typeLabels[type]}</span> <span style="font-size:11px;color:var(--text3);margin-left:6px;">${d.count} items</span></div>
-      <div style="text-align:right;"><div class="mono" style="font-size:12px;">${fmtMoney(d.invested, 2)} in</div><div class="mono ${pnl >= 0 ? 'positive' : 'negative'}" style="font-size:11px;">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 2)}</div></div>
+    const pnlPct = d.invested > 0 ? (pnl / d.invested * 100) : 0;
+    const share = _typeTotalInv > 0 ? (d.invested / _typeTotalInv * 100) : 0;
+    const c = _typeColors[type] || '#64748b';
+    return `<div class="bytype-row">
+      <div class="bytype-top">
+        <div><span class="type-badge ${typeBadge[type]}">${typeLabels[type] || type}</span> <span style="font-size:11px;color:var(--text3);margin-left:6px;">${d.count.toLocaleString()} items · ${share.toFixed(1)}%</span></div>
+        <div style="text-align:right;"><span class="mono" style="font-size:12px;">${fmtMoney(d.invested, 2)} in</span> <span class="mono ${pnl >= 0 ? 'positive' : 'negative'}" style="font-size:11px;margin-left:8px;">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, 2)} (${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span></div>
+      </div>
+      <div class="bytype-track"><div class="bytype-fill" style="width:${Math.min(100, share).toFixed(1)}%;background:${c};"></div></div>
     </div>`;
   }).join('') || '<p style="color:var(--text3);font-size:13px;">No data</p>';
 
@@ -4002,10 +4023,13 @@ function renderAnalytics() {
   const perfRow = (h, i, isBottom) => {
     const pct = (getBestPrice(h) - h.buyPrice) / h.buyPrice * 100;
     const abs = (getBestPrice(h) - h.buyPrice) * h.qty;
+    const pImg = getSteamImageUrl(h.marketHash);
+    const pImgHtml = pImg ? `<img class="perf-img" src="${pImg}" alt="" onerror="this.style.display='none'">` : '';
     return `<div class="performer-row">
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
         <span class="rank-badge ${i < 3 ? rankClasses[i] : 'rank-n'}">${i+1}</span>
-        <div><div style="font-size:12px;font-weight:600;">${escHtml(h.name.slice(0,30))}</div>
+        ${pImgHtml}
+        <div style="min-width:0;"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(h.name.slice(0,30))}</div>
         <div style="font-size:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;">${fmtMoney((h.buyPrice*h.qty), 0)} invested · qty ${h.qty}</div></div>
       </div>
       <div style="text-align:right;">
@@ -4074,6 +4098,26 @@ function renderAllocationChart() {
 
   if (_allocationChart) _allocationChart.destroy();
 
+  const centreLabel = {
+    id: 'vaultCentreLabel',
+    afterDraw(chart) {
+      const { ctx: c, chartArea } = chart;
+      if (!chartArea) return;
+      const cx = (chartArea.left + chartArea.right) / 2;
+      const cy = (chartArea.top + chartArea.bottom) / 2;
+      c.save();
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.font = "600 10px 'Share Tech Mono', monospace";
+      c.fillStyle = 'rgba(255,255,255,0.35)';
+      c.fillText('INVESTED', cx, cy - 12);
+      c.font = "700 17px 'Share Tech Mono', monospace";
+      c.fillStyle = '#e2e8f0';
+      c.fillText(fmtMoney(totalInvested, 0), cx, cy + 7);
+      c.restore();
+    },
+  };
+
   _allocationChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
@@ -4111,6 +4155,7 @@ function renderAllocationChart() {
         },
       },
     },
+    plugins: [centreLabel],
   });
 
   const legendEl = document.getElementById('allocationLegend');
@@ -5459,7 +5504,7 @@ function renderSkins() {
 function mergeSkinPrices(skin, prices) {
   if (prices) {
     skin.prices = prices;
-    recordPrice(skin.id, skin.prices);
+    recordPrice(skin, skin.prices);
   }
   const _live = loadSkins() || skins;
   if (_live.some(s => s.id === skin.id)) {
@@ -5518,7 +5563,7 @@ async function refreshSingleSkin(id) {
       fetchedAt: Date.now()
     };
     toast(`Updated: ${skin.name}`, 'success');
-    recordPrice(skin.id, skin.prices);
+    recordPrice(skin, skin.prices);
   } else toast(`Failed: ${skin.name}`, 'error');
   // Re-sync against storage so a skin sold while this single refresh was in
   // flight is not written back. Only persist if the item still exists.
@@ -6967,8 +7012,15 @@ function calculateTrends(items, days) {
     const newest = history[history.length - 1];
     if (!oldest.best || !newest.best) return;
 
-    const change = ((newest.best - oldest.best) / oldest.best) * 100;
-    const currentPrice = newest.best;
+    const steamPriced = item.type === 'case' || item.type === 'sticker' || item.isTuf || item.type === 'agent';
+    // A CSFloat-priced item trending off Steam history = cross-platform estimate.
+    // In that case stay entirely within the Steam series (never mix a live CSFloat
+    // price against a Steam baseline). Otherwise anchor on the live P&L price so
+    // Trending always agrees with Holdings.
+    const estimate = newest.source === 'steam' && !steamPriced;
+    const live = getBestPrice(item);
+    const currentPrice = (!estimate && live != null && live > 0) ? live : newest.best;
+    const change = ((currentPrice - oldest.best) / oldest.best) * 100;
     const totalValue = currentPrice * item.qty;
 
     results.push({
@@ -6979,6 +7031,8 @@ function calculateTrends(items, days) {
       totalValue,
       dataPoints: history.length,
       marketHash: item.marketHash,
+      estimate,
+      history,
     });
   });
 
@@ -7044,19 +7098,37 @@ function renderTrending() {
   const gainers = [...trends].filter(t => t.change > 0).sort((a, b) => b.change - a.change).slice(0, 5);
   const losers = [...trends].filter(t => t.change < 0).sort((a, b) => a.change - b.change).slice(0, 5);
 
+  const trendSpark = (pts, color) => {
+    const prices = pts.map(e => e.best).filter(v => v != null);
+    if (prices.length < 2) return '<div class="trend-spark"></div>';
+    // Cap at ~60 points so long Steam histories stay light
+    const step0 = Math.max(1, Math.floor(prices.length / 60));
+    const sampled = prices.filter((_, i) => i % step0 === 0 || i === prices.length - 1);
+    const min = Math.min(...sampled), max = Math.max(...sampled);
+    const range = max - min || 1;
+    const w = 64, h = 24, step = w / (sampled.length - 1);
+    const points = sampled.map((p, i) => `${(i * step).toFixed(1)},${(h - 3 - ((p - min) / range) * (h - 6)).toFixed(1)}`).join(' ');
+    return `<div class="trend-spark"><svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/></svg></div>`;
+  };
+
   const renderRow = (t, isGainer) => {
     const color = isGainer ? 'var(--green)' : 'var(--red)';
     const arrow = isGainer ? '↗' : '↘';
     const imgUrl = getSteamImageUrl(t.marketHash);
     const imgHtml = imgUrl ? `<img class="trend-img" src="${imgUrl}" alt="" onerror="this.style.display='none'">` : `<div class="trend-img" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text3);">◆</div>`;
+    const srcBadge = t.estimate ? '<span class="trend-src-badge" title="Not enough CSFloat price history for this period — trend estimated from Steam Market sale history">Steam est.</span>' : '';
 
-    return `<div class="trend-row">
+    return `<div class="trend-row" onclick="openPriceHistoryModal('${t.item.id}')" title="Click for full price history">
       ${imgHtml}
       <div class="trend-info">
         <div class="trend-name">${escHtml(t.item.name)}</div>
-        <div class="trend-sub">${typeLabels[t.item.type] || t.item.type} · qty ${t.item.qty.toLocaleString()}</div>
+        <div class="trend-sub">${typeLabels[t.item.type] || t.item.type} · qty ${t.item.qty.toLocaleString()}${srcBadge}</div>
       </div>
-      <div class="trend-price">${fmtMoney(t.currentPrice, 2)}</div>
+      ${trendSpark(t.history, color)}
+      <div class="trend-price">
+        <div class="trend-price-now">${fmtMoney(t.currentPrice, 2)}</div>
+        <div class="trend-price-was">was ${fmtMoney(t.oldPrice, 2)}</div>
+      </div>
       <div class="trend-change" style="color:${color};">${arrow} ${Math.abs(t.change).toFixed(2)}%</div>
       <div class="trend-value">${fmtMoney(t.totalValue, 2)}</div>
     </div>`;
