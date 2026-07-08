@@ -14,6 +14,26 @@ the top, in the "VAULT PRO — PAYMENTS, LICENSING & TRIAL" section).
   so it handles global VAT/sales tax for you.
 - Start in **Sandbox** mode for testing, switch to **Production** when verified.
 
+## 1b. Website verification — use cs2vault.app, NOT the .pages.dev URL
+The site is live and the domain is owned, so this step is pure form-filling.
+When Paddle's "Tell us about your website" step asks:
+
+- **Web domain**: `cs2vault.app` — always this, **never**
+  `cs2vault-electron.pages.dev`. The .pages.dev URL is only a free alias; the
+  custom domain is what the canonical URLs, SEO and policy links live on
+  permanently, and it's what you want on Paddle's records.
+- **Pricing page**: `https://cs2vault.app/pricing/` (must show the same
+  Monthly/Annual prices you set on the Paddle price IDs in step 2 — check they
+  match before submitting)
+- **Terms of Service**: `https://cs2vault.app/terms/`
+- **Privacy policy**: `https://cs2vault.app/privacy/`
+- **Refund policy**: `https://cs2vault.app/refund/`
+
+Paddle will give you a domain-verification method (DNS record or meta tag).
+The domain is registered with Cloudflare Registrar on the same account as the
+Pages project, so a DNS verification record is added under
+**dash.cloudflare.com → cs2vault.app → DNS** in a few clicks.
+
 ## 2. Create the product + prices
 In Paddle → Catalog → Products:
 - Create a product "Vault Pro".
