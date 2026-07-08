@@ -74,19 +74,39 @@ function sendToRenderer(channel, ...args) {
 }
 
 // ─── Storage setup (electron-store — pure JS, no native compilation needed) ───
-let store;
+// v3.6.3: cs2vault_steam_history (years of daily prices per item, by far the
+// heaviest key) lives in its own store file. electron-store rewrites the whole
+// file on every set, so keeping the history out of the main file means routine
+// writes (holdings, settings, price log) stop dragging megabytes of history
+// through the disk each time.
+let store, historyStore;
+const HISTORY_STORE_KEYS = new Set(['cs2vault_steam_history']);
+function storeFor(key) { return HISTORY_STORE_KEYS.has(key) ? historyStore : store; }
+
 function initDB() {
   const Store = require('electron-store');
   store = new Store({ name: 'cs2vault-data' });
+  historyStore = new Store({ name: 'cs2vault-history' });
+  // One-shot migration: move any steam history out of the main file
+  try {
+    if (store.has('cs2vault_steam_history')) {
+      if (!historyStore.has('cs2vault_steam_history')) {
+        historyStore.set('cs2vault_steam_history', store.get('cs2vault_steam_history'));
+      }
+      store.delete('cs2vault_steam_history');
+      console.log('[Store] Migrated cs2vault_steam_history to its own file:', historyStore.path);
+    }
+  } catch (e) { console.warn('[Store] Steam-history migration failed (non-fatal):', e.message); }
   console.log('[Store] Initialised at', store.path);
 }
 
 function dbGet(key) {
-  return store.has(key) ? store.get(key) : null;
+  const s = storeFor(key);
+  return s.has(key) ? s.get(key) : null;
 }
 
 function dbSet(key, value) {
-  store.set(key, value);
+  storeFor(key).set(key, value);
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -164,7 +184,7 @@ ipcMain.handle('store:set', (_e, key, value) => {
 });
 
 ipcMain.handle('store:delete', (_e, key) => {
-  store.delete(key);
+  storeFor(key).delete(key);
   return true;
 });
 
@@ -294,10 +314,10 @@ ipcMain.handle('export:save', async (_e, filename, content) => {
 });
 
 // ─── IPC: Import file dialog ─────────────────────────────────────────────────
-ipcMain.handle('import:open', async (_e) => {
+ipcMain.handle('import:open', async (_e, opts) => {
   const { filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
-    filters: [
+    filters: (opts && Array.isArray(opts.filters) && opts.filters.length) ? opts.filters : [
       { name: 'CSV Files', extensions: ['csv'] },
       { name: 'All Files', extensions: ['*'] },
     ],

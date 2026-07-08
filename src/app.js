@@ -326,9 +326,25 @@ function savePriceLog(log) {
   window._storeSet(PRICE_LOG_KEY, JSON.stringify(log));
 }
 
+// v3.6.3 batching: every _storeSet rewrites the WHOLE electron-store file, so
+// recordPrice firing per item during a bulk refresh meant N full-file writes.
+// Bulk loops call beginPriceLogBatch() first; entries then buffer in memory and
+// flushPriceLogBatch() commits them all in a single write.
+let _priceLogBatch = null;
+function beginPriceLogBatch() { _priceLogBatch = []; }
+function flushPriceLogBatch() {
+  if (!_priceLogBatch) return;
+  const batch = _priceLogBatch;
+  _priceLogBatch = null;
+  if (!batch.length) return;
+  const log = loadPriceLog();
+  log.push(...batch);
+  savePriceLog(log);
+  console.log('[PriceLog] Flushed ' + batch.length + ' entries in one write');
+}
+
 function recordPrice(item, prices) {
   if (!prices || !item || !item.id) return;
-  const log = loadPriceLog();
   const entry = {
     id: item.id,
     ts: Date.now(),
@@ -352,6 +368,8 @@ function recordPrice(item, prices) {
 
   if (entry.best === null) return; // Don't log if no price at all
 
+  if (_priceLogBatch) { _priceLogBatch.push(entry); return; }
+  const log = loadPriceLog();
   log.push(entry);
   savePriceLog(log);
 }
@@ -509,10 +527,13 @@ async function fetchAllSteamHistory() {
       fetched++;
     } else { failed++; }
 
-    saveSteamHistory(stored);
+    // Steam history is the heaviest key in the store — save every 10 items for
+    // crash resilience instead of rewriting the file on every single item
+    if ((fetched + failed) % 10 === 0) saveSteamHistory(stored);
     // Rate limit — Steam is sensitive, 3.5s between calls
     await sleep(3500);
   }
+  saveSteamHistory(stored);
 
   if (btn) { btn.innerHTML = '📈 Fetch Steam History'; btn.disabled = false; }
   if (fetched > 0) toast(`Steam history: ${fetched} items fetched`, 'success');
@@ -2182,26 +2203,32 @@ async function runAutoRefresh() {
   const btn = document.getElementById('refreshBtn');
   const origDisabled = btn ? btn.disabled : false;
   let updated = 0;
+  let _saveCounter = 0;
+  beginPriceLogBatch();
   try {
     if (staleHoldings.length) {
       const r = await runTwoLaneRefresh(staleHoldings, {
         onProgress: (done, total) => { if (btn) { btn.innerHTML = `<span class="loading-spinner"></span> Auto ${done}/${total}`; btn.disabled = true; } },
         onItemDone: (item, prices) => {
           if (prices) { item.prices = prices; recordPrice(item, prices); }
-          saveData(holdings);
+          if (++_saveCounter % 10 === 0) saveData(holdings);
           renderHoldings();
         },
       });
       updated += r.updated;
+      saveData(holdings);
     }
     if (staleSkins.length) {
       const r = await runTwoLaneRefresh(staleSkins, {
-        onItemDone: (skin, prices) => mergeSkinPrices(skin, prices),
+        onItemDone: (skin, prices) => mergeSkinPrices(skin, prices, true),
       });
       updated += r.updated;
+      saveSkins(skins);
+      renderSkins();
     }
   } finally {
     _refreshBusy = false;
+    flushPriceLogBatch();
     if (btn) { btn.innerHTML = '\u21bb Refresh Prices'; btn.disabled = origDisabled; }
   }
   if (updated > 0) {
@@ -2246,17 +2273,23 @@ async function refreshAllPrices() {
   work.forEach(it => { if (it.marketHash) updateRowPriceLoading(it.id); });
 
   let res = { updated: 0, failed: 0, noHash: 0 };
+  let _saveCounter = 0;
+  beginPriceLogBatch();
   try {
     res = await runTwoLaneRefresh(work, {
       onProgress: (done, total) => { btn.innerHTML = `<span class="loading-spinner"></span> ${done}/${total} ${scopeLabel}`; },
       onItemDone: (item, prices) => {
         if (prices) { item.prices = prices; recordPrice(item, prices); }
-        saveData(holdings);
+        // Throttled persistence: full-file store writes are expensive, so save
+        // every 10th item for crash resilience; the finally block does the last one
+        if (++_saveCounter % 10 === 0) saveData(holdings);
         renderHoldings();
       },
     });
   } finally {
     _refreshBusy = false;
+    saveData(holdings);
+    flushPriceLogBatch();
     btn.innerHTML = '↻ Refresh Prices';
     btn.disabled = false;
   }
@@ -2414,7 +2447,7 @@ function renderHoldings() {
     const fmt = v => v != null ? `${fmtMoney(Number(v), 2)}` : '<span class="price-loading">—</span>';
     const best = getBestPrice(item);
     const pnl = best != null ? (best - item.buyPrice) * item.qty : null;
-    const pnlPct = best != null ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
+    const pnlPct = (best != null && item.buyPrice > 0) ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
     const pnlHtml = pnl != null
       ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(pnl), 2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
       : '<span class="price-loading">No price data</span>';
@@ -4017,7 +4050,9 @@ function renderAnalytics() {
     </div>`;
   }).join('') || '<p style="color:var(--text3);font-size:13px;">No data</p>';
 
-  const withPrices = holdings.filter(h => getBestPrice(h) != null);
+  // buyPrice > 0 guard: Steam-imported items left at a £0 buy price would
+  // otherwise rank as +Infinity% and pin the top of the leaderboard
+  const withPrices = holdings.filter(h => getBestPrice(h) != null && h.buyPrice > 0);
   withPrices.sort((a,b) => ((getBestPrice(b)-b.buyPrice)/b.buyPrice) - ((getBestPrice(a)-a.buyPrice)/a.buyPrice));
   const rankClasses = ['rank-1','rank-2','rank-3','rank-n','rank-n'];
   const perfRow = (h, i, isBottom) => {
@@ -4784,7 +4819,7 @@ function setValueRange(days, btn) {
 function _valueRangeSlice(hist) {
   if (!currentValueRange || currentValueRange <= 0) return hist;
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - currentValueRange);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
+  const cutoffStr = localDateStr(cutoff);
   const sliced = hist.filter(p => p.date >= cutoffStr);
   // If the range is so short nothing falls in it but we have data, show the last
   // 2 points so the chart isn't blank.
@@ -4942,11 +4977,65 @@ const CS2_UPDATES = [
   { date: '2026-01-15', label: 'Elemental Craft',      color: 'rgba(99,102,241,0.85)' },
 ];
 
-// Benchmark data — ALL indexed to 100 at Sep 2025 (aligns with your first historical snapshot)
-// Real approximate values based on actual market performance Sep 2025 – Mar 2026:
-// S&P 500: Sep2025 ~5750 → peaked ~6100 Dec → pulled back to ~5550 Mar2026
-// BTC:     Sep2025 ~63k  → peaked ~108k Jan → pulled back to ~84k Mar2026
-// Gold:    Sep2025 ~2500 → steady climb to ~3050 Mar2026
+// ── Live benchmark data ──────────────────────────────────────────────────────
+// Fetched from stooq.com daily-close CSV (no API key), cached 24h in
+// cs2vault_benchmarks. The static BENCHMARK_DATA table below is ONLY the
+// offline fallback — it ends 2026-03-14, which is why lines went flat when it
+// was the sole source. All series are indexed to 100 at the chart's first
+// visible date at render time (so the % figures always match the labelled range).
+const BENCH_CACHE_KEY = 'cs2vault_benchmarks';
+const BENCH_SYMBOLS = { sp500: '%5Espx', btc: 'btcusd', gold: 'xauusd' };
+let _benchFetchPromise = null;
+
+function loadBenchCache() {
+  try { return JSON.parse(window._store[BENCH_CACHE_KEY]) || null; } catch { return null; }
+}
+
+async function refreshBenchmarks(force) {
+  const cache = loadBenchCache();
+  if (!force && cache?.fetchedAt && (Date.now() - cache.fetchedAt) < 24 * 60 * 60 * 1000) return false;
+  if (_benchFetchPromise) return _benchFetchPromise;
+  _benchFetchPromise = (async () => {
+    const series = cache?.series ? { ...cache.series } : {};
+    let updated = false;
+    for (const [key, sym] of Object.entries(BENCH_SYMBOLS)) {
+      try {
+        const res = await window.cs2vault.fetch('https://stooq.com/q/d/l/?s=' + sym + '&i=d', { 'User-Agent': 'Mozilla/5.0' });
+        if (!res || res.status !== 200 || !res.body || res.body.length < 50) { console.warn('[Benchmarks] bad response for', key, res && res.status); continue; }
+        const rows = res.body.trim().split('\n').slice(1); // skip CSV header
+        const pts = [];
+        for (const line of rows) {
+          const cols = line.split(',');
+          const d = cols[0], close = parseFloat(cols[4]);
+          if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && isFinite(close) && close > 0) pts.push({ d, c: close });
+        }
+        if (pts.length >= 30) { series[key] = pts.slice(-1200); updated = true; } // keep ~5y of dailies
+      } catch (e) { console.warn('[Benchmarks] fetch failed for', key, e); }
+    }
+    if (updated) window._storeSet(BENCH_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), series }));
+    else if (cache) window._storeSet(BENCH_CACHE_KEY, JSON.stringify({ ...cache, fetchedAt: Date.now() })); // don't hammer stooq on repeated failures
+    _benchFetchPromise = null;
+    return updated;
+  })();
+  return _benchFetchPromise;
+}
+
+// Raw benchmark level on (or the trading day just before) a date.
+// Falls back to the static table below when no live data is cached — callers
+// always divide by a base taken from the SAME source, so mixing is impossible.
+function benchmarkValueAt(bKey, dateStr) {
+  const cache = loadBenchCache();
+  const pts = cache?.series?.[bKey];
+  if (pts && pts.length) {
+    for (let i = pts.length - 1; i >= 0; i--) {
+      if (pts[i].d <= dateStr) return pts[i].c;
+    }
+    return pts[0].c; // date precedes the series
+  }
+  return interpolateBenchmark(bKey, dateStr);
+}
+
+// OFFLINE FALLBACK ONLY — approximate levels indexed to 100 at Sep 2025, ends 2026-03-14
 const BENCHMARK_DATA = {
   sp500: {
     label: 'S&P 500',
@@ -5027,9 +5116,9 @@ function takeSnapshot(auto) {
     const best = getBestPrice(h);
     if (best) cat.value += best * h.qty;
   });
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const existing = snaps.find(s => s.date === today && s.source !== 'historical');
-  const snap = { date: today, categories: cats, source: auto ? 'auto' : 'manual' };
+  const snap = { date: today, categories: cats, source: auto ? 'auto' : 'manual', createdAt: Date.now() };
   if (existing) { Object.assign(existing, snap); } else { snaps.push(snap); }
   saveSnapshots(snaps);
   renderPortfolio();
@@ -5037,52 +5126,50 @@ function takeSnapshot(auto) {
 }
 
 function checkAutoSnapshot() {
+  // v3.6.3: the old version "backfilled" missed months by writing TODAY'S
+  // portfolio values onto PAST dates — one more fake snapshot per launch.
+  // Combined with the case-only historical seed points, this produced the
+  // sawtooth portfolio line and (via duplicate chart labels) the diagonal
+  // annotation glitch. Snapshots are now only ever dated the day they were
+  // actually measured.
   const snaps  = loadSnapshots();
   const today  = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-
-  // Build list of 3rd-of-month dates we should have snapshots for
-  // Go back 12 months max
-  const expected = [];
-  for (let m = 0; m < 12; m++) {
-    const d = new Date(today.getFullYear(), today.getMonth() - m, 3);
-    if (d > today) continue; // skip future
-    expected.push(d.toISOString().split('T')[0]);
-  }
-
-  // Find which ones are missing (no auto OR manual snapshot within 2 days of the 3rd)
-  const missing = expected.filter(dateStr => {
-    return !snaps.some(s => {
-      if (s.source === 'historical') return false;
-      const diff = Math.abs(new Date(s.date) - new Date(dateStr));
-      return diff < 3 * 86400000; // within 3 days counts
-    });
-  });
-
-  if (missing.length === 0) return;
-
-  // Take snapshot for today's data and tag it with the missed date
-  const cats = { case:{invested:0,value:0}, sticker:{invested:0,value:0}, armory:{invested:0,value:0}, skin:{invested:0,value:0}, knife:{invested:0,value:0} };
-  holdings.forEach(h => {
-    const cat = cats[h.type] || cats.skin;
-    cat.invested += h.buyPrice * h.qty;
-    const best = getBestPrice(h);
-    if (best) cat.value += best * h.qty;
-  });
-
-  // Save snapshot for the most recent missed date
-  const snapDate = missing[0]; // most recent first
-  const existing = snaps.find(s => s.date === snapDate && s.source !== 'historical');
-  const snap = { date: snapDate, categories: cats, source: 'auto' };
-  if (existing) { Object.assign(existing, snap); } else { snaps.push(snap); }
-  saveSnapshots(snaps);
-
-  // Also take a fresh snapshot for today if it's the 3rd
-  if (today.getDate() === 3 && !snaps.some(s => s.date === todayStr && s.source === 'auto')) {
+  const todayLocal = todayStr();
+  if (today.getDate() < 3) return; // monthly window opens on the 3rd
+  const monthKey = todayLocal.slice(0, 7);
+  const coveredThisMonth = snaps.some(s => s.date.slice(0, 7) === monthKey);
+  if (!coveredThisMonth) {
     takeSnapshot(true);
+    console.log('[Snapshot] Auto snapshot taken for ' + monthKey + ' (dated today: ' + todayLocal + ')');
   }
+}
 
-  console.log(`[Snapshot] Backfilled ${missing.length} missed snapshot(s): ${missing.join(', ')}`);
+// One-shot cleanup of snapshots the old backfill fabricated (v3.6.3).
+// A fake backfill is an 'auto' snapshot sitting within 3 days of a
+// 'historical' seed point — the backfill only ever targeted 3rd-of-month
+// dates that historical points already covered. Exact-date duplicates are
+// also collapsed (manual > auto > historical), because duplicate x-axis
+// labels made the chartjs annotation plugin draw diagonal event lines.
+function cleanupSnapshotArtifacts() {
+  const snaps = loadSnapshots();
+  if (!snaps.length) return;
+  const historicalTs = snaps.filter(s => s.source === 'historical').map(s => +new Date(s.date));
+  const noFakes = snaps.filter(s => {
+    if (s.source !== 'auto') return true;
+    if (s.createdAt) return true; // post-fix snapshots are always genuine
+    return !historicalTs.some(h => Math.abs(+new Date(s.date) - h) < 3 * 86400000);
+  });
+  const rank = s => s.source === 'manual' ? 3 : s.source === 'auto' ? 2 : 1;
+  const byDate = new Map();
+  noFakes.forEach(s => {
+    const cur = byDate.get(s.date);
+    if (!cur || rank(s) >= rank(cur)) byDate.set(s.date, s);
+  });
+  const cleaned = [...byDate.values()];
+  if (cleaned.length !== snaps.length) {
+    saveSnapshots(cleaned);
+    console.log('[Snapshot] Cleaned ' + (snaps.length - cleaned.length) + ' fabricated/duplicate snapshot(s)');
+  }
 }
 
 function deleteSnapshot(date) {
@@ -5128,6 +5215,11 @@ function interpolateBenchmark(benchKey, dateStr) {
 
 function renderPortfolio() {
   try { renderValueChart(); } catch (e) { console.warn('[renderValueChart]', e); }
+  // Live benchmark refresh (24h-cached). Re-render once when fresh data lands;
+  // refreshBenchmarks() returns false while the cache is fresh, so no loop.
+  if (activeBenchmarks.size > 0) {
+    refreshBenchmarks().then(updated => { if (updated) renderPortfolio(); }).catch(() => {});
+  }
   const snaps = loadSnapshots().sort((a,b) => a.date.localeCompare(b.date));
   if (!snaps.length) return;
 
@@ -5189,7 +5281,11 @@ function renderPortfolio() {
       },
     ];
     activeBenchmarks.forEach(bKey => {
-      const bData = labels.map(d => +interpolateBenchmark(bKey, d).toFixed(2));
+      const base = benchmarkValueAt(bKey, labels[0]);
+      const bData = labels.map(d => {
+        const v = benchmarkValueAt(bKey, d);
+        return (v != null && base > 0) ? +(v / base * 100).toFixed(2) : null;
+      });
       datasets.push({
         label: BENCHMARK_DATA[bKey].label,
         data: bData,
@@ -5200,6 +5296,7 @@ function renderPortfolio() {
         pointRadius: 0,
         pointHoverRadius: 5,
         borderDash: [6,3],
+        spanGaps: true,
         yAxisID: 'y',
       });
     });
@@ -5391,9 +5488,9 @@ function renderPortfolio() {
         },
       ];
       activeBenchmarks.forEach(bKey => {
-        const startVal = interpolateBenchmark(bKey, firstDate);
-        const endVal   = interpolateBenchmark(bKey, lastDate);
-        const ret = ((endVal / startVal - 1) * 100);
+        const startVal = benchmarkValueAt(bKey, firstDate);
+        const endVal   = benchmarkValueAt(bKey, lastDate);
+        const ret = (startVal > 0 && endVal != null) ? ((endVal / startVal - 1) * 100) : 0;
         items.push({
           key: bKey,
           label: BENCHMARK_DATA[bKey].label,
@@ -5429,11 +5526,17 @@ function renderPortfolio() {
     const inv = getInvested(s), val = getValue(s), p = val - inv;
     const roi = inv > 0 ? ((val - inv) / inv * 100).toFixed(1) : '0.0';
     const pnlClass = p >= 0 ? 'color:#00d4aa' : 'color:#ef4444';
-    const tag = s.source === 'historical' ? 'HIST' : s.source === 'auto' ? 'AUTO' : 'MANUAL';
+    // Pre-v3.6.3 auto snapshots (no createdAt stamp) may have been backdated by
+    // the old backfill bug. Ones near a historical point were auto-deleted; the
+    // rest can't be classified automatically, so flag them for manual review.
+    const unverified = s.source === 'auto' && !s.createdAt;
+    const tag = s.source === 'historical' ? 'HIST' : s.source === 'auto' ? (unverified ? 'AUTO ⚠' : 'AUTO') : 'MANUAL';
+    const tagTitle = unverified ? ' title="Created by a pre-v3.6.3 build — the old auto-snapshot code could backdate today\'s values onto this date. If these figures look wrong for this date, delete the row."' : '';
+    const tagStyle = unverified ? 'color:var(--accent);opacity:0.9' : 'opacity:0.5';
     const delBtn = s.source !== 'historical'
       ? `<button class="btn btn-danger btn-sm" onclick="deleteSnapshot('${s.date}')">✕</button>` : '—';
     return `<tr>
-      <td style="padding:8px;border-bottom:1px solid var(--border);">${s.date} <span style="font-size:9px;opacity:0.5">${tag}</span></td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);">${s.date} <span style="font-size:9px;${tagStyle}"${tagTitle}>${tag}</span></td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">${fmtMoneyLoc(inv, 2)}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;">${fmtMoneyLoc(val, 2)}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;${pnlClass}">${p>=0?'▲':'▼'} ${fmtMoneyLoc(Math.abs(p), 2)}</td>
@@ -5476,7 +5579,7 @@ function renderSkins() {
     const p = item.prices || {};
     const best = getBestPrice(item);
     const pnl = best != null ? (best - item.buyPrice) * item.qty : null;
-    const pnlPct = best != null ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
+    const pnlPct = (best != null && item.buyPrice > 0) ? ((best - item.buyPrice) / item.buyPrice * 100) : null;
     const pnlHtml = pnl != null
       ? `<span class="pnl-pill ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '▲' : '▼'} ${fmtMoney(Math.abs(pnl), 2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</span>`
       : '<span class="price-loading">—</span>';
@@ -5501,7 +5604,7 @@ function renderSkins() {
 // Atomic merge-back shared by manual + auto skin refreshes:
 // re-sync against storage in case a sale removed an item mid-refresh,
 // then merge this item's fresh prices back in without resurrecting sold items.
-function mergeSkinPrices(skin, prices) {
+function mergeSkinPrices(skin, prices, deferSave) {
   if (prices) {
     skin.prices = prices;
     recordPrice(skin, skin.prices);
@@ -5509,7 +5612,9 @@ function mergeSkinPrices(skin, prices) {
   const _live = loadSkins() || skins;
   if (_live.some(s => s.id === skin.id)) {
     skins = _live.map(s => s.id === skin.id ? { ...s, prices: skin.prices } : s);
-    saveSkins(skins);
+    // deferSave: bulk refresh lanes save once at the end instead of per item
+    // (every save rewrites the whole store file)
+    if (!deferSave) saveSkins(skins);
   } else {
     skins = _live;
   }
@@ -5531,13 +5636,16 @@ async function refreshSkinPrices() {
   btn.disabled = true;
 
   let res = { updated: 0, failed: 0, noHash: 0 };
+  beginPriceLogBatch();
   try {
     res = await runTwoLaneRefresh(work, {
       onProgress: (done, total) => { status.textContent = `Fetching ${done}/${total}...`; },
-      onItemDone: (skin, prices) => mergeSkinPrices(skin, prices),
+      onItemDone: (skin, prices) => mergeSkinPrices(skin, prices, true),
     });
   } finally {
     _refreshBusy = false;
+    saveSkins(skins);
+    flushPriceLogBatch();
     btn.innerHTML = '↻ Refresh Skin Prices';
     btn.disabled = false;
   }
@@ -6643,7 +6751,7 @@ function saveAlerts(d) { window._storeSet(ALERTS_KEY, JSON.stringify(d)); }
 function openAddAlertModal() {
   const sel = document.getElementById('alertItemSel');
   if (sel) sel.innerHTML = '<option value="">— select a holding —</option>' +
-    holdings.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
+    holdings.map(h => `<option value="${h.id}">${escHtml(h.name)}</option>`).join('');
   ['alertName','alertHash','alertNote'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   const t = document.getElementById('alertTarget'); if(t) t.value='';
   const d = document.getElementById('alertDir'); if(d) d.value='below';
@@ -6866,8 +6974,8 @@ async function fetchPricempireHistory(marketHashName, days) {
   const key = getPricempireKey();
   if (!key || !marketHashName) return null;
 
-  const toDate = new Date().toISOString().split('T')[0];
-  const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const toDate = todayStr();
+  const fromDate = localDateStr(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
 
   try {
     const url = `https://api.pricempire.com/v4/paid/items/prices/history?app_id=730&provider_key=csfloat&currency=GBP&from_date=${fromDate}&to_date=${toDate}&market_hash_names=${encodeURIComponent(marketHashName)}`;
@@ -6913,11 +7021,95 @@ async function exportAllData() {
     activityLog:     window._store['cs2vault_activity_log'] || null,
     valueHistory:    window._store['cs2vault_value_history'] || null,
     steamId:         window._store['cs2vault_steam_id'] || null,
+    // v3.6.3: accumulated history — without these a restore silently loses all
+    // sparklines, trends and case-supply tracking (cs2vault_benchmarks is a
+    // re-fetchable cache and API keys are deliberately never written to backups)
+    priceLog:        window._store['cs2vault_price_log'] || null,
+    steamHistory:    window._store['cs2vault_steam_history'] || null,
+    caseSupply:      window._store['cs2vault_case_supply'] || null,
   };
   const json = JSON.stringify(backup, null, 2);
-  const filename = `cs2vault-backup-${new Date().toISOString().split('T')[0]}.json`;
+  const filename = `cs2vault-backup-${todayStr()}.json`;
   const result = await window.cs2vault.exportSave(filename, json);
   if (result.saved) toast(`Backup saved!`, 'success');
+}
+
+// v3.6.3: restore from a backup JSON produced by exportAllData. Full-replace
+// semantics: every mapped key is overwritten from the backup, and keys ABSENT
+// from the backup are deleted — except the licence trio, which is never deleted
+// (restoring an old backup must not sign a paying user out of Pro; it is only
+// overwritten if the backup actually contains licence data).
+const BACKUP_FIELD_MAP = {
+  holdings: 'cs2vault_holdings',
+  history: 'cs2vault_history',
+  snapshots: 'cs2vault_snapshots',
+  skins: 'cs2vault_skins',
+  watchlist: 'cs2vault_watchlist',
+  alerts: 'cs2vault_alerts',
+  fxCache: 'cs2vault_fx_cache',
+  displayCurrency: 'cs2vault_display_currency',
+  taxJurisdiction: 'cs2vault_tax_jurisdiction',
+  costBasisMethod: 'cs2vault_cost_basis_method',
+  proOverride: 'cs2vault_pro_override',
+  licence: 'cs2vault_licence',
+  licenceState: 'cs2vault_licence_state',
+  trialStart: 'cs2vault_trial_start',
+  activityLog: 'cs2vault_activity_log',
+  valueHistory: 'cs2vault_value_history',
+  steamId: 'cs2vault_steam_id',
+  priceLog: 'cs2vault_price_log',
+  steamHistory: 'cs2vault_steam_history',
+  caseSupply: 'cs2vault_case_supply',
+};
+const BACKUP_NEVER_DELETE = new Set(['cs2vault_licence', 'cs2vault_licence_state', 'cs2vault_trial_start']);
+
+async function importAllData() {
+  if (!confirm('Restore from a CS2 Vault backup file?\n\nThis REPLACES your current holdings, history, snapshots, skins and settings with the backup contents.')) return;
+
+  const result = await window.cs2vault.importOpen({ filters: [
+    { name: 'CS2 Vault Backup', extensions: ['json'] },
+    { name: 'All Files', extensions: ['*'] },
+  ]});
+  if (!result || !result.opened) return;
+
+  let backup;
+  try { backup = JSON.parse(result.content); }
+  catch { toast('Not a valid backup file (could not parse JSON)', 'error'); return; }
+  if (!backup || typeof backup !== 'object' || !backup.exportedAt || !('holdings' in backup)) {
+    toast('Not a CS2 Vault backup file', 'error'); return;
+  }
+
+  // Summarise what the backup contains before the final confirm
+  const counts = [];
+  const tryCount = (field, label) => {
+    try { const arr = JSON.parse(backup[field]); if (Array.isArray(arr)) counts.push(arr.length + ' ' + label); } catch {}
+  };
+  tryCount('holdings', 'holdings'); tryCount('history', 'trades'); tryCount('snapshots', 'snapshots'); tryCount('skins', 'play skins');
+  const summary = counts.length ? counts.join(', ') : 'contents could not be summarised';
+  const when = String(backup.exportedAt).slice(0, 10);
+  const ver = backup.version ? ' (app v' + backup.version + ')' : '';
+  if (!confirm('Backup from ' + when + ver + '\n' + summary + '\n\nLast chance — replace ALL current data with this backup?')) return;
+
+  let restored = 0, deleted = 0;
+  try {
+    for (const [field, key] of Object.entries(BACKUP_FIELD_MAP)) {
+      const v = backup[field];
+      if (v == null) {
+        if (!BACKUP_NEVER_DELETE.has(key)) { await window.cs2vault.store.delete(key); deleted++; }
+        continue;
+      }
+      await window.cs2vault.store.set(key, v);
+      restored++;
+    }
+  } catch (e) {
+    toast('Restore failed partway: ' + (e.message || e) + ' — reloading to a consistent state', 'error');
+    setTimeout(() => location.reload(), 1500);
+    return;
+  }
+  toast('Backup restored (' + restored + ' data sets) — reloading\u2026', 'success');
+  // All writes above were awaited, so the store is consistent; a clean reload
+  // re-runs initStore/initApp against the restored data (no re-init side effects)
+  setTimeout(() => location.reload(), 900);
 }
 
 function clearAllData() {
@@ -6927,7 +7119,7 @@ function clearAllData() {
   // deliberately NOT cleared here — wiping a paid licence on "clear data" would
   // lock a paying customer out of a purchase they made. Use Settings → Remove
   // licence to sign out of Pro on this machine.
-  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log','cs2vault_value_history','cs2vault_steam_id'];
+  const keys = ['cs2vault_holdings','cs2vault_history','cs2vault_snapshots','cs2vault_skins','cs2vault_watchlist','cs2vault_alerts','cs2vault_fx_cache','cs2vault_display_currency','cs2vault_tax_jurisdiction','cs2vault_cost_basis_method','cs2vault_pro_override','cs2vault_install_state','cs2vault_onboarded','cs2vault_activity_log','cs2vault_value_history','cs2vault_steam_id','cs2vault_benchmarks'];
   keys.forEach(k => {
     window._store[k] = null;
     window.cs2vault.store.delete(k);
@@ -7179,7 +7371,7 @@ function renderHealthReport() {
     typeBreakdown[h.type].value += val;
     typeBreakdown[h.type].count++;
     typeBreakdown[h.type].items.push(h);
-    if (best) itemValues.push({ name: h.name, type: h.type, invested: inv, value: val, pct: totalInvested > 0 ? (inv / totalInvested * 100) : 0, pnlPct: ((best - h.buyPrice) / h.buyPrice * 100), qty: h.qty, id: h.id, staleMs: h.prices?.fetchedAt ? Date.now() - h.prices.fetchedAt : null });
+    if (best) itemValues.push({ name: h.name, type: h.type, invested: inv, value: val, pct: totalInvested > 0 ? (inv / totalInvested * 100) : 0, pnlPct: h.buyPrice > 0 ? ((best - h.buyPrice) / h.buyPrice * 100) : 0, qty: h.qty, id: h.id, staleMs: h.prices?.fetchedAt ? Date.now() - h.prices.fetchedAt : null });
   });
 
   // Recalculate pct with final totalInvested
@@ -7216,8 +7408,8 @@ function renderHealthReport() {
   const signals = [];
 
   // Concentration warnings
-  if (maxConcentration > 40) signals.push({ icon: '🔴', title: `${top5[0].name} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Very high concentration risk — consider diversifying. A single item crash would significantly impact your total value.', type: 'danger' });
-  else if (maxConcentration > 25) signals.push({ icon: '🟡', title: `${top5[0].name} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Moderate concentration — keep an eye on this position.', type: 'warning' });
+  if (maxConcentration > 40) signals.push({ icon: '🔴', title: `${escHtml(top5[0].name)} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Very high concentration risk — consider diversifying. A single item crash would significantly impact your total value.', type: 'danger' });
+  else if (maxConcentration > 25) signals.push({ icon: '🟡', title: `${escHtml(top5[0].name)} is ${maxConcentration.toFixed(1)}% of your portfolio`, desc: 'Moderate concentration — keep an eye on this position.', type: 'warning' });
 
   // Top 5 dominance
   if (top5Pct > 70) signals.push({ icon: '🟡', title: `Top 5 items = ${top5Pct.toFixed(1)}% of portfolio`, desc: 'Your portfolio is heavily concentrated in a few items. Spreading across more items reduces risk.', type: 'warning' });
@@ -7234,19 +7426,19 @@ function renderHealthReport() {
   // Big winners — consider profit taking
   topPerformers.forEach(p => {
     if (p.pnlPct > 40 && p.invested > 100) {
-      signals.push({ icon: '🟢', title: `${p.name} is up ${p.pnlPct.toFixed(1)}% — consider taking profit`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Selling a portion locks in gains.`, type: 'success' });
+      signals.push({ icon: '🟢', title: `${escHtml(p.name)} is up ${p.pnlPct.toFixed(1)}% — consider taking profit`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Selling a portion locks in gains.`, type: 'success' });
     }
   });
 
   // Big losers
   worstPerformers.forEach(p => {
     if (p.pnlPct < -30 && p.invested > 50) {
-      signals.push({ icon: '🔴', title: `${p.name} is down ${Math.abs(p.pnlPct).toFixed(1)}%`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Review whether the thesis still holds.`, type: 'danger' });
+      signals.push({ icon: '🔴', title: `${escHtml(p.name)} is down ${Math.abs(p.pnlPct).toFixed(1)}%`, desc: `${fmtMoney(p.invested, 0)} invested, now worth ${fmtMoney(p.value, 0)}. Review whether the thesis still holds.`, type: 'danger' });
     }
   });
 
   // Overall P&L
-  const totalPnl = ((totalValue - totalInvested) / totalInvested * 100);
+  const totalPnl = totalInvested > 0 ? ((totalValue - totalInvested) / totalInvested * 100) : 0;
   if (totalPnl > 10) signals.push({ icon: '🟢', title: `Portfolio up ${totalPnl.toFixed(1)}% overall`, desc: 'Positive returns — your investment strategy is working.', type: 'success' });
   else if (totalPnl < -10) signals.push({ icon: '🟡', title: `Portfolio down ${Math.abs(totalPnl).toFixed(1)}% overall`, desc: 'Unrealised losses — CS2 items are long-term holds, consider your timeframe.', type: 'warning' });
 
@@ -7947,7 +8139,11 @@ window.addEventListener('error', ev => surfaceError('Error', ev.error || ev));
 window.addEventListener('unhandledrejection', ev => surfaceError('Async error', ev.reason || ev));
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2);}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function todayStr(){return new Date().toISOString().split('T')[0];}
+function localDateStr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+// v3.6.3: local date, not UTC — toISOString() meant that between midnight and
+// 1am BST "today" was still yesterday, so snapshots, value-history points and
+// prefilled buy/sell dates could land on the wrong day
+function todayStr(){return localDateStr(new Date());}
 function timeAgo(ts){const d=(Date.now()-ts)/60000;if(d<1)return 'just now';if(d<60)return`${Math.floor(d)}m ago`;if(d<1440)return`${Math.floor(d/60)}h ago`;return`${Math.floor(d/1440)}d ago`;}
 
 // Modals stay open on backdrop click — close only via the ✕, Cancel, or Save buttons.
@@ -8240,6 +8436,7 @@ function initApp() {
   try { updateStats(); }                  catch(e) { console.warn('[initApp] updateStats:', e); }
   try { checkApiStatus(); }               catch(e) { console.warn('[initApp] checkApiStatus:', e); }
   try { checkTargetsOnLoad(); }           catch(e) { console.warn('[initApp] checkTargetsOnLoad:', e); }
+  try { cleanupSnapshotArtifacts(); }     catch(e) { console.warn('[initApp] cleanupSnapshotArtifacts:', e); }
   try { checkAutoSnapshot(); }            catch(e) { console.warn('[initApp] checkAutoSnapshot:', e); }
   try { seedValueHistoryFromSnapshots(); } catch(e) { console.warn('[initApp] seedValueHistory:', e); }
   try { recordValueSnapshot(); }          catch(e) { console.warn('[initApp] recordValueSnapshot:', e); }

@@ -1018,6 +1018,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         </div>
         <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
           <button class="btn btn-secondary" onclick="exportAllData()">↓ Export Full Backup (JSON)</button>
+          <button class="btn btn-secondary" onclick="importAllData()">↑ Restore From Backup</button>
           <button class="btn btn-danger btn-sm" onclick="clearAllData()">⚠ Clear All Data</button>
         </div>
       </div>
@@ -1530,6 +1531,8 @@ const STORE_KEYS = [
   'cs2vault_value_history',
   // --- v3.6.0: Steam inventory import (remembers last-used SteamID) ---
   'cs2vault_steam_id',
+  // --- v3.6.3: live market benchmark cache (stooq daily closes, 24h TTL) ---
+  'cs2vault_benchmarks',
 ];
 
 window._store = {};
