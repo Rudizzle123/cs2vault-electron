@@ -1,10 +1,19 @@
 # CS2 Vault — Project State
 
-Last updated: July 2026 | Current version: v3.6.1
+Last updated: July 2026 (website: all 10 guides live, Cloudflare Pages deployed) | Current version: v3.6.1
 
 ---
 
 ## What's Been Built (Complete)
+
+### Website — all 10 jurisdiction tax guides live + Cloudflare Pages deployed ✅ (website-only, no version)
+The MARKETING.md Lane 3 content site is complete and **live at https://cs2vault-electron.pages.dev/** (Cloudflare Pages, Git-integrated: every push to `main` auto-deploys the `website/` output directory — deploy = push from now on).
+
+- **Guide batches 2+3 (Jul 2026)**: 7 new guide pages — `website/guides/ca|au|se|fi|no|dk|pl/index.html` — joining UK/US/DE from batch 1. Guides hub (`website/guides/index.html`) now shows **all 10 jurisdictions live, zero "coming soon"**. Every figure verified against primary government sources at write time (CRA/Canada.ca, ATO, Skatteverket, Vero.fi, Skatteetaten, Skattestyrelsen/skat.dk + Jun-2025 Supreme Court ruling, PL art. 30b/PIT-38 references); all pages carry the "verified July 2026" footer and the standard estimates-not-tax-advice block. CA guide reflects the v3.6.1 investor classification (no floor, losses deductible, PUP + business-income disclosed)
+- **Flags from the batch-2+3 verification pass** (for the launch-month re-verify): (1) **AU loss ordering** — ATO applies capital losses *before* the 50% discount; the engine's per-disposal path discounts gains then subtracts full losses, which can under-state tax in long-gains-only loss years (guides teach the correct ATO ordering); (2) **DK loss asymmetry is now settled law** (Jun 2025 Supreme Court: gains = personal income up to ~52%, losses = ~26% assessed deduction, no cross-holding netting) — app pools and discloses; DK guide tells users to file from gross per-disposal figures; (3) **AU 2027 reform confirmed** — 2026 budget replaces the CGT discount with cost-base indexation + a new capital-gains rate from 1 Jul 2027; AU profile + guide are current pre-July-2027 rules and MUST be re-verified next year
+- **Paddle website prerequisite is now satisfied**: `/pricing`, `/terms`, `/privacy`, `/refund` are publicly hosted on a verified-able domain (free `.pages.dev` subdomain — WEBSITE-SETUP.md confirms this is acceptable for Paddle domain verification; a custom domain can be attached later without redeploying)
+- ⚠ **Still pending — domain decision**: `canonical`/`og:url` tags are absent from all guide pages until the final domain is chosen (adding them with the `.pages.dev` URL would bake in the wrong canonical if a custom domain follows). Decide domain → add tags across all pages in one website-only pass
+- Website-only convention (unchanged): no version bump, no tag; deploy via `git add . && git commit && git push`
 
 ### v3.6.1 — Canada loss-classification resolved: investor = ordinary capital property (PUP floor removed) ✅
 Resolves the classification deferred from v3.3.3. **Decision (signed off, CRA primary sources):** skins held via CS2 Vault are investment holdings, so they are **ordinary capital property**, not personal-use property — ITA s.54's PUP definition is a *use* test ("used primarily for the personal use or enjoyment of the taxpayer"), which investment holdings fail. CRA's 2023 STEP Roundtable answer (2023-0961341C6) confirms the flip side: property merely stored/held for sale is not PUP, s.46(1) doesn't apply, and losses are deductible normally. The old code was an incoherent hybrid (applied the s.46 $1,000 floor *and* deducted losses, wrong under both readings); this pass makes it self-consistent under the investor reading.
@@ -480,7 +489,7 @@ Focused correctness fixes to the v3.0.0 multi-jurisdiction tax engine, flagged b
 - **✅ Vault Pro Phase 4b — Payments, Licensing & Code Signing (shipped v3.3.0)**: Paddle checkout, Paddle-native licence validation + 14-day offline grace, 14-day no-card trial, Cloudflare Worker webhook receiver, CI code-signing wiring, Privacy/ToS pages. Also fixed the latent `STORE_KEYS` persistence bug (Pro override / jurisdiction / display currency / onboarding flag were silently resetting on restart). See What's Been Built → v3.3.0
 - **🚦 LAUNCH GATE — before the first paid sale (all external admin Rudi must do; code is built to the boundary):**
   1. **Re-confirm ALL 10 jurisdictions' tax figures against primary government pages** (HMRC/IRS/BZSt/CRA/Skatteverket/KAS/ATO/Skatteetaten/Skattestyrelsen/Vero.fi) **in the launch month** — verified once on 14 Jun 2026 (`09-tax-rules-verification.md`) with fixes applied in v3.3.3, but allowances/bands change yearly so this still gates the first sale. The Canada loss-classification deferral was resolved in v3.6.1 (investor = ordinary capital property); re-confirm it here alongside the figures
-  2. **Paddle account** (seller approval can take days) → paste token + monthly/annual price IDs into `PRO_CONFIG` (PADDLE-SETUP.md)
+  2. **Paddle account** (seller approval can take days) → paste token + monthly/annual price IDs into `PRO_CONFIG` (PADDLE-SETUP.md). **The website prerequisite is now met** — pricing/ToS/privacy/refund are live at https://cs2vault-electron.pages.dev/ for the "Tell us about your website" step
   3. **Deploy the Cloudflare Worker** (`worker/` + worker/DEPLOY.md) → paste its URL into `PRO_CONFIG.licenceApiBase`
   4. **Finalise the price** in Paddle → update the two `priceMonthlyDisplay`/`priceAnnualDisplay` strings to match (benchmark SkinKeeper Pro ~$4.99/mo · $34.99/yr)
   5. **Buy a code-signing cert** (~£200–400/yr) → add `CSC_LINK`/`CSC_KEY_PASSWORD` GitHub secrets (CODE-SIGNING.md). OV is the pragmatic choice; EV needs a cloud-HSM `win.sign` hook
