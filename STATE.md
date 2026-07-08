@@ -1,10 +1,20 @@
 # CS2 Vault — Project State
 
-Last updated: July 2026 (v3.6.3: analytics correctness pass — trending platform-routing, live benchmarks, snapshot backfill fix, storage batching, backup restore) | Current version: v3.6.3
+Last updated: July 2026 (v3.6.4: benchmark dual-source — Yahoo fallback confirmed working in the field) | Current version: v3.6.4
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.6.4 — Benchmark dual-source: stooq + Yahoo fallback ✅ (field-confirmed)
+v3.6.3's stooq-only benchmark fetch failed on Rudi's machine (rate-limited/blocked — the exact failure the v3.6.3 caveat predicted), leaving the static fallback's flat lines. Fixes:
+- **Per-series dual source**: stooq CSV first, then Yahoo Finance chart API (`query1.finance.yahoo.com/v8/finance/chart/`, symbols `^GSPC` / `BTC-USD` / `GC=F`, `range=2y&interval=1d`, JSON `timestamp` + `indicators.quote[0].close`, null closes skipped)
+- **No silent failure**: if any shown benchmark lacks a live series, an amber warning renders under the summary cards naming the series and pointing at the console; per-series console diagnostics log source, point count, latest date on success, or HTTP status + first 80 chars of body on failure
+- **Field result (Jul 8 2026)**: stooq fails, **Yahoo works for all three** (`sp500: 502 pts`, `btc: 731 pts`, `gold: 504 pts`, latest 2026-07-08) — Yahoo is effectively the primary source on Rudi's machine. Real data materially changed the picture: BTC over the chart range went from the static table's +30.2% to **-44.4%** (the old hardcoded values were wrong, not just stale)
+- Known nuance (disclosed, not a bug): benchmarks index in USD terms vs the GBP portfolio — indexing cancels currency levels per line, but GBP/USD drift over the period is embedded in the comparison
+- v3.6.3's snapshot fixes also field-confirmed in the same session: sawtooth gone, diagonal annotation gone, chart starts at the 2025-09-03 historical seed
+- Delivery: `src/app.js` + `package.json` only. Yahoo-parse harness 4/4; tax harness untouched 87/87
+
 
 ### v3.6.3 — Analytics correctness pass: trending pricing, live benchmarks, snapshot integrity, storage batching, backup restore ✅
 One tag covering two work passes (v3.6.2 was folded in unpushed). Triggered by Rudi spotting wrong Trending figures and flat benchmark lines; a codebase audit followed. **No tax-engine changes** (harness still 87/87).
