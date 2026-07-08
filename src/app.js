@@ -4984,11 +4984,57 @@ const CS2_UPDATES = [
 // was the sole source. All series are indexed to 100 at the chart's first
 // visible date at render time (so the % figures always match the labelled range).
 const BENCH_CACHE_KEY = 'cs2vault_benchmarks';
-const BENCH_SYMBOLS = { sp500: '%5Espx', btc: 'btcusd', gold: 'xauusd' };
+// Two independent sources per series (v3.6.4: stooq alone proved unreliable in
+// the field — it rate-limits anonymous clients). Stooq first, Yahoo Finance
+// chart API as automatic fallback. Either failing is logged with the status.
+const BENCH_SOURCES = {
+  sp500: { stooq: '%5Espx',  yahoo: '%5EGSPC'  },
+  btc:   { stooq: 'btcusd',  yahoo: 'BTC-USD'  },
+  gold:  { stooq: 'xauusd',  yahoo: 'GC%3DF'   },
+};
+const BENCH_UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
 let _benchFetchPromise = null;
 
 function loadBenchCache() {
   try { return JSON.parse(window._store[BENCH_CACHE_KEY]) || null; } catch { return null; }
+}
+
+async function _fetchBenchStooq(sym) {
+  const res = await window.cs2vault.fetch('https://stooq.com/q/d/l/?s=' + sym + '&i=d', BENCH_UA);
+  if (!res || res.status !== 200 || !res.body || res.body.length < 50) {
+    console.warn('[Benchmarks] stooq bad response for', sym, 'status:', res && res.status, 'body head:', res && String(res.body).slice(0, 80));
+    return null;
+  }
+  const rows = res.body.trim().split('\n').slice(1); // skip CSV header
+  const pts = [];
+  for (const line of rows) {
+    const cols = line.split(',');
+    const d = cols[0], close = parseFloat(cols[4]);
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && isFinite(close) && close > 0) pts.push({ d, c: close });
+  }
+  return pts.length >= 30 ? pts : null;
+}
+
+async function _fetchBenchYahoo(sym) {
+  const res = await window.cs2vault.fetch('https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?range=2y&interval=1d', BENCH_UA);
+  if (!res || res.status !== 200 || !res.body) {
+    console.warn('[Benchmarks] yahoo bad response for', sym, 'status:', res && res.status, 'body head:', res && String(res.body).slice(0, 80));
+    return null;
+  }
+  try {
+    const j = JSON.parse(res.body);
+    const r = j.chart && j.chart.result && j.chart.result[0];
+    const ts = r && r.timestamp;
+    const closes = r && r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close;
+    if (!ts || !closes) { console.warn('[Benchmarks] yahoo unexpected shape for', sym); return null; }
+    const pts = [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = closes[i];
+      if (c == null || !isFinite(c) || c <= 0) continue;
+      pts.push({ d: new Date(ts[i] * 1000).toISOString().slice(0, 10), c });
+    }
+    return pts.length >= 30 ? pts : null;
+  } catch (e) { console.warn('[Benchmarks] yahoo parse failed for', sym, e); return null; }
 }
 
 async function refreshBenchmarks(force) {
@@ -4998,22 +5044,22 @@ async function refreshBenchmarks(force) {
   _benchFetchPromise = (async () => {
     const series = cache?.series ? { ...cache.series } : {};
     let updated = false;
-    for (const [key, sym] of Object.entries(BENCH_SYMBOLS)) {
+    for (const [key, syms] of Object.entries(BENCH_SOURCES)) {
       try {
-        const res = await window.cs2vault.fetch('https://stooq.com/q/d/l/?s=' + sym + '&i=d', { 'User-Agent': 'Mozilla/5.0' });
-        if (!res || res.status !== 200 || !res.body || res.body.length < 50) { console.warn('[Benchmarks] bad response for', key, res && res.status); continue; }
-        const rows = res.body.trim().split('\n').slice(1); // skip CSV header
-        const pts = [];
-        for (const line of rows) {
-          const cols = line.split(',');
-          const d = cols[0], close = parseFloat(cols[4]);
-          if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && isFinite(close) && close > 0) pts.push({ d, c: close });
+        let pts = await _fetchBenchStooq(syms.stooq);
+        let source = 'stooq';
+        if (!pts) { pts = await _fetchBenchYahoo(syms.yahoo); source = 'yahoo'; }
+        if (pts) {
+          series[key] = pts.slice(-1200); // keep ~5y of dailies
+          updated = true;
+          console.log('[Benchmarks] ' + key + ': ' + pts.length + ' points via ' + source + ' (latest ' + pts[pts.length - 1].d + ')');
+        } else {
+          console.warn('[Benchmarks] ' + key + ': BOTH sources failed — static fallback in use');
         }
-        if (pts.length >= 30) { series[key] = pts.slice(-1200); updated = true; } // keep ~5y of dailies
       } catch (e) { console.warn('[Benchmarks] fetch failed for', key, e); }
     }
     if (updated) window._storeSet(BENCH_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), series }));
-    else if (cache) window._storeSet(BENCH_CACHE_KEY, JSON.stringify({ ...cache, fetchedAt: Date.now() })); // don't hammer stooq on repeated failures
+    else if (cache) window._storeSet(BENCH_CACHE_KEY, JSON.stringify({ ...cache, fetchedAt: Date.now() })); // don't hammer sources on repeated failures
     _benchFetchPromise = null;
     return updated;
   })();
@@ -5516,6 +5562,17 @@ function renderPortfolio() {
           <div class="bench-card-sub">${firstDate} → ${lastDate}</div>
         </div>`;
       }).join('');
+
+      // Loudly flag stale/static data instead of failing silently: if any shown
+      // benchmark has no live series cached, its line is frozen at the static
+      // table's last point (2026-03-14) and the % doesn't reflect the range.
+      const liveSeries = loadBenchCache()?.series || {};
+      const staleKeys = [...activeBenchmarks].filter(k => !(liveSeries[k] && liveSeries[k].length));
+      if (staleKeys.length) {
+        cardsGrid.innerHTML += `<div style="grid-column:1/-1;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--accent);padding:6px 2px 0;">
+          ⚠ Live data unavailable for ${staleKeys.map(k => BENCHMARK_DATA[k].label).join(', ')} — showing static data (ends 2026-03-14). Check DevTools console for [Benchmarks] errors.
+        </div>`;
+      }
     }
   }
 
