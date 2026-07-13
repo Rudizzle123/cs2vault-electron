@@ -1,10 +1,23 @@
 # CS2 Vault — Project State
 
-Last updated: July 2026 (v3.9.0: Phase 6 session 3 of 3 — storage-unit contents merge into holdings; Phase 6 COMPLETE) | Current version: v3.9.0
+Last updated: July 2026 (v3.10.0: Electron EOL upgrade — 29 → 43, builder 24 → 26, audit 0 vulns; launch-gate item 5 CLEARED, code-signing cert purchase unblocked) | Current version: v3.10.0
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.10.0 — Electron EOL upgrade: 29 → 43, builder 24 → 26, audit clean (launch-gate item 5) ✅
+Dependency-only release — **zero src/*.js code changes**. Clears the EOL runtime + the remaining 6 high-severity vulns and **unblocks the code-signing certificate purchase** (gate item 6).
+
+- **Versions:** `electron ^29.1.0 → ^43.1.0` (current stable, 14 majors in one jump; Chrome 150, Node 22 inside), `electron-builder ^24.13.3 → ^26.15.3` (kills the `tar` high), `electron-updater ^6.1.8 → ^6.8.9` (same major — feed format + GitHub publish config unchanged; pairs with builder 26). Fresh `package-lock.json`. **`npm audit` → 0 vulnerabilities total** (was 6 high)
+- **electron-store deliberately stays ^8.2.0:** v9+ is ESM-only and the app is CJS with no build tools. 8.2.0 verified loading clean in the new tree (`conf` 10.x fine on Node 22). Do not bump without an ESM/bundler strategy
+- **`protobufjs ^7.6.5` override untouched and re-verified:** steam-user + globaloffensive + steam-appticket all load and construct against pb 7.6.5 under the new tree (v3.7.1 clean-reinstall check)
+- **Breaking-change review 30 → 43 vs the app's API surface** (app/BrowserWindow/ipcMain/Notification/shell/dialog/safeStorage/contextBridge; HTTP via Node http+https): Electron 32 `File.path` removal — unused (all file IO via main-process dialogs); Electron 40 renderer-clipboard deprecation — unused; safeStorage already only touched post-`whenReady` (the real newer-major gotcha); electron-updater 6.x events/`quitAndInstall` unchanged; contextIsolation/sandbox already modern — all no-ops. Two accepted behaviour changes: **(a) Electron 42+ downloads its binary on first `bin` run instead of postinstall** — first `npm start`/START-DEV after `npm install` pulls ~110MB once; CI packaging unaffected (electron-builder fetches its own dist); **(b) Electron 43 dialogs default to Downloads when no `defaultPath`** — the import/restore dialog now opens in Downloads instead of the OS-remembered last dir (export already passes `defaultPath`); cosmetic, accepted for scope discipline
+- **CI: `.github/workflows/build.yml` Node 20 → 22** — the electron@43 npm package declares `engines: node >= 22.12.0`. ⚠ **Rudi's local machine also needs Node ≥ 22.12** to `npm install` this version
+- **Builder-26 config validated by a real packaging run in the sandbox:** schema accepted unchanged (win/nsis/publish/files/compression all consumed), Electron 43.1.0 dist resolved, asar packed **with integrity resource** into the exe, `app-update.yml` byte-identical shape (github/owner/repo) — auto-update feed continuity confirmed. Run stopped only at final NSIS assembly (`wine ENOENT` — Linux sandbox, environmental; `windows-latest` CI builds NSIS natively). asar verified to contain `src/*`, `assets/schema-snapshot.json`, `legal/*`, `package.json`
+- **Verification:** `node -c` clean on all 7 src JS files; all three harnesses pass untouched — tax **87/87**, schema **66/66**, SU merge-plan **48/48**
+- Delivery: `package.json`, `package-lock.json`, `.github/workflows/build.yml`, `STATE.md`
+- ⚠ **Live-test checklist for Rudi:** (1) check `node -v` ≥ 22.12 BEFORE pulling, then `npm install` (expect the one-off Electron binary download on first START-DEV); (2) START-DEV boots, holdings render, a price fetch works (`window.cs2vault.fetch` IPC path); (3) Storage Units end-to-end on the new runtime: saved-session reconnect → casket list → view contents → names resolve (exercises safeStorage/DPAPI + GC + schema); (4) **packaged-build check** — tag push → GitHub-Actions .exe builds on Node 22, installs, boots, and the auto-updater still sees the GitHub feed; (5) export + import/restore dialogs open sensibly (restore now defaults to Downloads — expected)
 
 ### v3.9.0 — Storage-Unit import, session 3 of 3: merge into holdings (Phase 6 COMPLETE) ✅
 Storage-unit contents now import into holdings — per-unit or all units at once. Pro-gated (inherits the SU lock panel + `isPro()` guards on the preview and commit paths). Phase 6 is done: connect (v3.7.0) → names (v3.8.0) → merge (v3.9.0). Rudi's approved calls: (a) all-units scan included, (b) Doppler phases split into separate holdings, (c) straight v3.6.0 diff semantics.
@@ -583,7 +596,7 @@ Focused correctness fixes to the v3.0.0 multi-jurisdiction tax engine, flagged b
   2. **Paddle account** (seller approval can take days) → paste token + monthly/annual price IDs into `PRO_CONFIG` (PADDLE-SETUP.md). **The website prerequisite is now met** — pricing/ToS/privacy/refund are live at https://cs2vault.app/ for the "Tell us about your website" step
   3. **Deploy the Cloudflare Worker** (`worker/` + worker/DEPLOY.md) → paste its URL into `PRO_CONFIG.licenceApiBase`
   4. **Finalise the price** in Paddle → update the two `priceMonthlyDisplay`/`priceAnnualDisplay` strings to match (benchmark SkinKeeper Pro ~$4.99/mo · $34.99/yr)
-  5. **Upgrade Electron off the EOL 29 line** (target: current stable at upgrade time) + electron-builder to a current major — Electron 29 no longer receives security patches and the first paid build will hold Steam credentials and licence tokens. Breaking-change review needed (contextIsolation defaults already match modern practice; main risks are electron-builder config churn and safeStorage/updater API drift). Do BEFORE the code-signing cert purchase so the cert is tested against the final builder config
+  5. ✅ **RESOLVED in v3.10.0 — Electron 29 → 43 + electron-builder 24 → 26 + electron-updater 6.8.9** — `npm audit` now 0 vulnerabilities, builder config validated by a real packaging run, update-feed continuity confirmed. Item 6 (cert purchase) is now unblocked; buy the cert against THIS builder config. Residual to confirm on Rudi's side: one green GitHub-Actions build on Node 22 (workflow already bumped)
   6. **Buy a code-signing cert** (~£200–400/yr) → add `CSC_LINK`/`CSC_KEY_PASSWORD` GitHub secrets (CODE-SIGNING.md). OV is the pragmatic choice; EV needs a cloud-HSM `win.sign` hook
   7. **Fill the `[ACTION REQUIRED]` legal-name + governing-law markers** in `legal/privacy.html` and `legal/terms.html`; have both reviewed for the UK before taking payments
   8. **Business structure / liability** (sole trader vs ltd) — worth sorting before taking payments
