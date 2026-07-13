@@ -8387,30 +8387,63 @@ async function suViewCasket(casketId, casketName) {
       if (title) title.textContent = (res && res.message) ? res.message : 'Could not read the storage unit.';
       return;
     }
-    // Session 1: group raw GC identities (defindex + paint + quality) with counts.
+    // Session 2: group by resolved market_hash_name (raw GC identity is the
+    // fallback for anything the schema can't map — e.g. brand-new items
+    // before a schema refresh lands).
     const groups = {};
+    let unmapped = 0;
     res.items.forEach(function (it) {
-      const key = 'def ' + it.defIndex
-        + (it.paintIndex !== null ? ' · paint ' + it.paintIndex : '')
-        + (it.statTrak ? ' · StatTrak' : '')
-        + (it.customName ? ' · "' + it.customName + '"' : '');
-      groups[key] = (groups[key] || 0) + 1;
+      let key, mapped;
+      if (it.name) {
+        mapped = true;
+        key = it.name
+          + (it.phase ? ' — ' + it.phase : '')
+          + (it.customName ? ' · "' + it.customName + '"' : '');
+      } else {
+        mapped = false;
+        key = 'def ' + it.defIndex
+          + (it.paintIndex !== null ? ' · paint ' + it.paintIndex : '')
+          + (it.statTrak ? ' · StatTrak' : '')
+          + (it.customName ? ' · "' + it.customName + '"' : '');
+      }
+      if (!groups[key]) groups[key] = { n: 0, mapped: mapped };
+      groups[key].n++;
+      if (!mapped) unmapped++;
     });
-    const entries = Object.keys(groups).map(function (k) { return { key: k, n: groups[k] }; });
+    const entries = Object.keys(groups).map(function (k) { return { key: k, n: groups[k].n, mapped: groups[k].mapped }; });
     entries.sort(function (a, b) { return b.n - a.n; });
     entries.forEach(function (g) {
       const tr = document.createElement('tr');
       const tdK = document.createElement('td');
-      tdK.style.fontFamily = "'Share Tech Mono',monospace";
       tdK.style.fontSize = '11px';
-      tdK.textContent = g.key;
+      if (g.mapped) {
+        tdK.textContent = g.key;
+      } else {
+        // unmapped: keep the raw-GC monospace look so it reads as a code, not a name
+        tdK.style.fontFamily = "'Share Tech Mono',monospace";
+        tdK.style.color = 'var(--text3)';
+        tdK.textContent = g.key;
+        tdK.title = 'Not in the item schema yet — a schema refresh usually resolves this';
+      }
       const tdN = document.createElement('td');
       tdN.style.fontFamily = "'Share Tech Mono',monospace";
       tdN.textContent = String(g.n);
       tr.appendChild(tdK); tr.appendChild(tdN);
       rows.appendChild(tr);
     });
-    if (title) title.textContent = '"' + (casketName || 'Storage Unit') + '" — ' + res.items.length + ' item(s), ' + entries.length + ' distinct';
+    if (title) {
+      title.textContent = '"' + (casketName || 'Storage Unit') + '" — ' + res.items.length + ' item(s), ' + entries.length + ' distinct'
+        + (unmapped ? ' · ' + unmapped + ' unmapped' : '');
+    }
+    const metaEl = _suEl('suSchemaMeta');
+    if (metaEl) {
+      if (res.schema) {
+        const src = res.schema.origin === 'bundled' ? 'bundled snapshot' : (res.schema.origin === 'fetched' ? 'live' : 'cached');
+        metaEl.textContent = 'Item names from the CS2 game schema (' + src + (res.schema.generated ? ', ' + res.schema.generated : '') + ') — refreshed automatically. Import into Holdings arrives in the next update.';
+      } else {
+        metaEl.textContent = 'Item schema unavailable — showing raw GC identities. Check the connection and reopen this unit.';
+      }
+    }
   } catch (e) {
     if (title) title.textContent = 'Error: ' + e.message;
   }

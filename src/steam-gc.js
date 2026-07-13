@@ -15,14 +15,29 @@
  *    cannot run while the user is actually playing CS2.
  *
  * Session-1 scope: login / token persistence / GC connect / casket list /
- * raw casket contents (def_index level). The defindex → market-hash-name
- * schema mapping is session 2.
+ * raw casket contents (def_index level).
+ * Session 2 (this version): defindex → market_hash_name mapping via the item
+ * schema (src/schema.js) — casket contents now resolve to real market names.
+ * Session 3 adds the merge-into-holdings flow.
  */
+
+const schema = require('./schema');
 
 const TOKEN_KEY = 'cs2vault_steam_gc_token';
 const GC_CONNECT_TIMEOUT_MS = 45000;
 const CASKET_FETCH_TIMEOUT_MS = 30000;
 const STORAGE_UNIT_DEF_INDEX = 1201;
+
+// Tool defindexes whose real identity lives in an attribute (session 2)
+const DEF_STICKER = 1209;
+const DEF_MUSIC_KIT = 1314;
+const DEF_GRAFFITI = 1348;
+const DEF_CHARM = 1355;
+const DEF_PATCH = 4609;
+const ATTR_STICKER_KIT = 113;   // "sticker slot 0 id"
+const ATTR_MUSIC_ID = 166;      // "music id"
+const ATTR_SPRAY_TINT = 233;    // "spray tint id"
+const ATTR_KEYCHAIN_ID = 299;   // "keychain slot 0 id"
 
 // ─── Pure helpers (exported for the offline test harness) ────────────────────
 
@@ -50,11 +65,27 @@ function extractCaskets(inventory) {
     .sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
 
-/** Slim a raw GC item down to what the renderer needs (session 1: raw attrs). */
+/** Read a uint32-LE GC attribute straight off the raw item's attribute array. */
+function readU32Attr(it, attrDefIndex) {
+  if (!it || !Array.isArray(it.attribute)) return null;
+  for (let i = 0; i < it.attribute.length; i++) {
+    const a = it.attribute[i];
+    if (a && a.def_index === attrDefIndex && a.value_bytes) {
+      try {
+        const b = Buffer.isBuffer(a.value_bytes) ? a.value_bytes : Buffer.from(a.value_bytes);
+        if (b.length >= 4) return b.readUInt32LE(0);
+      } catch (e) { /* malformed attribute — ignore */ }
+    }
+  }
+  return null;
+}
+
+/** Slim a raw GC item down to what the mapper + renderer need. */
 function slimGCItem(it) {
-  return {
+  const def = it.def_index;
+  const slim = {
     id: String(it.id),
-    defIndex: it.def_index,
+    defIndex: def,
     paintIndex: (it.paint_index === undefined || it.paint_index === null) ? null : it.paint_index,
     paintWear: (typeof it.paint_wear === 'number') ? it.paint_wear : null,
     quality: (it.quality === undefined) ? null : it.quality,
@@ -62,7 +93,26 @@ function slimGCItem(it) {
     customName: it.custom_name || null,
     stickerCount: Array.isArray(it.stickers) ? it.stickers.length : 0,
     statTrak: !!(it.kill_eater_value !== undefined && it.kill_eater_value !== null),
+    stickerKitId: null,
+    musicId: null,
+    keychainId: null,
+    graffitiTint: null,
   };
+  // Only treat "sticker slot 0 id" as the item's OWN kit when the item IS a
+  // sticker/patch/graffiti tool — on a weapon it would be an APPLIED sticker.
+  if (def === DEF_STICKER || def === DEF_PATCH || def === DEF_GRAFFITI) {
+    let kit = readU32Attr(it, ATTR_STICKER_KIT);
+    if (kit === null && Array.isArray(it.stickers) && it.stickers.length && it.stickers[0] && it.stickers[0].sticker_id !== undefined) {
+      kit = it.stickers[0].sticker_id; // globaloffensive already parsed it
+    }
+    slim.stickerKitId = kit;
+    if (def === DEF_GRAFFITI) slim.graffitiTint = readU32Attr(it, ATTR_SPRAY_TINT);
+  } else if (def === DEF_MUSIC_KIT) {
+    slim.musicId = readU32Attr(it, ATTR_MUSIC_ID);
+  } else if (def === DEF_CHARM) {
+    slim.keychainId = readU32Attr(it, ATTR_KEYCHAIN_ID);
+  }
+  return slim;
 }
 
 /** Map steam-user logon errors (EResult) to a message a human can act on. */
@@ -296,7 +346,24 @@ function getCasketContents(casketId) {
         if (settled) return;
         settled = true; clearTimeout(timer);
         if (err) { resolve({ status: 'error', message: 'Could not read the storage unit: ' + err.message }); return; }
-        resolve({ status: 'ok', items: (items || []).map(slimGCItem) });
+        // Session 2: resolve each raw GC identity into a market_hash_name via
+        // the item schema (cache/bundled — never blocks on the network)
+        const entry = schema.ensureSchema();
+        const sch = entry ? entry.schema : null;
+        const mapped = (items || []).map(function (raw) {
+          const slim = slimGCItem(raw);
+          const res = schema.resolveGCItem(slim, sch);
+          if (res) {
+            slim.name = res.name;
+            slim.phase = res.phase;
+            slim.wearName = res.wear;
+            slim.kind = res.kind;
+          } else {
+            slim.name = null; slim.phase = null; slim.wearName = null; slim.kind = null;
+          }
+          return slim;
+        });
+        resolve({ status: 'ok', items: mapped, schema: schema.schemaMeta() });
       });
     } catch (e) {
       if (!settled) { settled = true; clearTimeout(timer); resolve({ status: 'error', message: e.message }); }
@@ -317,6 +384,7 @@ function logOff() {
  */
 function register(ipcMain, options) {
   deps = options;
+  schema.init({ getUserDataPath: options.getUserDataPath, log: options.log });
 
   ipcMain.handle('gc:status', function () {
     return { loggedOn: flags.loggedOn, gc: flags.gc, account: flags.account, hasToken: hasToken() };
@@ -338,6 +406,9 @@ function register(ipcMain, options) {
   });
 
   ipcMain.handle('gc:caskets', function () {
+    // Warm the schema (loads cache/bundled, kicks a background refresh if
+    // stale) so name mapping is ready by the time contents are viewed
+    try { schema.ensureSchema(); } catch (e) { log('Schema warm-up failed: ' + e.message); }
     return listCaskets();
   });
 
@@ -362,5 +433,6 @@ module.exports = {
   // pure helpers for the offline harness
   extractCaskets: extractCaskets,
   slimGCItem: slimGCItem,
+  readU32Attr: readU32Attr,
   friendlyLogonError: friendlyLogonError,
 };
