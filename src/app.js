@@ -1591,7 +1591,7 @@ function curSymOf(code) {
 // Fill all currency <select>s (entry selects show codes; settings shows full labels)
 function populateCcySelects() {
   const entryUnlocked = featureUnlocked('multiCurrencyEntry');
-  ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy','steamImportCcy'].forEach(id => {
+  ['itemBuyCcy','skinBuyCcy','sellCcy','topupCcy','steamImportCcy','suImportCcy'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     // Rebuild each time so toggling the Pro override re-locks/unlocks entry.
@@ -8183,9 +8183,10 @@ async function confirmSteamImport() {
 // STORAGE UNITS (Vault Pro Phase 6 — session 1: connect + enumerate)
 // ========================
 // Talks to the main-process GC bridge (src/steam-gc.js) via window.cs2vault.gc.
-// Session-1 scope: Steam login (password used once, encrypted token persisted),
-// GC connect, casket list, raw contents preview. Name mapping + merge-into-
-// holdings is session 2 — nothing here writes to holdings yet.
+// Session 1: Steam login (password used once, encrypted token persisted), GC
+// connect, casket list. Session 2: schema name mapping. Session 3 (this):
+// merge into holdings — per-unit or all-units, via src/su-merge-plan.js
+// (pure aggregation/dedupe planner) + the v3.6.0 import preview semantics.
 
 let _suBusy = false;
 
@@ -8385,8 +8386,14 @@ async function suViewCasket(casketId, casketName) {
     const res = await window.cs2vault.gc.casketContents(casketId);
     if (!res || res.status !== 'ok') {
       if (title) title.textContent = (res && res.message) ? res.message : 'Could not read the storage unit.';
+      _suLastContents = null;
+      const ibFail = _suEl('suImportUnitBtn');
+      if (ibFail) ibFail.style.display = 'none';
       return;
     }
+    _suLastContents = { casketId: casketId, casketName: casketName || 'Storage Unit', items: res.items };
+    const ib = _suEl('suImportUnitBtn');
+    if (ib) ib.style.display = '';
     // Session 2: group by resolved market_hash_name (raw GC identity is the
     // fallback for anything the schema can't map — e.g. brand-new items
     // before a schema refresh lands).
@@ -8439,7 +8446,7 @@ async function suViewCasket(casketId, casketName) {
     if (metaEl) {
       if (res.schema) {
         const src = res.schema.origin === 'bundled' ? 'bundled snapshot' : (res.schema.origin === 'fetched' ? 'live' : 'cached');
-        metaEl.textContent = 'Item names from the CS2 game schema (' + src + (res.schema.generated ? ', ' + res.schema.generated : '') + ') — refreshed automatically. Import into Holdings arrives in the next update.';
+        metaEl.textContent = 'Item names from the CS2 game schema (' + src + (res.schema.generated ? ', ' + res.schema.generated : '') + ') — refreshed automatically.';
       } else {
         metaEl.textContent = 'Item schema unavailable — showing raw GC identities. Check the connection and reopen this unit.';
       }
@@ -8470,6 +8477,251 @@ async function suForgetSession() {
   const saved = _suEl('suSavedRow');
   if (saved) saved.style.display = 'none';
   toast('Saved Steam session removed', 'info');
+}
+
+// ── Import into Holdings (session 3) ────────────────────────────────
+// Aggregation + dedupe planning live in src/su-merge-plan.js (pure, loaded
+// before app.js). This block is the UI + commit path only. Commit mirrors
+// confirmSteamImport (v3.6.0): lots, one FX probe, atomic write, activity log.
+
+let _suLastContents = null;   // { casketId, casketName, items } from suViewCasket
+let _suImportRows = [];       // current plan rows (module state, not persisted)
+let _suImportMeta = { unmapped: 0, failedUnits: 0, unitCount: 0, unitNames: [] };
+let _suImportBusy = false;
+
+function suImportThisUnit() {
+  if (!_suLastContents) { toast('Open a storage unit first', 'info'); return; }
+  _suOpenImportPreview([_suLastContents]);
+}
+
+async function suImportAllUnits() {
+  if (_suImportBusy) return;
+  if (!isPro()) { toast('Storage-unit import is a Vault Pro feature', 'info'); return; }
+  _suImportBusy = true;
+  const btn = _suEl('suImportAllBtn');
+  if (btn) btn.disabled = true;
+  const count = _suEl('suCasketCount');
+  try {
+    const list = await window.cs2vault.gc.caskets();
+    if (!list || list.status !== 'ok' || !list.caskets.length) {
+      toast('Could not read the storage unit list', 'error');
+      return;
+    }
+    const batches = [];
+    let failed = 0;
+    for (let i = 0; i < list.caskets.length; i++) {
+      const c = list.caskets[i];
+      if (count) count.textContent = 'Reading unit ' + (i + 1) + '/' + list.caskets.length + ' — "' + c.name + '"…';
+      try {
+        const res = await window.cs2vault.gc.casketContents(c.id);
+        if (res && res.status === 'ok') batches.push({ casketName: c.name, items: res.items });
+        else failed++;
+      } catch (e) { failed++; }
+    }
+    if (count) count.textContent = list.caskets.length + ' storage unit(s) read' + (failed ? ' · ' + failed + ' failed' : '');
+    if (!batches.length) { toast('No storage units could be read', 'error'); return; }
+    _suOpenImportPreview(batches, failed);
+  } finally {
+    _suImportBusy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _suOpenImportPreview(batches, failedUnits) {
+  if (!isPro()) { toast('Storage-unit import is a Vault Pro feature', 'info'); return; }
+  const agg = suMergePlan.aggregate(batches);
+  if (!agg.rows.length) {
+    toast(agg.unmappedCount
+      ? 'Nothing importable — all ' + agg.unmappedCount + ' item(s) are unmapped (wait for a schema refresh)'
+      : 'The selected storage unit(s) are empty', 'info');
+    return;
+  }
+  _suImportRows = suMergePlan.planMerge(agg.rows, holdings);
+  _suImportMeta = {
+    unmapped: agg.unmappedCount,
+    failedUnits: failedUnits || 0,
+    unitCount: batches.length,
+    unitNames: batches.map(function (b) { return b.casketName; })
+  };
+  const dateEl = _suEl('suImportDate');
+  if (dateEl && !dateEl.value) dateEl.value = todayStr();
+  const note = _suEl('suImportNote');
+  if (note) {
+    let t = agg.totalItems + ' item(s) across ' + _suImportMeta.unitCount + ' unit(s)';
+    if (_suImportMeta.unmapped) t += ' · ' + _suImportMeta.unmapped + ' unmapped item(s) excluded (schema refresh usually resolves these)';
+    if (_suImportMeta.failedUnits) t += ' · ⚠ ' + _suImportMeta.failedUnits + ' unit(s) failed to read and are NOT included';
+    note.textContent = t;
+  }
+  renderSuImportPreview();
+  openModal('suImportModal');
+}
+
+// Preview table — createElement/textContent throughout (names can contain
+// quotes and angle brackets).
+function renderSuImportPreview() {
+  const body = _suEl('suImportRows');
+  if (!body) return;
+  body.innerHTML = '';
+  const TYPES = ['skin', 'case', 'sticker', 'armory', 'knife'];
+
+  _suImportRows.forEach(function (r) {
+    const tr = document.createElement('tr');
+    if (!r.include) tr.style.opacity = '0.45';
+
+    let td = document.createElement('td');
+    td.style.textAlign = 'center';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = r.include;
+    cb.addEventListener('change', function () { r.include = cb.checked; tr.style.opacity = cb.checked ? '1' : '0.45'; updateSuImportCount(); });
+    td.appendChild(cb); tr.appendChild(td);
+
+    td = document.createElement('td');
+    td.textContent = r.displayName;
+    td.title = r.displayName + ' — in: ' + r.caskets.join(', ');
+    td.style.maxWidth = '260px'; td.style.overflow = 'hidden'; td.style.textOverflow = 'ellipsis'; td.style.whiteSpace = 'nowrap';
+    tr.appendChild(td);
+
+    td = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.style.fontFamily = "'Share Tech Mono',monospace"; badge.style.fontSize = '10px';
+    badge.style.padding = '2px 6px'; badge.style.borderRadius = '4px'; badge.style.whiteSpace = 'nowrap';
+    if (r.status === 'new') { badge.textContent = 'NEW'; badge.style.background = 'rgba(34,197,94,0.12)'; badge.style.color = 'var(--green,#22c55e)'; }
+    else if (r.status === 'more') { badge.textContent = '+' + (r.storageQty - r.existingQty) + ' MORE'; badge.title = 'You track ' + r.existingQty + ', storage holds ' + r.storageQty + ' — importing the difference as a new lot'; badge.style.background = 'rgba(234,179,8,0.12)'; badge.style.color = '#eab308'; }
+    else { badge.textContent = 'TRACKED'; badge.title = 'Already in holdings (' + r.existingQty + ' tracked, ' + r.storageQty + ' in storage)'; badge.style.background = 'rgba(148,163,184,0.12)'; badge.style.color = 'var(--text3)'; }
+    td.appendChild(badge);
+    if (r.sharedMatch) {
+      const warn = document.createElement('span');
+      warn.textContent = ' ⚠';
+      warn.title = 'Several phase variants match the same tracked position — check quantities manually';
+      td.appendChild(warn);
+    }
+    tr.appendChild(td);
+
+    td = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.style.fontSize = '11px'; sel.style.padding = '2px 4px';
+    TYPES.forEach(function (t) {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+      sel.appendChild(o);
+    });
+    sel.value = r.type;
+    sel.addEventListener('change', function () { r.type = sel.value; });
+    td.appendChild(sel); tr.appendChild(td);
+
+    td = document.createElement('td');
+    const qtyIn = document.createElement('input');
+    qtyIn.type = 'number'; qtyIn.min = '1'; qtyIn.step = '1'; qtyIn.value = r.importQty;
+    qtyIn.style.width = '64px'; qtyIn.style.fontSize = '11px'; qtyIn.style.padding = '2px 4px';
+    qtyIn.title = 'Storage holds ' + r.storageQty;
+    qtyIn.addEventListener('input', function () { r.importQty = parseInt(qtyIn.value) || 0; });
+    td.appendChild(qtyIn); tr.appendChild(td);
+
+    td = document.createElement('td');
+    const prIn = document.createElement('input');
+    prIn.type = 'number'; prIn.min = '0'; prIn.step = '0.01'; prIn.placeholder = 'default';
+    prIn.value = r.price;
+    prIn.style.width = '80px'; prIn.style.fontSize = '11px'; prIn.style.padding = '2px 4px';
+    prIn.title = 'Buy price per unit — leave blank to use the default above';
+    prIn.addEventListener('input', function () { r.price = prIn.value; });
+    td.appendChild(prIn); tr.appendChild(td);
+
+    body.appendChild(tr);
+  });
+  updateSuImportCount();
+}
+
+function suImportToggleAll(checked) {
+  _suImportRows.forEach(function (r) { r.include = !!checked; });
+  renderSuImportPreview();
+}
+
+function updateSuImportCount() {
+  const el = _suEl('suImportCount');
+  if (!el) return;
+  const inc = _suImportRows.filter(function (r) { return r.include && r.importQty > 0; });
+  const units = inc.reduce(function (s, r) { return s + r.importQty; }, 0);
+  el.textContent = inc.length + ' item type(s) · ' + units + ' unit(s) selected';
+}
+
+async function confirmSuImport() {
+  if (_suImportBusy) return;
+  if (!isPro()) { toast('Storage-unit import is a Vault Pro feature', 'info'); return; }
+  const rows = _suImportRows.filter(function (r) { return r.include && r.importQty > 0; });
+  if (!rows.length) { toast('Nothing selected to import', 'info'); return; }
+
+  const defPriceRaw = (_suEl('suImportPrice') || {}).value;
+  const defPrice = parseFloat(defPriceRaw);
+  const ccy = (_suEl('suImportCcy') || {}).value || 'GBP';
+  const date = (_suEl('suImportDate') || {}).value || todayStr();
+
+  const missing = rows.filter(function (r) { return !(parseFloat(r.price) > 0) && !(defPrice > 0); });
+  if (missing.length) { toast('Set a default buy price (or fill in every selected row)', 'error'); return; }
+
+  _suImportBusy = true;
+  const btn = _suEl('suImportConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const probe = await toBaseGBP(1, ccy, date);
+    if (!probe) { toast('FX rate unavailable for ' + ccy + ' — nothing imported', 'error'); return; }
+    const fxRate = probe.fxRate;
+
+    const provenance = _suImportMeta.unitCount === 1
+      ? 'Imported from storage unit "' + _suImportMeta.unitNames[0] + '"'
+      : 'Imported from ' + _suImportMeta.unitCount + ' storage units';
+
+    // ATOMIC WRITE: re-read storage immediately before mutating (v2.4.3 pattern)
+    const fresh = loadData();
+    let added = 0, merged = 0;
+
+    rows.forEach(function (r) {
+      const perUnitEntered = (parseFloat(r.price) > 0) ? parseFloat(r.price) : defPrice;
+      const baseGBP = +(perUnitEntered * fxRate).toFixed(6);
+      const target = r.existingId ? fresh.find(function (h) { return h.id === r.existingId; }) : null;
+
+      if (target) {
+        const before = _logSnapshot(target);
+        ensureLots(target);
+        target.lots.push(makeLot(r.importQty, baseGBP, date, ccy, fxRate, perUnitEntered));
+        recalcHoldingFromLots(target);
+        const mergeNote = '+' + r.importQty + ' via storage-unit import on ' + date;
+        target.notes = target.notes ? target.notes + ' | ' + mergeNote : mergeNote;
+        const diff = _logDiff(before, _logSnapshot(target));
+        logActivity('edit', 'holding', _logSnapshot(target),
+          diff.length ? diff : [{ field: 'Storage-unit import', from: '', to: '+' + r.importQty }]);
+        merged++;
+      } else {
+        const item = {
+          id: uid(),
+          name: r.displayName,
+          type: r.type,
+          qty: r.importQty,
+          buyPrice: baseGBP,
+          buyDate: date,
+          marketHash: r.marketHash,
+          notes: provenance,
+          origCurrency: ccy, origAmount: perUnitEntered, fxRate: fxRate,
+          prices: null
+        };
+        item.lots = [ makeLot(item.qty, item.buyPrice, date, ccy, fxRate, perUnitEntered) ];
+        fresh.push(item);
+        logActivity('add', 'holding', _logSnapshot(item), null);
+        added++;
+      }
+    });
+
+    saveData(fresh);
+    holdings = fresh;
+    renderHoldings();
+    updateStats();
+    closeModal('suImportModal');
+    let msg = 'Storage-unit import complete — ' + added + ' new item(s)';
+    if (merged) msg += ', ' + merged + ' merged into existing holdings';
+    toast(msg, 'success');
+  } finally {
+    _suImportBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Selected'; }
+  }
 }
 
 // ========================
