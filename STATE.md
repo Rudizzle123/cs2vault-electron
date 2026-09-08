@@ -1,10 +1,27 @@
 # CS2 Vault — Project State
 
-Last updated: July 2026 (v3.10.0: Electron EOL upgrade — 29 → 43, builder 24 → 26, audit 0 vulns; launch-gate item 5 CLEARED, code-signing cert purchase unblocked) | Current version: v3.10.0
+Last updated: September 2026 (v3.11.0: Trade History overhaul — sortable table, platform/tax/tax-year filters, Net % column, visible-set totals, inline sale-date fix for undated trades; `releaseType: release` publish fix) | Current version: v3.11.0
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.11.0 — Trade History overhaul: sortable table, filters, Net %, totals, undated-trade fix ✅
+UI-only release on the Trade History tab. **No tax-engine, pricing, storage-schema or payments changes** (tax harness 87/87 untouched). Prompted by Rudi's review: rows were rendering in a random-looking order with Steam and CSFloat sales interleaved.
+
+- **Root cause of the "mixed up" order:** trades with `sellDate: ''` (several Steam sales) made `new Date('') → NaN` in the sort comparator, and a NaN-returning comparator leaves JS `Array.sort` order undefined. Fixed: undated rows now always sink to the bottom regardless of sort key/direction; dated rows sort deterministically with an `id` tiebreak
+- **Second latent bug removed:** `filterHistory` was a stale fork of `renderHistory` — no platform/tax badges, and fee computed from `feePercent` instead of the stored `feeAmount`, so typing in the search box silently changed the row shape and numbers. Deleted; the search box now feeds the single render path (`filterHistory(q)` kept as a one-line shim for the existing `oninput` hook)
+- **Layout:** per-row cards (which repeated the column labels on every row) replaced by a dense `table.hist-table` inside the standard `.table-wrap`: one sticky-style header row, columns `Date · Item · Qty · Platform · Tax · Buy · Sell · Fee · Realised · Net profit · Net % · ✕`. Fee cell shows the fee % underneath the amount. Roughly 2× rows per screen at the same fonts/palette
+- **Sort:** click any column header (▲/▼ on the active column, ↕ otherwise); default date-desc. Numeric columns default to desc on first click, text columns asc. State is per-session (in memory) — deliberately no new `electron-store` key
+- **Filters (`#histFilters` bar above the table, all combinable with search):** platform chips (All / CSFloat / Steam / Skinport / Custom — only platforms present in the data are shown), tax toggle (All / ✓ CGT / ✕ not CGT — label follows the active profile: "taxable" for non-UK), tax-year dropdown (years derived via `profile.taxYearLabel(sellDate)` so it works for Jan–Dec jurisdictions too, plus an "Undated" option when any exist), and a Clear button once any filter is active
+- **Net % column (Rudi's ask):** net profit ÷ cost basis (`buyPrice × qty`); "—" when cost is 0. Footer row shows blended ROI % across the visible set and the **effective fee %** (total fees ÷ total gross)
+- **Footer totals for the visible set:** trade count, cost, gross, fees (+ eff. %), realised, net, net % — so the filters answer questions like "what did I net on Steam in 2026/27"
+- **Inline sale-date edit:** undated trades show an amber `no date` tag; click it (or any existing date) to get a date input. Commit writes atomically (fresh read of `cs2vault_history` → patch → `saveHistory`), logs an `edit`/`trade` activity entry ("Sale date: (empty) → YYYY-MM-DD"; activity-log scope label extended with `Trade`), then re-runs `renderHistory()` + `updateStats()` so the CGT summary picks up the newly-dated disposal. Escape/blur cancels. Setting a date on a Steam sale changes nothing tax-wise under UK (still excluded) but does under any profile where Steam counts
+- **New helpers:** `tradeRow(t, profile)` (single derivation of gross/fee/netRealised/cost/net/pct/year/platform/counts, same fallbacks as the CSV export), `getVisibleTrades()` (filter + sort — reusable later for "export what I'm looking at"), `renderHistoryTable()` (table only, no CGT recompute — sort/filter don't re-run the async CGT calc), `fmtPct()`. `renderHistory()` = table + `renderCGTSummary()` as before, so every existing call site is unchanged
+- **`package.json` publish fix (carried over from the v3.10.0 known issue):** `"releaseType": "release"` added to the GitHub publish config — electron-builder 26 was defaulting to **draft** releases, which the auto-updater can't see. ⚠ **Verify on this tag push:** the release should appear published on GitHub without the manual "publish draft" step. If it still lands as a draft, publish manually as before and flag it
+- Offline smoke test of the render/sort/filter/date-edit logic run in Node with a stub DOM during the build (undated-last on both directions, per-column sorts, each filter, footer maths, commit path writes the store) — not committed as a harness since it's DOM-shaped, not engine logic
+- Delivery: `src/app.js`, `src/index.html`, `package.json`, `STATE.md`. `node -c` clean on app.js
+- ⚠ **Live-test checklist for Rudi:** (1) Trade History opens as a table, default newest-first, the undated Steam sales grouped at the bottom with amber `no date` tags; (2) click a `no date` tag → set a date → row jumps into date order, activity log shows the edit, CGT tiles recompute; (3) click Net % header twice → best/worst trades flip; (4) chips: Steam-only + tax year → footer totals change; Clear resets everything incl. the search box; (5) the fee % under each fee amount reads 2% / 15% as expected and the footer "eff." is a blend; (6) search still works and rows keep their badges while filtered; (7) **after `git push --tags`, check GitHub Releases — the release should be published, not a draft**
 
 ### v3.10.0 — Electron EOL upgrade: 29 → 43, builder 24 → 26, audit clean (launch-gate item 5) ✅
 Dependency-only release — **zero src/*.js code changes**. Clears the EOL runtime + the remaining 6 high-severity vulns and **unblocks the code-signing certificate purchase** (gate item 6).
@@ -325,7 +342,7 @@ Focused correctness fixes to the v3.0.0 multi-jurisdiction tax engine, flagged b
 - Silent background download — slim green progress bar slides up from bottom of screen
 - Shows download percentage, then "Restarting in 3s" countdown, then auto-installs
 - No user action required — fully hands-free
-- GitHub Actions workflow: push a version tag → auto-builds .exe → publishes draft release
+- GitHub Actions workflow: push a version tag → auto-builds .exe → publishes the release (v3.11.0: `releaseType: release` — no manual draft-publish step)
 - NSIS installer with desktop/start menu shortcuts (one-click silent install as of v2.4.6 — no dialogs)
 
 ### Phase 3 — Arbitrage Detection (removed v2.3.9)

@@ -112,6 +112,32 @@ tr:hover .row-actions{opacity:1;}
 .cgt-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:.5px;font-weight:600;vertical-align:middle;margin-left:4px;}
 .cgt-tag-yes{background:rgba(74,222,128,.13);color:var(--green);border:1px solid rgba(74,222,128,.28);}
 .cgt-tag-no{background:rgba(200,200,200,.08);color:var(--text3);border:1px solid rgba(200,200,200,.18);}
+/* Trade History table (v3.11.0) */
+.hist-filters{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+.hchip-group{display:flex;gap:4px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px;}
+.hchip{background:none;border:1px solid transparent;border-radius:4px;padding:5px 10px;font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:.5px;color:var(--text3);cursor:pointer;transition:color .15s,background .15s;}
+.hchip:hover{color:var(--text2);}
+.hchip.active{background:var(--surface3);border-color:var(--border2);color:var(--text);}
+.hchip-clear{border-color:var(--border2);color:var(--accent);padding:6px 12px;}
+.hchip-clear:hover{color:var(--accent2);}
+.hist-year{padding:6px 10px;font-family:'Share Tech Mono',monospace;font-size:11px;border:none;background:none;}
+.hist-table th{padding:10px 12px;}
+.hist-table th.hist-sorted{color:var(--accent);}
+.hist-table th .hist-arrow{margin-left:5px;font-size:9px;opacity:.55;}
+.hist-table th.hist-sorted .hist-arrow{opacity:1;}
+.hist-table td{padding:8px 12px;font-size:12px;white-space:nowrap;}
+.hist-table td.hist-name{white-space:normal;font-family:'Rajdhani',sans-serif;font-weight:600;font-size:14px;min-width:180px;}
+.hist-mono{font-family:'Share Tech Mono',monospace;}
+.hist-r{text-align:right;}
+.hist-sub{display:block;font-size:9px;color:var(--text3);letter-spacing:.5px;margin-top:1px;}
+.hist-date{cursor:pointer;color:var(--text2);border-bottom:1px dotted transparent;}
+.hist-date:hover{color:var(--text);border-bottom-color:var(--border2);}
+.hist-date-input{background:var(--surface2);border:1px solid var(--accent);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:3px 6px;outline:none;color-scheme:dark;}
+.nodate-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:.5px;font-weight:600;background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.3);cursor:pointer;}
+.nodate-tag:hover{background:rgba(251,191,36,.2);}
+.hist-table tfoot td{background:var(--surface2);border-top:1px solid var(--border2);border-bottom:none;color:var(--text2);font-size:12px;padding:10px 12px;}
+.hist-table tfoot tr:hover td{background:var(--surface2);}
+.hist-table th:not([onclick]){cursor:default;}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text3);}
 .empty-icon{font-size:48px;margin-bottom:16px;opacity:.4;}
 .empty-state h3{font-family:'Rajdhani',sans-serif;font-size:18px;letter-spacing:1px;margin-bottom:8px;color:var(--text2);}
@@ -563,6 +589,7 @@ header button, header input, header a { -webkit-app-region: no-drag; }
       <button class="btn btn-secondary" onclick="exportCGTReport()">📋 Export CGT Report <span id="proBadgeCGTReport" class="pro-inline-badge" style="display:none;">PRO</span></button>
     </div>
     <div id="cgtSummary" style="margin-bottom:16px;"></div>
+    <div id="histFilters" class="hist-filters"></div>
     <div id="historyList"></div>
   </div>
 

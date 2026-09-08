@@ -229,7 +229,7 @@ function renderActivityLog() {
     badge.textContent = meta.label;
     badge.style.cssText = 'font-family:\'Share Tech Mono\',monospace;font-size:10px;font-weight:700;letter-spacing:1px;color:' + meta.color + ';';
     const scope = document.createElement('span');
-    scope.textContent = e.scope === 'skin' ? 'Play Skin' : 'Holding';
+    scope.textContent = e.scope === 'skin' ? 'Play Skin' : (e.scope === 'trade' ? 'Trade' : 'Holding');
     scope.style.cssText = 'font-size:10px;color:var(--text3);';
     left.appendChild(badge); left.appendChild(scope);
 
@@ -3982,38 +3982,238 @@ function updateCashOutCalc() {
   document.getElementById('cashOutResult').innerHTML = resultHtml;
 }
 
+// ========================
+// TRADE HISTORY TABLE (v3.11.0)
+// Single render path for the Trade History tab: filter bar → sortable table →
+// visible-set totals. Replaces the per-row card list + the stale filterHistory
+// fork (which had drifted: no platform/tax badges, fee from feePercent instead
+// of feeAmount). Sort/filter state is per-session (in memory).
+// ========================
+let histSort = { key: 'sellDate', dir: -1 };
+let histFilter = { q: '', plat: 'all', tax: 'all', year: 'all' };
+let _histDateEditing = null; // trade id whose date cell is showing an input
+
+// Derive every figure the table needs from one trade record. Mirrors the
+// gross/feeAmount/netRealised fallbacks used by the CSV export and CGT engine.
+function tradeRow(t, profile) {
+  const qty = Number(t.qty) || 0;
+  const gross = (t.gross != null) ? Number(t.gross) : Number(t.sellPrice) * qty;
+  const fee = (t.feeAmount != null) ? Number(t.feeAmount) : gross * (Number(t.feePercent) / 100);
+  const netRealised = (t.netRealised != null) ? Number(t.netRealised) : gross - fee;
+  const cost = Number(t.buyPrice) * qty;
+  const net = netRealised - cost;
+  const pct = cost > 0 ? (net / cost) * 100 : null;
+  const feePct = gross > 0 ? (fee / gross) * 100 : Number(t.feePercent) || 0;
+  const dated = !!(t.sellDate && !isNaN(new Date(t.sellDate).getTime()));
+  const year = dated ? profile.taxYearLabel(new Date(t.sellDate)) : null;
+  return { t, qty, gross, fee, feePct, netRealised, cost, net, pct, dated, year,
+           plat: tradePlatform(t), counts: profile.disposalCounts(t) };
+}
+
+function getVisibleTrades() {
+  const profile = getActiveTaxProfile();
+  const q = (histFilter.q || '').trim().toLowerCase();
+  let rows = tradeHistory.map(t => tradeRow(t, profile));
+  if (q) rows = rows.filter(r => String(r.t.name || '').toLowerCase().includes(q));
+  if (histFilter.plat !== 'all') rows = rows.filter(r => r.plat === histFilter.plat);
+  if (histFilter.tax === 'yes') rows = rows.filter(r => r.counts);
+  if (histFilter.tax === 'no') rows = rows.filter(r => !r.counts);
+  if (histFilter.year === 'undated') rows = rows.filter(r => !r.dated);
+  else if (histFilter.year !== 'all') rows = rows.filter(r => r.year === histFilter.year);
+
+  const key = histSort.key, dir = histSort.dir;
+  const val = r => {
+    switch (key) {
+      case 'sellDate': return r.dated ? new Date(r.t.sellDate).getTime() : null;
+      case 'name': return String(r.t.name || '').toLowerCase();
+      case 'qty': return r.qty;
+      case 'plat': return r.plat;
+      case 'buyPrice': return Number(r.t.buyPrice);
+      case 'sellPrice': return Number(r.t.sellPrice);
+      case 'fee': return r.fee;
+      case 'netRealised': return r.netRealised;
+      case 'net': return r.net;
+      case 'pct': return r.pct;
+      default: return 0;
+    }
+  };
+  rows.sort((a, b) => {
+    const av = val(a), bv = val(b);
+    // Undated / unpriceable rows always sink to the bottom, whichever direction.
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    let c = (typeof av === 'string') ? av.localeCompare(bv) : (av - bv);
+    if (c === 0) c = (a.t.id || '').localeCompare(b.t.id || ''); // stable
+    return c * dir;
+  });
+  return rows;
+}
+
+function sortHistory(key) {
+  if (histSort.key === key) histSort.dir *= -1;
+  else { histSort.key = key; histSort.dir = (key === 'name' || key === 'plat') ? 1 : -1; }
+  renderHistoryTable();
+}
+function setHistFilter(k, v) {
+  histFilter[k] = v;
+  renderHistoryTable();
+}
+// Kept for the search box's oninput hook (name unchanged from earlier versions).
+function filterHistory(q) { setHistFilter('q', q); }
+
 function renderHistory() {
+  renderHistoryTable();
+  renderCGTSummary();
+}
+
+function renderHistoryTable() {
   const c = document.getElementById('historyList');
-  if (!tradeHistory.length) { c.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><h3>No Trades Yet</h3></div>`; return; }
-  const sorted = [...tradeHistory].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
+  const bar = document.getElementById('histFilters');
+  if (!c) return;
+  if (!tradeHistory.length) {
+    if (bar) bar.style.display = 'none';
+    c.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><h3>No Trades Yet</h3></div>';
+    return;
+  }
+  if (bar) bar.style.display = '';
+  const profile = getActiveTaxProfile();
+  const taxLabel = profile.code === 'UK' ? 'CGT' : 'taxable';
   const platLabel = { csfloat: 'CSFloat', steam: 'Steam', skinport: 'Skinport', custom: 'Custom' };
   const platBadgeClass = { csfloat: 'plat-badge-cf', steam: 'plat-badge-stm', skinport: 'plat-badge-sp', custom: 'plat-badge-custom' };
-  const profile = getActiveTaxProfile();
-  c.innerHTML = sorted.map(t => {
-    const gross = (t.gross != null) ? t.gross : t.sellPrice * t.qty;
-    const fee = (t.feeAmount != null) ? t.feeAmount : gross * (t.feePercent / 100);
-    const netRealised = (t.netRealised != null) ? t.netRealised : gross - fee;
-    const net = netRealised - (t.buyPrice * t.qty);
-    const plat = tradePlatform(t);
-    const platHtml = '<span class="plat-badge ' + (platBadgeClass[plat] || 'plat-badge-cf') + '">' + (platLabel[plat] || plat) + '</span>';
-    // Per-jurisdiction disposal definition: UK excludes Steam Wallet; others count all.
-    const countsCGT = profile.disposalCounts(t);
-    const taxLabel = profile.code === 'UK' ? 'CGT' : 'taxable';
-    const cgtBadge = countsCGT
-      ? '<span class="cgt-tag cgt-tag-yes" title="Counts as a taxable disposal (' + profile.name + ')">✓ ' + taxLabel + '</span>'
-      : '<span class="cgt-tag cgt-tag-no" title="Excluded (Steam Wallet sale — UK position)">✕ not ' + taxLabel + '</span>';
-    return '<div class="sold-card">' +
-      '<div><strong>' + escHtml(t.name) + '</strong>' +
-      '<div class="sold-date">' + t.sellDate + ' · Qty: ' + t.qty + ' · ' + platHtml + ' ' + cgtBadge + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">' + fmtGBP(Number(t.buyPrice), 2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">' + fmtGBP(Number(t.sellPrice), 2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Fee (' + t.feePercent + '%)</div><div class="sold-col-val negative">-' + fmtGBP(fee, 2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Realised</div><div class="sold-col-val">' + fmtGBP(netRealised, 2) + '</div></div>' +
-      '<div class="sold-col"><div class="sold-col-label">Net Profit</div><div class="sold-col-val ' + (net >= 0 ? 'positive' : 'negative') + '">' + (net >= 0 ? '+' : '') + fmtGBP(net, 2) + '</div></div>' +
-      '<div class="sold-col sold-col-action">' + (t.id ? '<button class="btn btn-danger btn-sm" title="Delete this trade" onclick="deleteTrade(\'' + t.id + '\')">✕</button>' : '') + '</div>' +
-      '</div>';
-  }).join('');
-  renderCGTSummary();
+
+  // ---- filter bar state ----
+  const allRows = tradeHistory.map(t => tradeRow(t, profile));
+  const platsPresent = {}; allRows.forEach(r => { platsPresent[r.plat] = true; });
+  const years = Array.from(new Set(allRows.filter(r => r.dated).map(r => r.year))).sort().reverse();
+  const hasUndated = allRows.some(r => !r.dated);
+  if (histFilter.year !== 'all' && histFilter.year !== 'undated' && years.indexOf(histFilter.year) < 0) histFilter.year = 'all';
+  if (histFilter.year === 'undated' && !hasUndated) histFilter.year = 'all';
+  if (histFilter.plat !== 'all' && !platsPresent[histFilter.plat]) histFilter.plat = 'all';
+
+  const chip = (group, value, label, extraClass) =>
+    '<button class="hchip' + (histFilter[group] === value ? ' active' : '') + (extraClass ? ' ' + extraClass : '') + '" onclick="setHistFilter(\'' + group + '\',\'' + value + '\')">' + label + '</button>';
+  let barHtml = '<div class="hchip-group">' + chip('plat', 'all', 'All');
+  ['csfloat', 'steam', 'skinport', 'custom'].forEach(p => { if (platsPresent[p]) barHtml += chip('plat', p, platLabel[p]); });
+  barHtml += '</div>';
+  barHtml += '<div class="hchip-group">' + chip('tax', 'all', 'All') + chip('tax', 'yes', '✓ ' + taxLabel) + chip('tax', 'no', '✕ not ' + taxLabel) + '</div>';
+  barHtml += '<div class="hchip-group"><select class="hist-year" onchange="setHistFilter(\'year\', this.value)">' +
+    '<option value="all"' + (histFilter.year === 'all' ? ' selected' : '') + '>All tax years</option>' +
+    years.map(y => '<option value="' + escHtml(y) + '"' + (histFilter.year === y ? ' selected' : '') + '>' + escHtml(y) + '</option>').join('') +
+    (hasUndated ? '<option value="undated"' + (histFilter.year === 'undated' ? ' selected' : '') + '>Undated</option>' : '') +
+    '</select></div>';
+  const anyFilter = histFilter.q || histFilter.plat !== 'all' || histFilter.tax !== 'all' || histFilter.year !== 'all';
+  if (anyFilter) barHtml += '<button class="hchip hchip-clear" onclick="clearHistFilters()">Clear</button>';
+  if (bar) bar.innerHTML = barHtml;
+
+  // ---- table ----
+  const rows = getVisibleTrades();
+  const th = (key, label, align) => {
+    const on = histSort.key === key;
+    return '<th class="' + (align === 'r' ? 'hist-r' : '') + (on ? ' hist-sorted' : '') + '" onclick="sortHistory(\'' + key + '\')">' +
+      label + '<span class="hist-arrow">' + (on ? (histSort.dir > 0 ? '▲' : '▼') : '↕') + '</span></th>';
+  };
+  let html = '<div class="table-wrap hist-wrap"><table class="hist-table"><thead><tr>' +
+    th('sellDate', 'Date') + th('name', 'Item') + th('qty', 'Qty', 'r') + th('plat', 'Platform') + '<th>Tax</th>' +
+    th('buyPrice', 'Buy', 'r') + th('sellPrice', 'Sell', 'r') + th('fee', 'Fee', 'r') + th('netRealised', 'Realised', 'r') +
+    th('net', 'Net profit', 'r') + th('pct', 'Net %', 'r') + '<th></th>' +
+    '</tr></thead><tbody>';
+
+  if (!rows.length) {
+    html += '<tr><td colspan="12"><div class="empty-state" style="padding:40px 20px;"><div class="empty-icon">◈</div><h3>No trades match these filters</h3></div></td></tr>';
+  }
+  let tCost = 0, tGross = 0, tFee = 0, tReal = 0, tNet = 0;
+  rows.forEach(r => {
+    const t = r.t;
+    tCost += r.cost; tGross += r.gross; tFee += r.fee; tReal += r.netRealised; tNet += r.net;
+    const platHtml = '<span class="plat-badge ' + (platBadgeClass[r.plat] || 'plat-badge-cf') + '">' + (platLabel[r.plat] || escHtml(r.plat)) + '</span>';
+    const taxHtml = r.counts
+      ? '<span class="cgt-tag cgt-tag-yes" style="margin-left:0" title="Counts as a taxable disposal (' + escHtml(profile.name) + ')">✓ ' + taxLabel + '</span>'
+      : '<span class="cgt-tag cgt-tag-no" style="margin-left:0" title="Excluded (Steam Wallet sale — UK position)">✕ not ' + taxLabel + '</span>';
+    let dateHtml;
+    if (_histDateEditing && t.id === _histDateEditing) {
+      dateHtml = '<input type="date" class="hist-date-input" value="' + escHtml(t.sellDate || '') + '" ' +
+        'onchange="commitTradeDate(\'' + t.id + '\', this.value)" onblur="cancelTradeDate()" onkeydown="if(event.key===\'Escape\')cancelTradeDate()">';
+    } else if (r.dated) {
+      dateHtml = '<span class="hist-date" title="Click to change" onclick="editTradeDate(\'' + t.id + '\')">' + escHtml(t.sellDate) + '</span>';
+    } else {
+      dateHtml = t.id
+        ? '<span class="nodate-tag" title="No sale date — can\'t be placed in a tax year. Click to set." onclick="editTradeDate(\'' + t.id + '\')">no date</span>'
+        : '<span class="nodate-tag" style="cursor:default">no date</span>';
+    }
+    const netCls = r.net >= 0 ? 'positive' : 'negative';
+    html += '<tr>' +
+      '<td class="hist-mono">' + dateHtml + '</td>' +
+      '<td class="hist-name">' + escHtml(t.name) + '</td>' +
+      '<td class="hist-mono hist-r">' + r.qty + '</td>' +
+      '<td>' + platHtml + '</td>' +
+      '<td>' + taxHtml + '</td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(Number(t.buyPrice), 2) + '</td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(Number(t.sellPrice), 2) + '</td>' +
+      '<td class="hist-mono hist-r negative">-' + fmtGBP(r.fee, 2) + '<span class="hist-sub">' + fmtPct(r.feePct) + '</span></td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(r.netRealised, 2) + '</td>' +
+      '<td class="hist-mono hist-r ' + netCls + '">' + (r.net >= 0 ? '+' : '') + fmtGBP(r.net, 2) + '</td>' +
+      '<td class="hist-mono hist-r ' + (r.pct == null ? '' : netCls) + '">' + (r.pct == null ? '—' : (r.pct >= 0 ? '+' : '') + fmtPct(r.pct)) + '</td>' +
+      '<td class="hist-r">' + (t.id ? '<button class="btn btn-danger btn-sm" title="Delete this trade" onclick="deleteTrade(\'' + t.id + '\')">✕</button>' : '') + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody>';
+
+  if (rows.length) {
+    const tPct = tCost > 0 ? (tNet / tCost) * 100 : null;
+    const tFeePct = tGross > 0 ? (tFee / tGross) * 100 : 0;
+    const tNetCls = tNet >= 0 ? 'positive' : 'negative';
+    html += '<tfoot><tr class="hist-foot">' +
+      '<td colspan="5" class="hist-mono">' + rows.length + ' trade' + (rows.length === 1 ? '' : 's') + (anyFilter ? ' shown' : '') + '</td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(tCost, 2) + '<span class="hist-sub">cost</span></td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(tGross, 2) + '<span class="hist-sub">gross</span></td>' +
+      '<td class="hist-mono hist-r negative">-' + fmtGBP(tFee, 2) + '<span class="hist-sub">' + fmtPct(tFeePct) + ' eff.</span></td>' +
+      '<td class="hist-mono hist-r">' + fmtGBP(tReal, 2) + '</td>' +
+      '<td class="hist-mono hist-r ' + tNetCls + '">' + (tNet >= 0 ? '+' : '') + fmtGBP(tNet, 2) + '</td>' +
+      '<td class="hist-mono hist-r ' + (tPct == null ? '' : tNetCls) + '">' + (tPct == null ? '—' : (tPct >= 0 ? '+' : '') + fmtPct(tPct)) + '</td>' +
+      '<td></td></tr></tfoot>';
+  }
+  html += '</table></div>';
+  c.innerHTML = html;
+  if (_histDateEditing) { const inp = c.querySelector('.hist-date-input'); if (inp) inp.focus(); }
+}
+
+function fmtPct(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  const a = Math.abs(n);
+  return n.toFixed(a >= 100 ? 0 : (a >= 10 ? 1 : 2)) + '%';
+}
+
+function clearHistFilters() {
+  histFilter = { q: '', plat: 'all', tax: 'all', year: 'all' };
+  const inp = document.querySelector('#tab-history .search-box input');
+  if (inp) inp.value = '';
+  renderHistoryTable();
+}
+
+// Inline sale-date edit. Undated trades can't be assigned to a tax year, so
+// setting the date feeds straight into the CGT engine (updateStats + summary).
+function editTradeDate(id) { _histDateEditing = id; renderHistoryTable(); }
+function cancelTradeDate() {
+  if (!_histDateEditing) return;
+  // Delay so a change event on the same input can land first.
+  setTimeout(() => { if (_histDateEditing) { _histDateEditing = null; renderHistoryTable(); } }, 0);
+}
+function commitTradeDate(id, value) {
+  _histDateEditing = null;
+  if (!value || isNaN(new Date(value).getTime())) { renderHistoryTable(); return; }
+  // Atomic: re-read canonical history, patch, write back (same pattern as deleteTrade).
+  const stored = (function(){ try { return JSON.parse(window._store['cs2vault_history']) || []; } catch { return tradeHistory; } })();
+  const t = stored.find(x => x.id === id);
+  if (!t) { renderHistoryTable(); return; }
+  const before = t.sellDate;
+  t.sellDate = value;
+  tradeHistory = stored;
+  saveHistory(tradeHistory);
+  try { logActivity('edit', 'trade', { id: id, name: t.name, qty: t.qty }, [{ field: 'Sale date', from: before || '', to: value }]); } catch (e) {}
+  renderHistory(); updateStats();
+  toast('Sale date set to ' + value, 'success');
 }
 
 function deleteTrade(id) {
@@ -7673,19 +7873,6 @@ function switchTab(tab, el) {
   if (tab === 'history') { safe('stats', updateStats); safe('history', renderHistory); }
 }
 function filterTable(q) { currentFilter = q; renderHoldings(); }
-function filterHistory(q) {
-  const filtered = tradeHistory.filter(t => t.name.toLowerCase().includes(q.toLowerCase()));
-  const c = document.getElementById('historyList');
-  if (!filtered.length) { c.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><h3>No results</h3></div>`; return; }
-  c.innerHTML = filtered.sort((a,b)=>new Date(b.sellDate)-new Date(a.sellDate)).map(t => {
-    const gross=t.sellPrice*t.qty,fee=gross*(t.feePercent/100),net=gross-fee-(t.buyPrice*t.qty);
-    return `<div class="sold-card"><div><strong>${escHtml(t.name)}</strong><div class="sold-date">${t.sellDate}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Buy</div><div class="sold-col-val">${fmtGBP(Number(t.buyPrice), 2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Sell</div><div class="sold-col-val">${fmtGBP(Number(t.sellPrice), 2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Fee</div><div class="sold-col-val negative">-${fmtGBP(fee, 2)}</div></div>
-      <div class="sold-col"><div class="sold-col-label">Net</div><div class="sold-col-val ${net>=0?'positive':'negative'}">${net>=0?'+':''}${fmtGBP(net, 2)}</div></div></div>`;
-  }).join('');
-}
 function sortTable(key) { if (sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=1;} renderHoldings(); }
 async function exportCSV() {
   if (!featureUnlocked('csvExport')) { showProToast('csvExport'); return; }
