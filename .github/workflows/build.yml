@@ -31,6 +31,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Create the GitHub release BEFORE electron-builder runs ────────────
+      # electron-builder 26 publishes each artifact (.exe, .blockmap, latest.yml)
+      # through its own publisher instance. With releaseType "release", every
+      # instance lists releases and creates one if none exist for the tag — they
+      # race, and v3.11.0 ended up split across two releases (blockmap on one,
+      # .exe + latest.yml on the other), which breaks the auto-updater. If the
+      # release already exists (published < 2h ago), every instance finds it
+      # and simply uploads into it. So we create it here, idempotently.
+      - name: Create GitHub release (idempotent)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — reusing"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "${TAG#v}" --notes "$(git log -1 --pretty=%s)"
+          fi
+
       # ── Code signing ──────────────────────────────────────────────────────
       # electron-builder signs the Windows installer when CSC_LINK +
       # CSC_KEY_PASSWORD are present. IMPORTANT: an *empty* CSC_LINK is NOT the
