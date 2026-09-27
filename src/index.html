@@ -72,6 +72,10 @@ tr:hover td{background:rgba(232,153,60,.03);}
 .badge-sticker{background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.2);}
 .badge-armory{background:rgba(251,191,36,.15);color:var(--gold);border:1px solid rgba(251,191,36,.2);}
 .badge-knife{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.cgt-plan{margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text2);}
+.cgt-plan-head{font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:6px;}
+.cgt-plan-line{margin-top:4px;line-height:1.5;}
+.bridge-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:1px;font-weight:700;background:rgba(167,139,250,.12);color:var(--purple);border:1px solid rgba(167,139,250,.35);margin-left:5px;vertical-align:middle;}
 .tuf-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:1px;font-weight:700;background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);margin-left:5px;vertical-align:middle;}
 .mono{font-family:'Share Tech Mono',monospace;font-size:12px;}
 .price-loading{color:var(--text3);font-style:italic;font-size:11px;}
@@ -1029,6 +1033,13 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px;" id="costBasisNote">
           UK is locked to Section 104 pooling. Other jurisdictions use their default method.
         </div>
+        <div id="ukCountSteamRow" style="display:flex;align-items:flex-start;gap:10px;margin-top:14px;">
+          <input type="checkbox" id="ukCountSteam" onchange="setUkCountSteam(this.checked)" style="width:16px;height:16px;margin-top:2px;accent-color:var(--green);cursor:pointer;">
+          <label for="ukCountSteam" style="cursor:pointer;font-size:13px;color:var(--text2);">
+            Count Steam Market sales as CGT disposals <span style="color:var(--green);">(recommended)</span>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--text3);margin-top:4px;">The stricter, safer reading. Tag skins bought with Steam balance as bridge skins so their conversion loss offsets the Steam gain. Untick for the legacy position (only real-money cashouts count).</div>
+          </label>
+        </div>
       </div>
 
       <!-- Data management -->
@@ -1544,6 +1555,10 @@ header button, header input, header a { -webkit-app-region: no-drag; }
         <input type="checkbox" id="itemIsTuf" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;">
         <label for="itemIsTuf" style="margin:0;cursor:pointer;">Trade-up Filler (TUF) — uses Steam price for P&amp;L</label>
       </div>
+      <div class="form-row" style="flex-direction:row;align-items:center;gap:10px;">
+        <input type="checkbox" id="itemSteamFunded" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;">
+        <label for="itemSteamFunded" style="margin:0;cursor:pointer;">Paid with Steam balance (bridge skin) — enter the balance spent as the buy price</label>
+      </div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('itemModal')">Cancel</button><button class="btn btn-primary" onclick="saveItem()">Save</button></div>
   </div>
@@ -1668,6 +1683,8 @@ const STORE_KEYS = [
   'cs2vault_steam_id',
   // --- v3.6.3: live market benchmark cache (stooq daily closes, 24h TTL) ---
   'cs2vault_benchmarks',
+  // --- v3.12.0: UK — count Steam Market sales as CGT disposals ('1'/'0'; unset = counted) ---
+  'cs2vault_uk_count_steam',
 ];
 
 window._store = {};

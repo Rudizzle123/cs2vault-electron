@@ -167,5 +167,42 @@ console.log('\n=== All new profiles have disclaimer + knownLimits ===');
   checkBool(code + ' disclaimer: not tax advice', /not tax advice/i.test(P[code].disclaimer), true);
 });
 
+console.log('\n=== v3.12.0: UK counts Steam Market sales (default on, toggleable) ===');
+delete window._store['cs2vault_uk_count_steam'];
+checkBool('UK countsSteam default (key unset) = true', P.UK.countsSteam(), true);
+checkBool('UK Steam sale counts by default', P.UK.disposalCounts({ platform: 'steam' }), true);
+checkBool('UK CSFloat sale counts by default', P.UK.disposalCounts({ platform: 'csfloat' }), true);
+checkBool('UK default disclaimer = stricter reading', /counted as disposals/.test(P.UK.disclaimer), true);
+window._store['cs2vault_uk_count_steam'] = '0';
+checkBool('UK legacy (0): Steam sale excluded', P.UK.disposalCounts({ platform: 'steam' }), false);
+checkBool('UK legacy (0): CSFloat still counts', P.UK.disposalCounts({ platform: 'csfloat' }), true);
+checkBool('UK legacy disclaimer = legacy position', /Legacy position/.test(P.UK.disclaimer), true);
+window._store['cs2vault_uk_count_steam'] = '1';
+checkBool('UK explicit on (1): Steam sale counts', P.UK.disposalCounts({ platform: 'steam' }), true);
+delete window._store['cs2vault_uk_count_steam'];
+checkBool('UK disclaimer: not tax advice', /not tax advice/i.test(P.UK.disclaimer), true);
+checkBool('Other profiles unaffected (US counts Steam)', P.US.disposalCounts({ platform: 'steam' }), true);
+
+console.log('\n=== v3.12.0: bridge chain reconciles to cash minus original cost ===');
+// 2 cases cost £30 cash -> sold on Steam, £58.51 wallet received (net of Steam fee)
+// -> Deagle bought for £58.51 balance -> sold on CSFloat £45.37 gross, 2% fee.
+const origCost = 30, walletIn = 58.51, bridgeGross = 45.37;
+const bridgeNet = bridgeGross * 0.98;
+const steamGain = walletIn - origCost;               // Steam-leg disposal
+const bridgeGain = bridgeNet - walletIn;             // bridge leg (a loss)
+check('Steam leg gain = 28.51', steamGain, 28.51);
+check('bridge leg loss = -14.0474', bridgeGain, bridgeNet - 58.51);
+check('chain total = cash in hand - original cost', steamGain + bridgeGain, bridgeNet - origCost);
+
+console.log('\n=== v3.12.0: tax-year end helper ===');
+const aEnd = lineOf('^function _taxYearEnd');
+eval(slice(aEnd, fnEnd(aEnd)) + '\nglobal._taxYearEnd = _taxYearEnd;');
+const e1 = _taxYearEnd('2026-04-06');
+checkBool('UK 2026/27 ends 5 Apr 2027', e1.getFullYear() === 2027 && e1.getMonth() === 3 && e1.getDate() === 5, true);
+const e2 = _taxYearEnd('2026-01-01');
+checkBool('calendar year ends 31 Dec', e2.getFullYear() === 2026 && e2.getMonth() === 11 && e2.getDate() === 31, true);
+const e3 = _taxYearEnd('2026-07-01');
+checkBool('AU year (1 Jul) ends 30 Jun next year', e3.getFullYear() === 2027 && e3.getMonth() === 5 && e3.getDate() === 30, true);
+
 console.log(`\n--- ${pass} passed, ${fail} failed ---`);
 process.exit(fail ? 1 : 0);

@@ -1,10 +1,21 @@
 # CS2 Vault — Project State
 
-Last updated: September 2026 (v3.11.1: workflow creates the GitHub release before electron-builder uploads — fixes the split-release/auto-updater break from v3.11.0) | Current version: v3.11.1
+Last updated: 27 September 2026 (v3.12.0: Steam Market sales count as UK CGT disposals by default; bridge-skin tagging; tax-year planner strip) | Current version: v3.12.0
 
 ---
 
 ## What's Been Built (Complete)
+
+### v3.12.0 — Steam sales count for UK CGT + bridge skins + tax-year planner ✅
+**Tax-position change (Rudi's decision, 27 Sep 2026):** the UK profile now counts Steam Market (wallet) sales as CGT disposals **by default** — the stricter, safer reading (asset-for-asset exchange = disposal, CG12700 / CRYPTO22100). The legacy "only real-money cashouts count" position is one untick away in Settings.
+
+- **Why:** under the legacy position, a Steam sale's gain was excluded but the bridge skin bought with that balance was added at its Steam price, so its CSFloat sale booked a **phantom loss** (the conversion haircut) against a gain that was never counted — understating tax. With Steam counted, both legs are disposals and the chain nets to *cash in hand − original cost*. Rudi is using the app as his own cash-out + CGT vehicle; selling the product is not a near-term priority
+- **Setting:** `cs2vault_uk_count_steam` (`'1'`/`'0'`, unset = counted; added to `STORE_KEYS` + backup/restore map). Checkbox in Settings → Tax & Cost Basis (UK only), `setUkCountSteam()` with the mid-year confirm pattern. `TAX_PROFILES.UK.countsSteam()` / `disposalCounts()` read it; `disclaimer` is now a getter that switches text by position. Non-UK profiles unchanged (they already count every sale). When on, the "incl. Steam" secondary line disappears naturally (`excludesAny` false)
+- **Bridge skins:** new "Paid with Steam balance (bridge skin)" checkbox in the Add/Edit Investment modal → `holding.steamFunded`. Buy price = the balance spent. Holdings row shows a purple `BRIDGE` badge; both sell paths copy `bridge: true` onto the trade record; Trade History shows the badge on the item name
+- **Tax-year planner strip** (under the CGT cards, `_cgtPlannerStrip`): tax-year end date + days left; gain headroom (`allowance − net gain`, so current-year losses add headroom) or "allowance used up"; open-chain warning listing unsold bridge skins + their balance cost (amber, red inside 60 days) — only when Steam sales are disposals. Cliff profiles (DE/FI) skip the headroom line. Helpers `_taxYearEnd`, `_openBridgeHoldings`
+- **Cash-out calculator:** UK "Steam Wallet sales are NOT taxable" note now only shows in legacy mode; otherwise it notes the calculator models the bridge leg only and the Steam-sale gain appears in the CGT summary once recorded
+- **Harness:** tax engine **103/103** (+16: default/legacy/explicit toggle, disclaimer switch, US unaffected, bridge-chain reconciliation, `_taxYearEnd` for UK/calendar/AU years). Schema 66/66, merge-plan 48/48 unchanged. Rendered headlessly with seeded trades: counted view nets +£18.92 on the test chain; legacy view shows the −£9.59 phantom loss the change removes
+- **Not changed (scope):** website copy still describes the Steam-exclusion position — revisit before any launch. `CASHOUT-PLANNER-BRIEF.md` assumes every planned disposal is `platform:'csfloat'`; with Steam counted, the routed path has two disposals (Steam leg + bridge leg) — update the brief before Phase 7. Existing already-sold bridge trades aren't retro-tagged (badge is cosmetic; tax maths doesn't depend on it)
 
 ### v3.11.1 — Release pipeline fix: workflow pre-creates the GitHub release ✅
 CI/packaging-only release, **zero src changes**. Fixes the v3.11.0 publish outcome, which broke the auto-updater.
@@ -762,7 +773,7 @@ Agents stored with full Steam name e.g. `Number K | The Professionals`. CSFloat 
 ### CGT Rules (UK profile)
 - £3,000 annual CGT allowance (2024/25 and 2025/26)
 - 18% basic rate / 24% higher rate on gains above allowance (disposals on/after 30 Oct 2024)
-- App treats Steam Wallet sales as NOT taxable disposals — only real-money cashouts count (this is the app's chosen position, now expressed as the UK profile's `disposalCounts` returning false for Steam, left unchanged through v3.0.0). The CGT Summary also shows an informational "incl. Steam" figure alongside the live CSFloat-only figure, so the stricter reading is visible without changing the default treatment
+- **Superseded in v3.12.0 — Steam sales now count by default (toggleable).** Previously: app treats Steam Wallet sales as NOT taxable disposals — only real-money cashouts count (this is the app's chosen position, now expressed as the UK profile's `disposalCounts` returning false for Steam, left unchanged through v3.0.0). The CGT Summary also shows an informational "incl. Steam" figure alongside the live CSFloat-only figure, so the stricter reading is visible without changing the default treatment
 - ⚠ LEGAL NUANCE (researched June 2026): Under strict UK CGT principle, a "disposal" includes *exchanging* one asset for another (CG12700/CG12701), mirroring how HMRC treats crypto token-to-token swaps (CRYPTO22100) — so a Steam-to-Steam sell-then-buy is arguably a disposal at GBP market value even without cashing out. The locked/non-withdrawable nature of Steam Wallet affects valuation (quantum), not whether a disposal happened. The genuinely unsettled question is whether a Valve-licensed skin is "property" at all (R v Lakeman; Property (Digital Assets etc) Act 2025). The app's Steam-exclusion is a defensible-but-debatable position; richer per-disposal data is now captured for all platforms so the treatment can be revisited. Rudi to consult a digital-asset-literate accountant before filing.
 - Platform fees are allowable deductions
 - Losses can offset gains within the same tax year

@@ -1,6 +1,6 @@
 {
   "name": "cs2vault",
-  "version": "3.11.1",
+  "version": "3.12.0",
   "description": "CS2 Portfolio Tracker \u2014 Professional Investment Dashboard",
   "main": "src/main.js",
   "scripts": {

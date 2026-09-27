@@ -2482,7 +2482,7 @@ function renderHoldings() {
 
     return `<tr data-id="${item.id}" ${target && best && best >= target ? 'style="border-left:3px solid var(--green);"' : ''}>
       <td class="bulk-col" style="text-align:center;"><input type="checkbox" class="bulk-cb" ${_bulkSel.has(item.id) ? 'checked' : ''} onclick="bulkToggleOne('${item.id}', this.checked)"></td>
-      <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
+      <td><div class="item-name">${escHtml(item.name)}${item.isTuf ? '<span class="tuf-badge">TUF</span>' : ''}${item.steamFunded ? '<span class="bridge-badge" title="Bought with Steam balance — sell before the tax year ends">BRIDGE</span>' : ''}<small>${item.notes ? escHtml(item.notes.slice(0,50)) : (item.marketHash ? '🔗 Auto-price' : '⚠️ No market hash')}</small>${targetHtml}${buildSparkline(item.id)}</div></td>
       <td><span class="type-badge ${typeBadge[item.type]}">${typeLabels[item.type]}</span></td>
       <td class="mono">${item.qty}</td>
       <td class="mono">${fmtMoney(Number(item.buyPrice), 2)}</td>
@@ -2720,11 +2720,23 @@ const TAX_PROFILES = {
     allowance: 3000,                 // £3,000 annual exempt amount (2024/25, 2025/26)
     rates: { basic: 18, higher: 24 },
     feeDeductible: true,
-    // The app's chosen position: a Steam-Wallet sale is not a taxable disposal.
-    disposalCounts(t) { return tradePlatform(t) !== 'steam'; },
+    // v3.12.0: Steam-Wallet sales COUNT as disposals by default (the stricter,
+    // safer reading — an asset-for-asset exchange is a disposal, CG12700 /
+    // CRYPTO22100). Settings can switch back to the legacy position where only
+    // real-money cashouts count. Unset key = counted. Stored as '1' / '0'.
+    countSteamKey: 'cs2vault_uk_count_steam',
+    countsSteam() {
+      const v = (typeof window !== 'undefined' && window._store) ? window._store['cs2vault_uk_count_steam'] : undefined;
+      return v !== '0' && v !== false && v !== 0;
+    },
+    disposalCounts(t) { return TAX_PROFILES.UK.countsSteam() || tradePlatform(t) !== 'steam'; },
     // Single CGT bucket — no holding-period split in the UK.
     classifyGain() { return { bucket: 'cgt', taxable: true, label: '', flagged: false }; },
-    disclaimer: 'Estimated only. The app\u2019s position: Steam Wallet sales aren\u2019t taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts \u2014 an unsettled area (whether a Valve-licensed skin is "property" at all remains legally undecided). This is not tax advice; consult a digital-asset-literate accountant before filing.',
+    get disclaimer() {
+      return TAX_PROFILES.UK.countsSteam()
+        ? 'Estimated only. Steam Market sales are counted as disposals at the Steam Wallet value received (the stricter reading: exchanging one asset for another is a disposal). A bridge skin bought with that balance takes the balance spent as its cost, so its conversion loss offsets the Steam gain \u2014 finish each Steam \u2192 bridge \u2192 cash chain inside the same tax year. Whether a Valve-licensed skin is "property" at all remains legally undecided. This is not tax advice; consult a digital-asset-literate accountant before filing.'
+        : 'Estimated only. Legacy position: Steam Wallet sales aren\u2019t taxable; CGT applies on real-money cashout. The "incl. Steam" figure shows the stricter reading where a Steam-to-Steam disposal also counts \u2014 an unsettled area (whether a Valve-licensed skin is "property" at all remains legally undecided). This is not tax advice; consult a digital-asset-literate accountant before filing.';
+    },
   },
   US: {
     code: 'US', name: 'United States', taxCurrency: 'USD',
@@ -3041,6 +3053,23 @@ function setCostBasisMethod(m) {
   toast('Cost basis method: ' + costBasisMethodLabel(m), 'success');
 }
 
+// v3.12.0: UK — count Steam Market (wallet) sales as CGT disposals.
+function setUkCountSteam(on) {
+  const cur = TAX_PROFILES.UK.countsSteam();
+  if (!!on === cur) return;
+  if (_hasDisposalsThisTaxYear()) {
+    if (!confirm('This changes which of this tax year\u2019s recorded sales count toward CGT, so your reported gains will change. Continue?')) {
+      syncCostBasisSettingsUI();
+      return;
+    }
+  }
+  window._storeSet(TAX_PROFILES.UK.countSteamKey, on ? '1' : '0');
+  syncCostBasisSettingsUI();
+  try { renderHistory(); } catch (e) {}
+  try { renderHoldings(); } catch (e) {}
+  toast(on ? 'Steam sales now count toward CGT' : 'Steam sales excluded from CGT (legacy position)', 'success');
+}
+
 // Reflect stored jurisdiction/method into the Settings dropdowns + lock state.
 function syncCostBasisSettingsUI() {
   const j = getTaxJurisdiction();
@@ -3050,6 +3079,10 @@ function syncCostBasisSettingsUI() {
   const note = document.getElementById('costBasisNote');
   const methodUnlocked = featureUnlocked('costBasisMethod');
   if (jSel) jSel.value = j;
+  const stmRow = document.getElementById('ukCountSteamRow');
+  if (stmRow) stmRow.style.display = (j === 'UK') ? 'flex' : 'none';
+  const stmCb = document.getElementById('ukCountSteam');
+  if (stmCb) stmCb.checked = TAX_PROFILES.UK.countsSteam();
   if (mSel) {
     mSel.value = m;
     // Disabled for UK (locked to pooling) OR when the method-choice feature is
@@ -3662,7 +3695,64 @@ async function renderCGTSummary() {
       ${fxIncomplete ? `<span style="color:var(--accent);">⚠ Some FX rates unavailable — totals may be incomplete</span><br>` : ''}
       ${profile.knownLimits ? `<span style="color:var(--text3);">ⓘ Known limit: ${profile.knownLimits}</span><br>` : ''}
       ⚠ ${profile.disclaimer}
-    </div>`;
+    </div>
+    ${_cgtPlannerStrip(cgt, netTax, f)}`;
+}
+
+// v3.12.0: tax-year planner strip under the CGT cards — days left, gain headroom
+// before the allowance is used up, and any bridge skins (bought with Steam
+// balance) still unsold. An unsold bridge skin at year end splits a chain: the
+// Steam-sale gain lands in this year, the bridge conversion loss in the next.
+function _taxYearEnd(startStr) {
+  const d = new Date(startStr + 'T00:00:00');
+  d.setFullYear(d.getFullYear() + 1);
+  d.setDate(d.getDate() - 1);
+  return d;
+}
+function _openBridgeHoldings() {
+  const out = [];
+  (Array.isArray(holdings) ? holdings : []).forEach(h => { if (h && h.steamFunded && (Number(h.qty) || 0) > 0) out.push(h); });
+  (Array.isArray(skins) ? skins : []).forEach(h => { if (h && h.steamFunded && (Number(h.qty) || 1) > 0) out.push(h); });
+  return out;
+}
+function _cgtPlannerStrip(cgt, netTax, f) {
+  const profile = cgt.profile;
+  const end = _taxYearEnd(cgt.taxYearStart);
+  const today = new Date(todayStr() + 'T00:00:00');
+  const daysLeft = Math.max(0, Math.round((end - today) / 86400000));
+  const endLabel = end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const allowance = profile.allowance || 0;
+  const isCliff = !!(profile.allowanceIsCliff || profile.allowanceIsProceedsCliff);
+  const parts = [];
+
+  // Headroom: further net gain that can be realised this year before tax is due.
+  // Current-year losses must be set against gains first, so they ADD headroom.
+  if (allowance > 0 && !isCliff) {
+    const room = allowance - netTax;
+    if (room > 0) {
+      parts.push('<div class="cgt-plan-line"><span style="color:var(--green);">' + f(room, 0) + '</span> more net gain can be realised tax-free this year' +
+        (netTax < 0 ? ' <span style="color:var(--text3);">(your ' + f(Math.abs(netTax), 0) + ' of losses so far add to the ' + f(allowance, 0) + ' allowance)</span>' : '') + '</div>');
+    } else {
+      parts.push('<div class="cgt-plan-line"><span style="color:var(--red);">Allowance used up</span> — further gains this year are taxable. Hold winners until after ' + endLabel + ', or realise losses to offset.</div>');
+    }
+  }
+
+  // Open bridge chains — only meaningful when Steam sales are disposals.
+  const steamCounts = profile.disposalCounts({ platform: 'steam' });
+  if (steamCounts) {
+    const open = _openBridgeHoldings();
+    if (open.length) {
+      const cost = open.reduce((a, h) => a + (Number(h.buyPrice) || 0) * (Number(h.qty) || 1), 0);
+      const urgent = daysLeft <= 60;
+      parts.push('<div class="cgt-plan-line" style="color:' + (urgent ? 'var(--red)' : 'var(--accent)') + ';">⚠ ' + open.length + ' bridge skin' + (open.length === 1 ? '' : 's') +
+        ' (' + fmtGBP(cost, 2) + ' of Steam balance) still unsold. Sell ' + (open.length === 1 ? 'it' : 'them') + ' before ' + endLabel +
+        ' so the conversion loss lands in the same tax year as the Steam gain that funded ' + (open.length === 1 ? 'it' : 'them') + '.</div>');
+    }
+  }
+
+  return '<div class="cgt-plan">' +
+    '<div class="cgt-plan-head">Tax year ends ' + endLabel + ' · <span style="color:' + (daysLeft <= 60 ? 'var(--red)' : 'var(--text2)') + ';">' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left</span></div>' +
+    parts.join('') + '</div>';
 }
 
 // Tax-rate band label for the Est. Tax card.
@@ -3975,7 +4065,7 @@ function updateCashOutCalc() {
           <div class="co-step-label">Estimated tax owed</div>
           <div class="co-step-val" style="color:${estimatedTax > 0 ? 'var(--red)' : 'var(--green)'};">${fmtGBP(estimatedTax, 2)}</div>
         </div>
-        <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ ${_prof.code === 'UK' ? 'Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.' : 'Estimate based on your ' + _prof.name + ' tax profile. Not tax advice.'}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:8px;">⚠ ${_prof.code === 'UK' && !TAX_PROFILES.UK.countsSteam() ? 'Legacy position: Steam Wallet sales are NOT taxable events. Only real-money cashouts via CSFloat count towards CGT.' : 'Only the bridge leg is modelled here. The Steam sale itself is also a disposal (wallet received minus what the items originally cost) \u2014 it shows in the CGT summary once recorded. Estimate based on your ' + _prof.name + ' tax profile. Not tax advice.'}</div>
       </div>`;
   }
 
@@ -4129,7 +4219,7 @@ function renderHistoryTable() {
     const platHtml = '<span class="plat-badge ' + (platBadgeClass[r.plat] || 'plat-badge-cf') + '">' + (platLabel[r.plat] || escHtml(r.plat)) + '</span>';
     const taxHtml = r.counts
       ? '<span class="cgt-tag cgt-tag-yes" style="margin-left:0" title="Counts as a taxable disposal (' + escHtml(profile.name) + ')">✓ ' + taxLabel + '</span>'
-      : '<span class="cgt-tag cgt-tag-no" style="margin-left:0" title="Excluded (Steam Wallet sale — UK position)">✕ not ' + taxLabel + '</span>';
+      : '<span class="cgt-tag cgt-tag-no" style="margin-left:0" title="Excluded (Steam Wallet sale — legacy UK position, see Settings)">✕ not ' + taxLabel + '</span>';
     let dateHtml;
     if (_histDateEditing && t.id === _histDateEditing) {
       dateHtml = '<input type="date" class="hist-date-input" value="' + escHtml(t.sellDate || '') + '" ' +
@@ -4144,7 +4234,7 @@ function renderHistoryTable() {
     const netCls = r.net >= 0 ? 'positive' : 'negative';
     html += '<tr>' +
       '<td class="hist-mono">' + dateHtml + '</td>' +
-      '<td class="hist-name">' + escHtml(t.name) + '</td>' +
+      '<td class="hist-name">' + escHtml(t.name) + (t.bridge ? '<span class="bridge-badge" title="Bought with Steam balance — its loss/gain offsets the Steam sale that funded it">BRIDGE</span>' : '') + '</td>' +
       '<td class="hist-mono hist-r">' + r.qty + '</td>' +
       '<td>' + platHtml + '</td>' +
       '<td>' + taxHtml + '</td>' +
@@ -4425,6 +4515,7 @@ function openAddModal() {
   document.getElementById('itemBuyPrice').value = '';
   document.getElementById('itemBuyDate').value = todayStr();
   document.getElementById('itemIsTuf').checked = false;
+  document.getElementById('itemSteamFunded').checked = false;
   const ccyEl = document.getElementById('itemBuyCcy');
   if (ccyEl) ccyEl.value = getDisplayCurrency();
   openModal('itemModal');
@@ -4450,6 +4541,7 @@ function openEditModal(id) {
   document.getElementById('itemMarketHash').value = item.marketHash || '';
   document.getElementById('itemNotes').value = item.notes || '';
   document.getElementById('itemIsTuf').checked = item.isTuf || false;
+  document.getElementById('itemSteamFunded').checked = !!item.steamFunded;
   openModal('itemModal');
 }
 
@@ -4590,7 +4682,8 @@ async function saveItem() {
     origCurrency: ccy, origAmount: buyPriceEntered, fxRate: fx.fxRate,
     marketHash: document.getElementById('itemMarketHash').value.trim(),
     notes: document.getElementById('itemNotes').value.trim(),
-    isTuf: document.getElementById('itemIsTuf').checked
+    isTuf: document.getElementById('itemIsTuf').checked,
+    steamFunded: document.getElementById('itemSteamFunded').checked
   };
   const editId = document.getElementById('editId').value;
   if (editId) {
@@ -4902,7 +4995,7 @@ async function confirmSell() {
   const _gross = sellPrice * qty;
   const _feeAmount = _gross * (feePercent / 100);
   const _netRealised = _gross - _feeAmount;
-  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate });
+  tradeHistory.push({ id: uid(), name: item.name, type: item.type, qty, buyPrice: item.buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate, bridge: !!item.steamFunded });
   saveHistory(tradeHistory);
   if (qty >= item.qty) holdings = holdings.filter(h => h.id !== id);
   else {
@@ -6063,7 +6156,7 @@ confirmSell = async function() {
     const _gross = sellPrice * qty;
     const _feeAmount = _gross * (feePercent / 100);
     const _netRealised = _gross - _feeAmount;
-    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: _buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate });
+    tradeHistory.push({ id: uid(), name: skin.name, type: skin.type || 'skin', qty, buyPrice: _buyPrice, sellPrice, sellDate, feePercent, platform: _currentSellPlatform, gross: _gross, feeAmount: _feeAmount, netRealised: _netRealised, origCurrency: fx.ccy, origAmount: sellPriceEntered, fxRate: fx.fxRate, bridge: !!skin.steamFunded });
     saveHistory(tradeHistory);
     // Atomic update: re-read the canonical array from storage, mutate, write back.
     // Prevents a concurrent price-refresh loop from re-persisting a stale array
@@ -7274,6 +7367,7 @@ async function exportAllData() {
     displayCurrency: window._store['cs2vault_display_currency'] || null,
     taxJurisdiction: window._store['cs2vault_tax_jurisdiction'] || null,
     costBasisMethod: window._store['cs2vault_cost_basis_method'] || null,
+    ukCountSteam:    window._store['cs2vault_uk_count_steam'] || null,
     proOverride:     window._store['cs2vault_pro_override'] || null,
     licence:         window._store['cs2vault_licence'] || null,
     licenceState:    window._store['cs2vault_licence_state'] || null,
@@ -7310,6 +7404,7 @@ const BACKUP_FIELD_MAP = {
   displayCurrency: 'cs2vault_display_currency',
   taxJurisdiction: 'cs2vault_tax_jurisdiction',
   costBasisMethod: 'cs2vault_cost_basis_method',
+  ukCountSteam: 'cs2vault_uk_count_steam',
   proOverride: 'cs2vault_pro_override',
   licence: 'cs2vault_licence',
   licenceState: 'cs2vault_licence_state',
